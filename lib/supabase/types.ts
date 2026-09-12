@@ -508,28 +508,10 @@ export interface Database {
         };
         Relationships: [];
       };
-      materials: {
-        Row: {
-          id: number;
-          name: string;
-          default_unit: string | null;
-          created_at: string;
-        };
-        Insert: {
-          name: string;
-          default_unit?: string | null;
-        };
-        Update: {
-          name?: string;
-          default_unit?: string | null;
-        };
-        Relationships: [];
-      };
       project_materials: {
         Row: {
           id: number;
           project_id: number;
-          material_id: number | null;
           material_code: string;
           material_name: string;
           specification: string | null;
@@ -542,7 +524,6 @@ export interface Database {
         };
         Insert: {
           project_id: number;
-          material_id?: number | null;
           material_code: string;
           material_name: string;
           specification?: string | null;
@@ -552,7 +533,6 @@ export interface Database {
           recorded_by: string;
         };
         Update: {
-          material_id?: number | null;
           material_code?: string;
           material_name?: string;
           specification?: string | null;
@@ -633,9 +613,10 @@ export interface Database {
         Relationships: [];
       };
       // Named "requisitions" to avoid colliding with the pre-existing,
-      // unused public.equipment_requests table below (from
-      // 0007_equipment.sql) — see 0020_equipment_requests.sql's header
-      // comment for why this is a separate table rather than a rename.
+      // unused public.equipment_requests table from 0007_equipment.sql
+      // (dropped by 0025_schema_cleanup.sql) — see
+      // 0020_equipment_requests.sql's header comment for why this is a
+      // separate table rather than a rename.
       equipment_requisitions: {
         Row: {
           id: number;
@@ -706,40 +687,6 @@ export interface Database {
         };
         Relationships: [];
       };
-      material_usage: {
-        Row: {
-          id: number;
-          project_id: number;
-          task_id: number | null;
-          material_id: number | null;
-          material_name: string;
-          quantity_used: number;
-          unit: string | null;
-          unit_cost: number | null;
-          total_cost: number | null;
-          used_date: string;
-          recorded_by: string;
-          created_at: string;
-        };
-        Insert: {
-          project_id: number;
-          task_id?: number | null;
-          material_id?: number | null;
-          material_name: string;
-          quantity_used?: number;
-          unit?: string | null;
-          unit_cost?: number | null;
-          total_cost?: number | null;
-          used_date?: string;
-          recorded_by: string;
-        };
-        Update: {
-          quantity_used?: number;
-          unit_cost?: number | null;
-          total_cost?: number | null;
-        };
-        Relationships: [];
-      };
       equipment: {
         Row: {
           id: number;
@@ -803,99 +750,6 @@ export interface Database {
           assigned_at?: string;
           returned_at?: string | null;
           notes?: string | null;
-        };
-        Relationships: [];
-      };
-      equipment_requests: {
-        Row: {
-          id: number;
-          project_id: number;
-          task_id: number | null;
-          equipment_id: number | null;
-          equipment_name: string;
-          status: "pending" | "approved" | "rejected" | "fulfilled";
-          requested_by: string;
-          needed_start_date: string | null;
-          needed_end_date: string | null;
-          reviewed_by: string | null;
-          reviewed_at: string | null;
-          notes: string | null;
-          created_at: string;
-          updated_at: string;
-        };
-        Insert: {
-          project_id: number;
-          task_id?: number | null;
-          equipment_id?: number | null;
-          equipment_name: string;
-          status?: "pending" | "approved" | "rejected" | "fulfilled";
-          requested_by: string;
-          needed_start_date?: string | null;
-          needed_end_date?: string | null;
-          notes?: string | null;
-        };
-        Update: {
-          status?: "pending" | "approved" | "rejected" | "fulfilled";
-          reviewed_by?: string | null;
-          reviewed_at?: string | null;
-          notes?: string | null;
-        };
-        Relationships: [];
-      };
-      equipment_usage: {
-        Row: {
-          id: number;
-          project_id: number;
-          task_id: number | null;
-          equipment_id: number | null;
-          equipment_name: string;
-          hours_used: number | null;
-          cost: number | null;
-          usage_date: string;
-          recorded_by: string;
-          created_at: string;
-        };
-        Insert: {
-          project_id: number;
-          task_id?: number | null;
-          equipment_id?: number | null;
-          equipment_name: string;
-          hours_used?: number | null;
-          cost?: number | null;
-          usage_date?: string;
-          recorded_by: string;
-        };
-        Update: {
-          hours_used?: number | null;
-          cost?: number | null;
-        };
-        Relationships: [];
-      };
-      project_expenses: {
-        Row: {
-          id: number;
-          project_id: number;
-          task_id: number | null;
-          category: "labor" | "material" | "equipment" | "other";
-          description: string | null;
-          amount: number;
-          expense_date: string;
-          recorded_by: string;
-          created_at: string;
-        };
-        Insert: {
-          project_id: number;
-          task_id?: number | null;
-          category: "labor" | "material" | "equipment" | "other";
-          description?: string | null;
-          amount?: number;
-          expense_date?: string;
-          recorded_by: string;
-        };
-        Update: {
-          description?: string | null;
-          amount?: number;
-          expense_date?: string;
         };
         Relationships: [];
       };
