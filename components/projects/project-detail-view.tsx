@@ -115,6 +115,50 @@ function formatDateLong(iso: string | null) {
   });
 }
 
+/**
+ * A main tab's row of sub-tab pills, plus a slot on the right for that
+ * sub-tab's own toolbar (filters, "Add X" buttons) to portal into — see
+ * DailyLogsView/MaterialsMonitoringView/MaterialRequestsView/
+ * EquipmentRequestsView's own `toolbarSlot` prop. Portaling instead of
+ * lifting each view's filter/modal state up here keeps every one of
+ * those views' internals untouched; only where their existing toolbar
+ * JSX renders changes. `items-start` (not `items-center`) is
+ * deliberate: the toolbar's buttons should align to the tabs' top edge,
+ * not float centered against them.
+ */
+function SubTabsRow<T extends string>({
+  tabs,
+  active,
+  onChange,
+  toolbarRef,
+}: {
+  tabs: readonly { value: T; label: string }[];
+  active: T;
+  onChange: (value: T) => void;
+  toolbarRef: (el: HTMLDivElement | null) => void;
+}) {
+  return (
+    <div className="mt-4 mb-4 flex flex-wrap items-start justify-between gap-3">
+      <div className="flex items-center gap-2">
+        {tabs.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            onClick={() => onChange(tab.value)}
+            className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${active === tab.value
+              ? "border-zinc-900 bg-zinc-900 text-white"
+              : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
+              }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div ref={toolbarRef} className="flex flex-wrap items-center gap-2" />
+    </div>
+  );
+}
+
 function StatCard({
   label,
   value,
@@ -280,40 +324,35 @@ export function ProjectDetailView({
         : "overview"
     );
   const [editOpen, setEditOpen] = useState(false);
+  // The DOM node the active sub-tab's own toolbar (filters, "Add X"
+  // buttons) portals into — see SubTabsRow below. Only one sub-view is
+  // ever mounted at a time, so one shared slot is enough; a callback
+  // ref (not useRef) so its first non-null value still triggers the
+  // re-render the portaled child needs to actually appear.
+  const [toolbarSlotEl, setToolbarSlotEl] = useState<HTMLDivElement | null>(
+    null
+  );
 
-  const activeMainTabLabel = MAIN_TABS.find(
-    (tab) => tab.value === activeTab
-  )!.label;
-  const activeProgressSubTabLabel = PROGRESS_SUB_TABS.find(
-    (tab) => tab.value === activeProgressSubTab
-  )!.label;
-  const activeMaterialsSubTabLabel = MATERIALS_SUB_TABS.find(
-    (tab) => tab.value === activeMaterialsSubTab
-  )!.label;
-  const activeEquipmentSubTabLabel = EQUIPMENT_SUB_TABS.find(
-    (tab) => tab.value === activeEquipmentSubTab
-  )!.label;
-  const activeExpensesSubTabLabel = EXPENSES_SUB_TABS.find(
-    (tab) => tab.value === activeExpensesSubTab
-  )!.label;
-  // The Progress, Materials, Equipment, and Expenses tabs' breadcrumb
-  // shows their active sub-tab's own label rather than just "Progress"/
-  // "Materials"/"Equipment"/"Expenses" — every other tab shows its own
-  // main-tab label instead.
-  const breadcrumbLabel =
-    activeTab === "progress"
-      ? activeProgressSubTabLabel
-      : activeTab === "materials"
-        ? activeMaterialsSubTabLabel
-        : activeTab === "equipment"
-          ? activeEquipmentSubTabLabel
-          : activeTab === "expenses"
-            ? activeExpensesSubTabLabel
-            : activeMainTabLabel;
+  // The breadcrumb tracks only the main tab (Overview/Progress/
+  // Materials/Equipment/Expenses) — switching a sub-tab within one of
+  // those (e.g. Progress Overview -> Daily Logs) must not change it.
+  const breadcrumbLabel = MAIN_TABS.find((tab) => tab.value === activeTab)!
+    .label;
+
+  // Live sum of the four expense ledgers — not project.actualExpense,
+  // which was a static number an admin typed into the Edit Project form
+  // and is gone now that the form no longer exposes it (see
+  // 0026_projects_column_cleanup.sql). This is the same computation the
+  // Reports page uses for its own "Actual Expense" card.
+  const actualExpenseTotal =
+    expenseOverview.actual.labor +
+    expenseOverview.actual.material +
+    expenseOverview.actual.equipment +
+    expenseOverview.actual.other;
 
   const remainingBudget =
     project.allocatedBudget != null
-      ? project.allocatedBudget - (project.actualExpense ?? 0)
+      ? project.allocatedBudget - actualExpenseTotal
       : null;
 
   return (
@@ -410,93 +449,48 @@ export function ProjectDetailView({
 
         <div className="px-8">
         {activeTab === "overview" && (
-          <div className="mt-4 mb-4 flex items-center gap-2">
-            {SUB_TABS.map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                onClick={() => setActiveSubTab(tab.value)}
-                className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${activeSubTab === tab.value
-                  ? "border-zinc-900 bg-zinc-900 text-white"
-                  : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-                  }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <SubTabsRow
+            tabs={SUB_TABS}
+            active={activeSubTab}
+            onChange={setActiveSubTab}
+            toolbarRef={setToolbarSlotEl}
+          />
         )}
 
         {activeTab === "progress" && (
-          <div className="mt-4 mb-4 flex items-center gap-2">
-            {PROGRESS_SUB_TABS.map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                onClick={() => setActiveProgressSubTab(tab.value)}
-                className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${activeProgressSubTab === tab.value
-                  ? "border-zinc-900 bg-zinc-900 text-white"
-                  : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-                  }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <SubTabsRow
+            tabs={PROGRESS_SUB_TABS}
+            active={activeProgressSubTab}
+            onChange={setActiveProgressSubTab}
+            toolbarRef={setToolbarSlotEl}
+          />
         )}
 
         {activeTab === "materials" && (
-          <div className="mt-4 mb-4 flex items-center gap-2">
-            {MATERIALS_SUB_TABS.map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                onClick={() => setActiveMaterialsSubTab(tab.value)}
-                className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${activeMaterialsSubTab === tab.value
-                  ? "border-zinc-900 bg-zinc-900 text-white"
-                  : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-                  }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <SubTabsRow
+            tabs={MATERIALS_SUB_TABS}
+            active={activeMaterialsSubTab}
+            onChange={setActiveMaterialsSubTab}
+            toolbarRef={setToolbarSlotEl}
+          />
         )}
 
         {activeTab === "equipment" && (
-          <div className="mt-4 mb-4 flex items-center gap-2">
-            {EQUIPMENT_SUB_TABS.map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                onClick={() => setActiveEquipmentSubTab(tab.value)}
-                className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${activeEquipmentSubTab === tab.value
-                  ? "border-zinc-900 bg-zinc-900 text-white"
-                  : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-                  }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <SubTabsRow
+            tabs={EQUIPMENT_SUB_TABS}
+            active={activeEquipmentSubTab}
+            onChange={setActiveEquipmentSubTab}
+            toolbarRef={setToolbarSlotEl}
+          />
         )}
 
         {activeTab === "expenses" && (
-          <div className="mt-4 mb-4 flex items-center gap-2">
-            {EXPENSES_SUB_TABS.map((tab) => (
-              <button
-                key={tab.value}
-                type="button"
-                onClick={() => setActiveExpensesSubTab(tab.value)}
-                className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${activeExpensesSubTab === tab.value
-                  ? "border-zinc-900 bg-zinc-900 text-white"
-                  : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-                  }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          <SubTabsRow
+            tabs={EXPENSES_SUB_TABS}
+            active={activeExpensesSubTab}
+            onChange={setActiveExpensesSubTab}
+            toolbarRef={setToolbarSlotEl}
+          />
         )}
 
         {activeTab === "progress" ? (
@@ -514,6 +508,7 @@ export function ProjectDetailView({
               materialRequests={fulfillableMaterialRequests}
               equipmentRequests={fulfillableEquipmentRequests}
               logs={dailyLogs}
+              toolbarSlot={toolbarSlotEl}
             />
           )
         ) : activeTab === "materials" ? (
@@ -523,6 +518,7 @@ export function ProjectDetailView({
             <MaterialsMonitoringView
               projectId={project.id}
               materials={materials}
+              toolbarSlot={toolbarSlotEl}
             />
           ) : activeMaterialsSubTab === "usage-logs" ? (
             <MaterialUsageHistoryView
@@ -534,6 +530,7 @@ export function ProjectDetailView({
               projectId={project.id}
               requests={materialRequests}
               currentUserName={currentUserName}
+              toolbarSlot={toolbarSlotEl}
             />
           )
         ) : activeTab === "equipment" ? (
@@ -547,6 +544,7 @@ export function ProjectDetailView({
               projectId={project.id}
               requests={equipmentRequests}
               currentUserName={currentUserName}
+              toolbarSlot={toolbarSlotEl}
             />
           )
         ) : activeTab === "expenses" ? (
@@ -578,11 +576,6 @@ export function ProjectDetailView({
                     <h3 className="text-xs font-semibold tracking-wide text-zinc-400 uppercase">
                       General Information
                     </h3>
-                    {project.description && (
-                      <p className="mt-3 text-sm text-zinc-600">
-                        {project.description}
-                      </p>
-                    )}
                     <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
                       <div>
                         <dt className="text-zinc-500">Project Manager</dt>
@@ -644,7 +637,7 @@ export function ProjectDetailView({
                   />
                   <StatCard
                     label="Actual Expense"
-                    value={formatCurrency(project.actualExpense)}
+                    value={formatCurrency(actualExpenseTotal)}
                     icon={<CalendarDays className="size-4" />}
                   />
                   <StatCard
@@ -668,7 +661,7 @@ export function ProjectDetailView({
                     },
                     {
                       label: "Actual",
-                      value: project.actualExpense ?? 0,
+                      value: actualExpenseTotal,
                       colorClass: "bg-violet-200",
                     },
                     {

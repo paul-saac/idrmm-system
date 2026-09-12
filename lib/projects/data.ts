@@ -4,17 +4,12 @@ import type { ProjectStatus } from "@/lib/supabase/types";
 export type ProjectRow = {
   id: number;
   name: string;
-  description: string | null;
   location: string | null;
   status: ProjectStatus;
   startDate: string | null;
   targetEndDate: string | null;
   actualEndDate: string | null;
   allocatedBudget: number | null;
-  sellingPrice: number | null;
-  estimatedCost: number | null;
-  actualExpense: number | null;
-  progressPercent: number;
   projectManagerId: string;
   projectManagerName: string | null;
   foremanId: string;
@@ -58,17 +53,12 @@ function toProjectRow(
   row: {
     id: number;
     project_name: string;
-    description: string | null;
     location: string | null;
     status: ProjectStatus;
     start_date: string | null;
     target_end_date: string | null;
     actual_end_date: string | null;
     allocated_budget: number | null;
-    selling_price: number | null;
-    estimated_cost: number | null;
-    actual_expense: number | null;
-    progress_percent: number;
     project_manager_id: string;
     foreman_id: string;
   },
@@ -77,17 +67,12 @@ function toProjectRow(
   return {
     id: row.id,
     name: row.project_name,
-    description: row.description,
     location: row.location,
     status: row.status,
     startDate: row.start_date,
     targetEndDate: row.target_end_date,
     actualEndDate: row.actual_end_date,
     allocatedBudget: row.allocated_budget,
-    sellingPrice: row.selling_price,
-    estimatedCost: row.estimated_cost,
-    actualExpense: row.actual_expense,
-    progressPercent: row.progress_percent,
     projectManagerId: row.project_manager_id,
     projectManagerName: formatName(namesById.get(row.project_manager_id)),
     foremanId: row.foreman_id,

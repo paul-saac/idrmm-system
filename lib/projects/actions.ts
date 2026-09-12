@@ -4,8 +4,6 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
-import type { ProjectStatus } from "@/lib/supabase/types";
-import { PROJECT_STATUSES } from "@/lib/projects/status";
 
 export type ProjectActionState = {
   error?: string;
@@ -24,12 +22,6 @@ function parseOptionalDate(value: FormDataEntryValue | null) {
   return str || null;
 }
 
-function parseProgressPercent(value: FormDataEntryValue | null) {
-  const num = Number(String(value ?? "0").trim());
-  if (!Number.isFinite(num)) return 0;
-  return Math.min(100, Math.max(0, Math.round(num)));
-}
-
 export async function createProject(
   _prevState: ProjectActionState,
   formData: FormData
@@ -42,7 +34,6 @@ export async function createProject(
 
   const projectName = String(formData.get("projectName") ?? "").trim();
   const location = String(formData.get("location") ?? "").trim();
-  const description = String(formData.get("description") ?? "").trim();
   const projectManagerId = String(formData.get("projectManagerId") ?? "").trim();
   const foremanId = String(formData.get("foremanId") ?? "").trim();
 
@@ -61,11 +52,9 @@ export async function createProject(
   const { error } = await supabase.from("projects").insert({
     project_name: projectName,
     location: location || null,
-    description: description || null,
     start_date: parseOptionalDate(formData.get("startDate")),
     target_end_date: parseOptionalDate(formData.get("targetEndDate")),
     allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
-    selling_price: parseOptionalNumber(formData.get("sellingPrice")),
     project_manager_id: projectManagerId,
     foreman_id: foremanId,
     created_by: profile.id,
@@ -93,12 +82,10 @@ export async function updateProject(
 
   const projectName = String(formData.get("projectName") ?? "").trim();
   const location = String(formData.get("location") ?? "").trim();
-  const description = String(formData.get("description") ?? "").trim();
   const projectManagerId = String(
     formData.get("projectManagerId") ?? ""
   ).trim();
   const foremanId = String(formData.get("foremanId") ?? "").trim();
-  const status = String(formData.get("status") ?? "").trim() as ProjectStatus;
 
   if (!projectName) {
     return { error: "Project name is required." };
@@ -109,27 +96,23 @@ export async function updateProject(
   if (!foremanId) {
     return { error: "Select a Foreman." };
   }
-  if (!PROJECT_STATUSES.includes(status)) {
-    return { error: "Select a valid status." };
-  }
 
   const supabase = await createClient();
 
+  // status is deliberately not editable here — it's kept in sync with
+  // actual logged progress by lib/projects/status.ts's
+  // deriveProjectStatusFromProgress, called from lib/daily-logs/
+  // actions.ts whenever progress can change (approving a daily log,
+  // resolving a work_item flag).
   const { error } = await supabase
     .from("projects")
     .update({
       project_name: projectName,
       location: location || null,
-      description: description || null,
-      status,
       start_date: parseOptionalDate(formData.get("startDate")),
       target_end_date: parseOptionalDate(formData.get("targetEndDate")),
       actual_end_date: parseOptionalDate(formData.get("actualEndDate")),
       allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
-      selling_price: parseOptionalNumber(formData.get("sellingPrice")),
-      estimated_cost: parseOptionalNumber(formData.get("estimatedCost")),
-      actual_expense: parseOptionalNumber(formData.get("actualExpense")),
-      progress_percent: parseProgressPercent(formData.get("progressPercent")),
       project_manager_id: projectManagerId,
       foreman_id: foremanId,
     })

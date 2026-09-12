@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { CalendarDays, Plus } from "lucide-react";
 import { DailyLogCard } from "@/components/projects/daily-logs/daily-log-card";
 import { AddDailyLogModal } from "@/components/projects/daily-logs/add-daily-log-modal";
@@ -24,6 +25,7 @@ export function DailyLogsView({
   materialRequests,
   equipmentRequests,
   logs,
+  toolbarSlot,
 }: {
   projectId: number;
   categories: CostCategory[];
@@ -31,6 +33,11 @@ export function DailyLogsView({
   materialRequests: MaterialRequestDetail[];
   equipmentRequests: EquipmentRequestDetail[];
   logs: DailyLogSummary[];
+  /** DOM node (rendered by the parent's sub-tabs row) this view's own
+   * toolbar portals into, so it lines up beside the sub-tab pills
+   * instead of stacking below them — see SubTabsRow in
+   * project-detail-view.tsx. */
+  toolbarSlot: HTMLDivElement | null;
 }) {
   const [addOpen, setAddOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | DailyLogStatus>(
@@ -59,52 +66,56 @@ export function DailyLogsView({
     return matchesStatus && matchesDate;
   });
 
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <select
-          value={statusFilter}
-          onChange={(e) =>
-            setStatusFilter(e.target.value as "all" | DailyLogStatus)
-          }
-          className="cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        >
-          {STATUS_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+  const toolbar = (
+    <>
+      <select
+        value={statusFilter}
+        onChange={(e) =>
+          setStatusFilter(e.target.value as "all" | DailyLogStatus)
+        }
+        className="cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+      >
+        {STATUS_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
 
-        <label className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50">
-          <CalendarDays className="size-4" />
-          {dateFilter || "Filter By Date"}
-          <input
-            type="date"
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
-            className="absolute size-0 opacity-0"
-          />
-        </label>
-        {dateFilter && (
-          <button
-            type="button"
-            onClick={() => setDateFilter("")}
-            className="cursor-pointer text-xs text-zinc-400 underline hover:text-zinc-600"
-          >
-            Clear
-          </button>
-        )}
-
+      <label className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50">
+        <CalendarDays className="size-4" />
+        {dateFilter || "Filter By Date"}
+        <input
+          type="date"
+          value={dateFilter}
+          onChange={(e) => setDateFilter(e.target.value)}
+          className="absolute size-0 opacity-0"
+        />
+      </label>
+      {dateFilter && (
         <button
           type="button"
-          onClick={() => setAddOpen(true)}
-          className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+          onClick={() => setDateFilter("")}
+          className="cursor-pointer text-xs text-zinc-400 underline hover:text-zinc-600"
         >
-          <Plus className="size-4" />
-          Add Daily Log
+          Clear
         </button>
-      </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setAddOpen(true)}
+        className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+      >
+        <Plus className="size-4" />
+        Add Daily Log
+      </button>
+    </>
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      {toolbarSlot && createPortal(toolbar, toolbarSlot)}
 
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-white py-16 text-center">

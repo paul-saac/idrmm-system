@@ -27,6 +27,7 @@ import {
   listOtherExpenses,
   summarizeExpenses,
 } from "@/lib/expenses/data";
+import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
 import { ProjectDetailView } from "@/components/projects/project-detail-view";
 
 export const metadata: Metadata = { title: "Project Details" };
@@ -102,6 +103,22 @@ export default async function ProjectDetailPage({
   // Depends on costEstimate's categories/tasks, so it can't join the
   // Promise.all above.
   const progress = await getProjectProgress(projectId, costEstimate.categories);
+
+  // Self-healing status sync, not just a write-time side effect of the
+  // two daily-log actions that call this same function: progress can
+  // also shift from a Cost Estimate edit alone (no daily-log event at
+  // all), and this is also what corrects a project whose status went
+  // stale before deriveProjectStatusFromProgress existed — there's no
+  // migration that can "replay" old approvals, so the next time anyone
+  // opens the project is the fix. Patched onto the in-memory `project`
+  // rather than re-fetching, so this same request already reflects it.
+  const syncedStatus = await syncProjectStatusFromProgress(
+    projectId,
+    progress.overallPercent
+  );
+  if (syncedStatus && syncedStatus !== project.status) {
+    project.status = syncedStatus;
+  }
 
   return (
     <ProjectDetailView

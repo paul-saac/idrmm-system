@@ -2,7 +2,6 @@
 
 import { useActionState, useEffect } from "react";
 import { updateProject, type ProjectActionState } from "@/lib/projects/actions";
-import { PROJECT_STATUSES, projectStatusLabel } from "@/lib/projects/status";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
 
@@ -71,60 +70,6 @@ export function EditProjectForm({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5 sm:col-span-2">
-        <label
-          htmlFor="edit-description"
-          className="text-sm font-medium text-zinc-800"
-        >
-          Description
-        </label>
-        <textarea
-          id="edit-description"
-          name="description"
-          rows={3}
-          defaultValue={project.description ?? ""}
-          className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="edit-status" className="text-sm font-medium text-zinc-800">
-          Status
-        </label>
-        <select
-          id="edit-status"
-          name="status"
-          required
-          defaultValue={project.status}
-          className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        >
-          {PROJECT_STATUSES.map((status) => (
-            <option key={status} value={status}>
-              {projectStatusLabel(status)}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="edit-progressPercent"
-          className="text-sm font-medium text-zinc-800"
-        >
-          Overall progress (%)
-        </label>
-        <input
-          id="edit-progressPercent"
-          name="progressPercent"
-          type="number"
-          min="0"
-          max="100"
-          step="1"
-          defaultValue={project.progressPercent}
-          className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        />
-      </div>
-
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-startDate"
@@ -187,60 +132,6 @@ export function EditProjectForm({
           min="0"
           step="0.01"
           defaultValue={project.allocatedBudget ?? ""}
-          className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="edit-sellingPrice"
-          className="text-sm font-medium text-zinc-800"
-        >
-          Selling price
-        </label>
-        <input
-          id="edit-sellingPrice"
-          name="sellingPrice"
-          type="number"
-          min="0"
-          step="0.01"
-          defaultValue={project.sellingPrice ?? ""}
-          className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="edit-estimatedCost"
-          className="text-sm font-medium text-zinc-800"
-        >
-          Total estimated cost
-        </label>
-        <input
-          id="edit-estimatedCost"
-          name="estimatedCost"
-          type="number"
-          min="0"
-          step="0.01"
-          defaultValue={project.estimatedCost ?? ""}
-          className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <label
-          htmlFor="edit-actualExpense"
-          className="text-sm font-medium text-zinc-800"
-        >
-          Actual expense
-        </label>
-        <input
-          id="edit-actualExpense"
-          name="actualExpense"
-          type="number"
-          min="0"
-          step="0.01"
-          defaultValue={project.actualExpense ?? ""}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>

@@ -6,8 +6,11 @@ import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
 import { deriveMaterialRequestStatus } from "@/lib/material-requests/status";
 import { deriveEquipmentRequestStatus } from "@/lib/equipment-requests/status";
+import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
 import { nextMaterialCode } from "@/lib/materials/codes";
 import { listFlaggedEntryIds, type EntryType } from "@/lib/daily-logs/data";
+import { getCostEstimate } from "@/lib/cost-estimate/data";
+import { getProjectProgress } from "@/lib/progress/data";
 
 export type DailyLogActionState = {
   error?: string;
@@ -1188,6 +1191,25 @@ async function creditEquipmentAcquisitionIds(
   }
 }
 
+/**
+ * Recomputes progress and syncs projects.status to match, after the two
+ * events here that can actually move it: approving a daily log, and
+ * resolving a flag on a work_item entry (the one entry type a flag can
+ * exclude/re-include from the progress calculation itself). A flagged-
+ * but-not-yet-resolved work item, or a still-pending log, never reaches
+ * here, since neither counts toward progress in the first place.
+ *
+ * This isn't the only place status gets synced — see
+ * lib/projects/sync.ts's own doc comment for why the project detail
+ * page also does this on every load (progress can shift from a Cost
+ * Estimate edit too, with no daily-log event at all).
+ */
+async function syncProjectStatus(projectId: number) {
+  const costEstimate = await getCostEstimate(projectId);
+  const progress = await getProjectProgress(projectId, costEstimate.categories);
+  await syncProjectStatusFromProgress(projectId, progress.overallPercent);
+}
+
 export async function updateDailyLogStatus(
   dailyLogId: number,
   projectId: number,
@@ -1268,6 +1290,7 @@ export async function updateDailyLogStatus(
     await creditMaterialUsageItemIds(supabase, usageItemIds);
     await creditMaterialProcurementIds(supabase, projectId, profile.id, procurementIds);
     await creditEquipmentAcquisitionIds(supabase, acquisitionIds);
+    await syncProjectStatus(projectId);
   }
 
   revalidatePath(`/admin/projects/${projectId}`);
@@ -1526,10 +1549,17 @@ export async function resolveDailyLogEntryFlag(
     );
   } else if (flag.entry_type === "equipment_acquisition") {
     await creditEquipmentAcquisitionIds(supabase, [flag.entry_id]);
+  } else if (flag.entry_type === "work_item") {
+    // The one entry type resolving a flag can actually move progress
+    // on: a work_item stops being excluded by listFlaggedEntryIds the
+    // moment this resolves, so the project's overall % (and therefore
+    // its derived status) can jump right here, not just on the next
+    // daily log approval.
+    await syncProjectStatus(projectId);
   }
-  // work_item / labor_item / expense_item have no direct write
-  // side-effect to run here — they simply stop being excluded by
-  // listFlaggedEntryIds's own check on the next Progress/Expenses read.
+  // labor_item / expense_item have no direct write side-effect and
+  // don't factor into progress — they simply stop being excluded by
+  // listFlaggedEntryIds's own check on the next Expenses read.
 
   revalidatePath(`/admin/projects/${projectId}`);
   revalidatePath(`/admin/projects/${projectId}/daily-logs/${dailyLogId}`);

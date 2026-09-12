@@ -42,7 +42,6 @@ export interface Database {
         Row: {
           id: number;
           project_name: string;
-          description: string | null;
           location: string | null;
           allocated_budget: number | null;
           start_date: string | null;
@@ -51,17 +50,12 @@ export interface Database {
           status: ProjectStatus;
           project_manager_id: string;
           foreman_id: string;
-          selling_price: number | null;
-          estimated_cost: number | null;
-          actual_expense: number | null;
-          progress_percent: number;
           created_by: string;
           created_at: string | null;
           updated_at: string | null;
         };
         Insert: {
           project_name: string;
-          description?: string | null;
           location?: string | null;
           allocated_budget?: number | null;
           start_date?: string | null;
@@ -70,15 +64,10 @@ export interface Database {
           status?: ProjectStatus;
           project_manager_id: string;
           foreman_id: string;
-          selling_price?: number | null;
-          estimated_cost?: number | null;
-          actual_expense?: number | null;
-          progress_percent?: number;
           created_by: string;
         };
         Update: {
           project_name?: string;
-          description?: string | null;
           location?: string | null;
           allocated_budget?: number | null;
           start_date?: string | null;
@@ -87,10 +76,6 @@ export interface Database {
           status?: ProjectStatus;
           project_manager_id?: string;
           foreman_id?: string;
-          selling_price?: number | null;
-          estimated_cost?: number | null;
-          actual_expense?: number | null;
-          progress_percent?: number;
         };
         Relationships: [];
       };

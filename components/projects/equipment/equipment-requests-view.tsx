@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react";
 import { EquipmentRequestEditForm } from "@/components/projects/equipment/equipment-request-edit-form";
@@ -62,10 +63,15 @@ export function EquipmentRequestsView({
   projectId,
   requests,
   currentUserName,
+  toolbarSlot,
 }: {
   projectId: number;
   requests: EquipmentRequestListItem[];
   currentUserName: string;
+  /** DOM node (rendered by the parent's sub-tabs row) this view's own
+   * "Request Equipment" button portals into — see SubTabsRow in
+   * project-detail-view.tsx. */
+  toolbarSlot: HTMLDivElement | null;
 }) {
   const [collapsed, setCollapsed] = useState<Set<EquipmentRequestStatus>>(
     new Set(
@@ -102,16 +108,18 @@ export function EquipmentRequestsView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => setRequestOpen(true)}
-          className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
-        >
-          <Plus className="size-4" />
-          Request Equipment
-        </button>
-      </div>
+      {toolbarSlot &&
+        createPortal(
+          <button
+            type="button"
+            onClick={() => setRequestOpen(true)}
+            className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+          >
+            <Plus className="size-4" />
+            Request Equipment
+          </button>,
+          toolbarSlot
+        )}
 
       <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
       <div className="border-b border-zinc-200 px-4 py-3">

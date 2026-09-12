@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Eye, ListFilter, Plus, Search, Trash2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { MaterialForm } from "@/components/projects/materials/material-form";
@@ -98,9 +99,14 @@ function DeleteMaterialButton({
 export function MaterialsMonitoringView({
   projectId,
   materials,
+  toolbarSlot,
 }: {
   projectId: number;
   materials: ProjectMaterial[];
+  /** DOM node (rendered by the parent's sub-tabs row) this view's own
+   * "Add Material" button portals into — see SubTabsRow in
+   * project-detail-view.tsx. */
+  toolbarSlot: HTMLDivElement | null;
 }) {
   const [statusFilter, setStatusFilter] = useState<MaterialStatus | "all">(
     "all"
@@ -126,16 +132,18 @@ export function MaterialsMonitoringView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={() => setFormModal({ mode: "add" })}
-          className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
-        >
-          <Plus className="size-4" />
-          Add Material
-        </button>
-      </div>
+      {toolbarSlot &&
+        createPortal(
+          <button
+            type="button"
+            onClick={() => setFormModal({ mode: "add" })}
+            className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
+          >
+            <Plus className="size-4" />
+            Add Material
+          </button>,
+          toolbarSlot
+        )}
 
       <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
