@@ -2,7 +2,9 @@
 
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  /* The project's "black" is a warm near-black (#3B3939), not a pure/cold
+     one — see the --color-zinc-900 override below. Body text matches it. */
+  --foreground: #3b3939;
 }
 
 @theme inline {
@@ -12,15 +14,59 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/*
+ * Every card in the app (project/stat cards, tables, modals, chart
+ * containers, ...) uses the `rounded-lg` utility, so overriding this one
+ * design token reshapes all of them at once — sharper corners, 5px
+ * instead of Tailwind's default 8px — without hunting down every
+ * individual `rounded-lg` across the codebase. Buttons intentionally
+ * aren't affected: they use the bare `rounded` utility (a separate
+ * token), left at its own already-established 4px.
+ */
+@theme {
+  --radius-lg: 5px;
+
+  /*
+   * The whole app uses zinc-900 as its "black" — primary buttons, the
+   * sidebar, headings, active tab/calendar-day states, dark section
+   * headers. Tailwind's real zinc-900 (#18181b) is a cold near-black;
+   * this project's black is a warmer, slightly lighter #3B3939.
+   * Overriding this one token repaints every bg-/text-/border-/ring-
+   * zinc-900 across all 40+ files at once. zinc-950 (used as a
+   * hover-darker target in a couple of spots) is nudged just below it so
+   * "darker on hover" still reads.
+   */
+  --color-zinc-900: #3b3939;
+  --color-zinc-950: #2e2c2c;
 }
+
+/*
+ * Deliberately no `@media (prefers-color-scheme: dark)` override here.
+ * Every page in this app (login, admin dashboard, forms) is designed
+ * light-only with explicit colors — there's no dark mode built. Letting
+ * --foreground flip to near-white on a dark-mode OS/browser silently broke
+ * every <input>/<textarea>/<select> that didn't set its own text color
+ * (Tailwind's base styles make form controls inherit `color`), making
+ * typed text invisible against the white form backgrounds. Pin the light
+ * values so that can't happen again in future forms.
+ */
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/*
+ * Hides every scrollbar in the app (main content panes, modals, tables
+ * with overflow-x-auto, ...) while leaving the element itself still
+ * scrollable via wheel/trackpad/touch/keyboard — only the visible
+ * scrollbar track+thumb are removed, not the scrolling behavior.
+ */
+* {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+*::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Chromium-based Edge */
 }

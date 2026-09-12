@@ -1,0 +1,36 @@
+-- ============================================================================
+-- Extends 0023's per-entry flags with a third state: a flagged entry can
+-- now be corrected *in place* (today, an admin standing in for the
+-- foreman who doesn't have a portal yet; later, the foreman themselves)
+-- rather than only ever being fixed by a brand-new entry elsewhere. See
+-- updateFlaggedEntry / resolveDailyLogEntryFlag / reflagDailyLogEntry in
+-- lib/daily-logs/actions.ts.
+--
+-- A flag's state is derived from two columns, not stored directly:
+--   open      resolved_at is null, entry_updated_at is null
+--             -> entry excluded, nothing submitted yet
+--   updated   resolved_at is null, entry_updated_at is not null
+--             -> entry still excluded, awaiting the admin's re-review
+--   resolved  resolved_at is not null
+--             -> entry counts as real data again, whether it got there
+--                by an accepted in-place fix (entry_updated_at also
+--                set) or the admin dismissing the flag outright as a
+--                false alarm (entry_updated_at still null) — there's no
+--                "fix landed elsewhere" path anymore, every correction
+--                happens in place, so resolved always means resolved.
+--                entry_updated_at is kept purely as an audit trail of
+--                whether a correction actually happened. See
+--                listFlaggedEntryIds in lib/daily-logs/data.ts, which is
+--                what actually enforces this.
+--
+-- Re-flagging (rejecting an in-place fix) reuses the same row rather
+-- than inserting a new one — reason/flagged_by/flagged_at get
+-- overwritten and entry_updated_at clears back to null, dropping the
+-- flag back to "open". The unique(entry_type, entry_id) constraint from
+-- 0023 is exactly what makes this reuse-the-row approach correct.
+--
+-- Run this AFTER 0023_daily_log_entry_flags.sql.
+-- ============================================================================
+
+alter table public.daily_log_entry_flags
+  add column if not exists entry_updated_at timestamptz;
