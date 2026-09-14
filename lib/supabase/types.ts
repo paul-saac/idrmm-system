@@ -118,6 +118,9 @@ export interface Database {
           other_cost_estimate: number | null;
           total_estimate_cost: number | null;
           weight: number | null;
+          planned_start_date: string | null;
+          planned_end_date: string | null;
+          predecessor_task_id: number | null;
         };
         Insert: {
           project_id: number;
@@ -131,6 +134,9 @@ export interface Database {
           other_cost_estimate?: number;
           total_estimate_cost?: number;
           weight?: number;
+          planned_start_date?: string | null;
+          planned_end_date?: string | null;
+          predecessor_task_id?: number | null;
         };
         Update: {
           category_id?: number;
@@ -143,6 +149,9 @@ export interface Database {
           other_cost_estimate?: number;
           total_estimate_cost?: number;
           weight?: number;
+          planned_start_date?: string | null;
+          planned_end_date?: string | null;
+          predecessor_task_id?: number | null;
         };
         Relationships: [];
       };

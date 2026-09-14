@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { MapPin, Pencil, Trash2, LayoutGrid, CircleDollarSign, CalendarDays, PiggyBank } from "lucide-react";
@@ -10,6 +11,23 @@ import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { TotalCostsChart } from "@/components/projects/total-costs-chart";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
 import { ProgressView } from "@/components/projects/progress/progress-view";
+// @svar-ui/react-gantt draws a background pattern that depends on
+// client-measured layout, which it only computes post-mount — loaded
+// with ssr:false so that mismatch never reaches hydration at all,
+// instead of rendering it on the server just to have the client patch
+// it over.
+const GanttChartView = dynamic(
+  () =>
+    import("@/components/projects/progress/gantt-chart-view").then(
+      (mod) => mod.GanttChartView
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-140 animate-pulse rounded-lg border border-zinc-200 bg-zinc-50" />
+    ),
+  }
+);
 import { DailyLogsView } from "@/components/projects/daily-logs/daily-logs-view";
 import { MaterialsOverviewView } from "@/components/projects/materials/materials-overview-view";
 import { MaterialsMonitoringView } from "@/components/projects/materials/materials-monitoring-view";
@@ -52,6 +70,7 @@ import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
 import type { CostEstimate } from "@/lib/cost-estimate/data";
 import type { ProjectProgress } from "@/lib/progress/data";
+import type { DelayRiskAssessment } from "@/lib/forecasting/data";
 import type { DailyLogSummary } from "@/lib/daily-logs/data";
 
 const MAIN_TABS = [
@@ -72,6 +91,7 @@ type SubTab = (typeof SUB_TABS)[number]["value"];
 const PROGRESS_SUB_TABS = [
   { value: "overview", label: "Progress Overview" },
   { value: "daily-logs", label: "Daily Logs" },
+  { value: "schedule", label: "Schedule" },
 ] as const;
 type ProgressSubTab = (typeof PROGRESS_SUB_TABS)[number]["value"];
 
@@ -233,6 +253,7 @@ export function ProjectDetailView({
   foremen,
   costEstimate,
   progress,
+  risk,
   dailyLogs,
   materials,
   materialsCounts,
@@ -254,6 +275,7 @@ export function ProjectDetailView({
   foremen: AccountRow[];
   costEstimate: CostEstimate;
   progress: ProjectProgress;
+  risk: DelayRiskAssessment;
   dailyLogs: DailyLogSummary[];
   materials: ProjectMaterial[];
   materialsCounts: MaterialsOverviewCounts;
@@ -499,8 +521,9 @@ export function ProjectDetailView({
               startDate={project.startDate}
               targetEndDate={project.targetEndDate}
               progress={progress}
+              risk={risk}
             />
-          ) : (
+          ) : activeProgressSubTab === "daily-logs" ? (
             <DailyLogsView
               projectId={project.id}
               categories={costEstimate.categories}
@@ -509,6 +532,12 @@ export function ProjectDetailView({
               equipmentRequests={fulfillableEquipmentRequests}
               logs={dailyLogs}
               toolbarSlot={toolbarSlotEl}
+            />
+          ) : (
+            <GanttChartView
+              categories={costEstimate.categories}
+              progress={progress}
+              projectStartDate={project.startDate}
             />
           )
         ) : activeTab === "materials" ? (

@@ -1,6 +1,8 @@
 import { CheckCircle2, Circle, Clock, ListTodo } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ProjectProgress, TaskStatus } from "@/lib/progress/data";
+import type { DelayRiskAssessment } from "@/lib/forecasting/data";
+import { riskLevelLabel, riskLevelBadgeClasses } from "@/lib/forecasting/status";
 
 const STATUS_BAR_COLOR: Record<TaskStatus, string> = {
   completed: "bg-emerald-400",
@@ -70,10 +72,12 @@ export function ProgressView({
   startDate,
   targetEndDate,
   progress,
+  risk,
 }: {
   startDate: string | null;
   targetEndDate: string | null;
   progress: ProjectProgress;
+  risk: DelayRiskAssessment;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -94,6 +98,66 @@ export function ProgressView({
           <span>Start: {formatDateLong(startDate)}</span>
           <span>Target Completion: {formatDateLong(targetEndDate)}</span>
         </div>
+      </div>
+
+      <div className="rounded-lg border border-zinc-200 bg-white p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-xs font-semibold tracking-wide text-zinc-400 uppercase">
+            Delay Risk Assessment
+          </h3>
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-medium ${riskLevelBadgeClasses(risk.riskLevel)}`}
+          >
+            {riskLevelLabel(risk.riskLevel)}
+          </span>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div>
+            <p className="text-xs text-zinc-500">Forecasted Completion</p>
+            <p className="mt-0.5 text-sm font-semibold text-zinc-900">
+              {formatDateLong(risk.forecastedCompletionDate)}
+            </p>
+            {risk.daysAheadOrBehind != null && risk.daysAheadOrBehind !== 0 && (
+              <p
+                className={`text-xs ${risk.daysAheadOrBehind > 0 ? "text-red-600" : "text-emerald-600"}`}
+              >
+                {risk.daysAheadOrBehind > 0
+                  ? `${risk.daysAheadOrBehind} days late`
+                  : `${Math.abs(risk.daysAheadOrBehind)} days early`}
+              </p>
+            )}
+          </div>
+          <div>
+            <p className="text-xs text-zinc-500">Schedule Performance (SPI)</p>
+            <p className="mt-0.5 text-sm font-semibold text-zinc-900">
+              {risk.spi != null ? risk.spi.toFixed(2) : "—"}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-zinc-500">Cost Performance (CPI)</p>
+            <p className="mt-0.5 text-sm font-semibold text-zinc-900">
+              {risk.cpi != null ? risk.cpi.toFixed(2) : "—"}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-zinc-500">Delay Reports (30d)</p>
+            <p className="mt-0.5 text-sm font-semibold text-zinc-900">
+              {risk.recentDelayIncidentCount}
+            </p>
+          </div>
+        </div>
+
+        {!risk.hasCompleteScheduleBaseline && (
+          <p className="mt-4 text-xs text-zinc-400 italic">
+            {risk.unscheduledTaskCount} task
+            {risk.unscheduledTaskCount === 1 ? "" : "s"} still need
+            {risk.unscheduledTaskCount === 1 ? "s" : ""} a planned schedule —
+            using the project&apos;s overall timeline as a stand-in for those.
+            Set planned start/end dates per task in the Cost Estimate for a
+            more accurate forecast.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

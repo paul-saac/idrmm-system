@@ -28,6 +28,7 @@ import {
   summarizeExpenses,
 } from "@/lib/expenses/data";
 import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
+import { getDelayRiskAssessment } from "@/lib/forecasting/data";
 import { ProjectDetailView } from "@/components/projects/project-detail-view";
 
 export const metadata: Metadata = { title: "Project Details" };
@@ -120,6 +121,16 @@ export default async function ProjectDetailPage({
     project.status = syncedStatus;
   }
 
+  // Same reasoning as costEstimate/progress above: depends on data
+  // fetched earlier, so it can't join the first Promise.all.
+  const risk = await getDelayRiskAssessment(
+    projectId,
+    project,
+    costEstimate,
+    progress,
+    expenseOverview
+  );
+
   return (
     <ProjectDetailView
       project={project}
@@ -127,6 +138,7 @@ export default async function ProjectDetailPage({
       foremen={foremen}
       costEstimate={costEstimate}
       progress={progress}
+      risk={risk}
       dailyLogs={dailyLogs}
       materials={materials}
       materialsCounts={summarizeMaterials(materials)}

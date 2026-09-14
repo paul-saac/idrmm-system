@@ -70,3 +70,88 @@ body {
 *::-webkit-scrollbar {
   display: none; /* Chrome, Safari, Chromium-based Edge */
 }
+
+/*
+ * Exception to the app-wide hidden-scrollbar rule above: the Gantt
+ * Chart (Progress > Schedule) specifically needs a *visible* scrollbar,
+ * both axes — it's a bounded, internally-scrolling widget (its own
+ * sticky header/toolbar stay put while only the rows/timeline move),
+ * and with no visible thumb there's no affordance at all that more
+ * content exists off-screen. Scoped to .wx-willow-theme (the Gantt's
+ * own theme wrapper class) so nothing else in the app is affected.
+ */
+.wx-willow-theme,
+.wx-willow-theme * {
+  scrollbar-width: thin; /* Firefox */
+}
+.wx-willow-theme *::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+}
+.wx-willow-theme *::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 4px;
+}
+.wx-willow-theme *::-webkit-scrollbar-thumb:hover {
+  background: #a1a1aa;
+}
+.wx-willow-theme *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/*
+ * Gantt Chart progress-bar color differentiation. By default
+ * @svar-ui/react-gantt's "completed" fill (.wx-progress-percent) and
+ * its "remaining" base bar (.wx-bar.wx-task / .wx-bar.wx-summary) both
+ * read from the same design-token family (verified by measuring real
+ * computed colors: rgb(57,131,235) base vs rgb(31,107,217) fill for a
+ * task — a real but subtle ~25-unit difference, not the clear
+ * track-vs-fill contrast a progress indicator needs). Overridden here
+ * with a genuinely light "remaining" tone and a solid "completed" tone
+ * per task type, chosen to still keep the white progress-percentage
+ * label (see taskTemplate in gantt-chart-view.tsx) readable against
+ * both.
+ *
+ * `!important` on the base-bar rules specifically: matched the
+ * library's own selector specificity exactly (3 classes each) without
+ * it, which ties resolve by CSS source order — and since
+ * @svar-ui/react-gantt's stylesheet is imported from inside the
+ * component file while this global stylesheet loads at the app root,
+ * the library's rule was winning that tie (confirmed by measuring the
+ * computed color still coming back as the library's own default, not
+ * this override). The fill rules didn't need it — different selector
+ * shape there wasn't a tie.
+ */
+.wx-willow-theme .wx-bar.wx-task {
+  background-color: #60a5fa !important; /* remaining */
+}
+.wx-willow-theme .wx-bar.wx-task .wx-progress-percent {
+  background-color: #2563eb; /* completed */
+}
+.wx-willow-theme .wx-bar.wx-summary {
+  background-color: #34d399 !important; /* remaining */
+}
+.wx-willow-theme .wx-bar.wx-summary .wx-progress-percent {
+  background-color: #059669; /* completed */
+}
+
+/*
+ * Gantt Chart "Task" column width. Passing `flexgrow: 0` in the column
+ * config (gantt-chart-view.tsx) has no effect — the "text" column's
+ * rendered inline style keeps `flex-grow: 1` regardless of what's
+ * passed, confirmed by inspecting the actual DOM (an explicit `0` is
+ * very likely being treated as "not set" internally, a common falsy-
+ * value bug: `column.flexgrow || 1`). It's the only one of the six
+ * columns with any flex-grow at all — the other five are already
+ * fixed-width — so left alone it silently claims any extra space the
+ * grid pane has beyond the other columns' widths, growing well past
+ * its own configured 176px. `!important` here overrides the inline
+ * style directly (inline styles otherwise always win over an external
+ * stylesheet); `.wx-col-text` is a stable class the library itself
+ * applies to both the header cell and every body cell of this specific
+ * column, not a generated/hashed one.
+ */
+.wx-willow-theme .wx-col-text {
+  flex-grow: 0 !important;
+}

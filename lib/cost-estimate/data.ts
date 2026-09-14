@@ -19,6 +19,16 @@ export type CostTask = {
   otherCostItems: OtherCostItem[];
   totalEstimateCost: number;
   weight: number;
+  /** The task's baseline schedule — null on any task nobody's dated yet
+   * (nothing requires these; see 0027_estimate_task_schedule.sql). Used
+   * by the Gantt Chart view and by Planned Value in the delay-risk/
+   * forecasting calculation. */
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
+  /** The task this one starts after (Finish-to-Start; see
+   * 0029_estimate_task_predecessor.sql) — draws as a dependency arrow
+   * in the Gantt Chart. Null means no predecessor set. */
+  predecessorTaskId: number | null;
 };
 
 export type CostCategory = {
@@ -135,6 +145,9 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       otherCostItems: otherCostsByTask.get(row.id) ?? [],
       totalEstimateCost: row.total_estimate_cost ?? 0,
       weight: row.weight ?? 0,
+      plannedStartDate: row.planned_start_date,
+      plannedEndDate: row.planned_end_date,
+      predecessorTaskId: row.predecessor_task_id,
     };
     const existing = tasksByCategory.get(row.category_id) ?? [];
     existing.push(task);

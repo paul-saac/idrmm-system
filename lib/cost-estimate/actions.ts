@@ -55,6 +55,48 @@ function parseNumber(value: FormDataEntryValue | null) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function parseOptionalDate(value: FormDataEntryValue | null) {
+  const str = String(value ?? "").trim();
+  return str || null;
+}
+
+function parseOptionalId(value: FormDataEntryValue | null) {
+  const str = String(value ?? "").trim();
+  if (!str) return null;
+  const num = Number(str);
+  return Number.isFinite(num) ? num : null;
+}
+
+/**
+ * A task's predecessor is picked from a <select> the form already limits
+ * to that project's own tasks, but the submitted value still comes from
+ * the client, so it's re-checked server-side: it must name a real task
+ * in the same project, and (on an edit) can't be the task itself.
+ */
+async function validatePredecessor(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  predecessorTaskId: number | null,
+  projectId: number,
+  excludeTaskId?: number
+): Promise<string | null> {
+  if (predecessorTaskId === null) return null;
+  if (predecessorTaskId === excludeTaskId) {
+    return "A task can't be its own predecessor.";
+  }
+
+  const { data } = await supabase
+    .from("estimate_tasks")
+    .select("id")
+    .eq("id", predecessorTaskId)
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (!data) {
+    return "Selected predecessor task is not valid.";
+  }
+  return null;
+}
+
 /**
  * Recomputes every task's weight (its share of the project's total
  * estimated cost) and every category's weight (the sum of its tasks'
@@ -258,6 +300,9 @@ function buildTaskFields(formData: FormData) {
   const laborEstimate = parseNumber(formData.get("laborEstimate"));
   const materialEstimate = parseNumber(formData.get("materialEstimate"));
   const equipmentEstimate = parseNumber(formData.get("equipmentEstimate"));
+  const plannedStartDate = parseOptionalDate(formData.get("plannedStartDate"));
+  const plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
+  const predecessorTaskId = parseOptionalId(formData.get("predecessorTaskId"));
 
   const otherCostItems = buildOtherCostItems(formData);
   const otherCostEstimate = otherCostItems.reduce(
@@ -279,6 +324,9 @@ function buildTaskFields(formData: FormData) {
     otherCostItems,
     otherCostEstimate,
     totalEstimateCost,
+    plannedStartDate,
+    plannedEndDate,
+    predecessorTaskId,
   };
 }
 
@@ -301,8 +349,24 @@ export async function createTask(
     if (!fields.categoryId) {
       return { error: "Select a category." };
     }
+    if (
+      fields.plannedStartDate &&
+      fields.plannedEndDate &&
+      fields.plannedEndDate < fields.plannedStartDate
+    ) {
+      return { error: "Planned end date can't be before the planned start date." };
+    }
 
     const supabase = await createClient();
+
+    const predecessorError = await validatePredecessor(
+      supabase,
+      fields.predecessorTaskId,
+      projectId
+    );
+    if (predecessorError) {
+      return { error: predecessorError };
+    }
 
     const { data: task, error } = await supabase
       .from("estimate_tasks")
@@ -317,6 +381,9 @@ export async function createTask(
         equipment_estimate: fields.equipmentEstimate,
         other_cost_estimate: fields.otherCostEstimate,
         total_estimate_cost: fields.totalEstimateCost,
+        planned_start_date: fields.plannedStartDate,
+        planned_end_date: fields.plannedEndDate,
+        predecessor_task_id: fields.predecessorTaskId,
       })
       .select("id")
       .single();
@@ -383,8 +450,25 @@ export async function updateTask(
     if (!fields.categoryId) {
       return { error: "Select a category." };
     }
+    if (
+      fields.plannedStartDate &&
+      fields.plannedEndDate &&
+      fields.plannedEndDate < fields.plannedStartDate
+    ) {
+      return { error: "Planned end date can't be before the planned start date." };
+    }
 
     const supabase = await createClient();
+
+    const predecessorError = await validatePredecessor(
+      supabase,
+      fields.predecessorTaskId,
+      projectId,
+      taskId
+    );
+    if (predecessorError) {
+      return { error: predecessorError };
+    }
 
     const { error } = await supabase
       .from("estimate_tasks")
@@ -398,6 +482,9 @@ export async function updateTask(
         equipment_estimate: fields.equipmentEstimate,
         other_cost_estimate: fields.otherCostEstimate,
         total_estimate_cost: fields.totalEstimateCost,
+        planned_start_date: fields.plannedStartDate,
+        planned_end_date: fields.plannedEndDate,
+        predecessor_task_id: fields.predecessorTaskId,
       })
       .eq("id", taskId);
 
@@ -448,6 +535,47 @@ export async function updateTask(
     }
 
     await recomputeWeights(supabase, projectId);
+
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * Persists a drag-move or drag-resize on the Gantt Chart view — just
+ * the two schedule dates, not the full task form updateTask needs.
+ * Called directly from the Gantt's on_date_change handler (not a form
+ * submission), same as any other Server Action can be invoked as a
+ * plain async function from a client component.
+ */
+export async function updateTaskSchedule(
+  taskId: number,
+  projectId: number,
+  plannedStartDate: string,
+  plannedEndDate: string
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    if (plannedEndDate < plannedStartDate) {
+      return { error: "Planned end date can't be before the planned start date." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({
+        planned_start_date: plannedStartDate,
+        planned_end_date: plannedEndDate,
+      })
+      .eq("id", taskId);
+
+    if (error) {
+      logSupabaseError("[updateTaskSchedule] Supabase update failed", error);
+      return { error: "Could not save the new schedule. Please try again." };
+    }
 
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };

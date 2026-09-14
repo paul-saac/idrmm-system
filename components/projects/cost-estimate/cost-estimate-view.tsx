@@ -154,6 +154,12 @@ export function CostEstimateView({
 
   const { categories, summary } = estimate;
   const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
+  // Every task across every phase, for the Predecessor dropdown — a task
+  // can depend on a task in a different phase (e.g. "Pour Slab" waiting
+  // on "Site Grading" from an earlier phase), not just its own siblings.
+  const allTasks = categories.flatMap((c) =>
+    c.tasks.map((t) => ({ id: t.id, name: t.name, categoryName: c.name }))
+  );
   const columnCount = 9 + (manageMode ? 1 : 0);
 
   return (
@@ -431,6 +437,7 @@ export function CostEstimateView({
         <TaskForm
           projectId={projectId}
           categories={categoryOptions}
+          tasks={allTasks}
           task={taskModal?.mode === "edit" ? taskModal.task : undefined}
           defaultCategoryId={
             taskModal?.mode === "add" ? taskModal.defaultCategoryId : undefined
