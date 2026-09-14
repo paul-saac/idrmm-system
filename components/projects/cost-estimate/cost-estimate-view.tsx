@@ -26,7 +26,7 @@ function formatWeight(weight: number | null | undefined) {
 
 const deleteInitialState: CostEstimateActionState = {};
 
-function CategoryDeleteButton({
+export function CategoryDeleteButton({
   categoryId,
   projectId,
   categoryName,
@@ -72,7 +72,7 @@ function CategoryDeleteButton({
   );
 }
 
-function TaskDeleteButton({
+export function TaskDeleteButton({
   taskId,
   projectId,
   taskName,

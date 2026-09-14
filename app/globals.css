@@ -73,85 +73,86 @@ body {
 
 /*
  * Exception to the app-wide hidden-scrollbar rule above: the Gantt
- * Chart (Progress > Schedule) specifically needs a *visible* scrollbar,
- * both axes — it's a bounded, internally-scrolling widget (its own
- * sticky header/toolbar stay put while only the rows/timeline move),
- * and with no visible thumb there's no affordance at all that more
- * content exists off-screen. Scoped to .wx-willow-theme (the Gantt's
- * own theme wrapper class) so nothing else in the app is affected.
+ * Chart (Overview > Schedule) specifically needs *visible* scrollbars
+ * — it's a bounded, internally-scrolling widget, and with no visible
+ * thumb there's no affordance at all that more content exists
+ * off-screen. Scoped to .gantt-task-react-root (a hook class this app
+ * added itself, in gantt-chart-view.tsx, around the library's wrapper)
+ * so nothing else in the app is affected.
+ *
+ * `.gantt-task-react-root` itself is the element with `overflow-auto` —
+ * and, confirmed directly by inspecting a project with enough rows to
+ * need it, it's genuinely the one that scrolls *vertically* through the
+ * row list — so it must be included directly in every selector below,
+ * not just `.gantt-task-react-root *` (its descendants). An earlier
+ * version of this rule used descendant-only selectors, which left the
+ * root's own scrollbar caught by the app-wide
+ * `*::-webkit-scrollbar { display: none }` above and invisible on
+ * Chrome/Edge/Safari.
+ *
+ * Horizontal scrolling of the timeline is different: the library
+ * doesn't rely on this root's own overflow for that at all — it draws
+ * its own thin scrollbar in a dedicated internal element (compiled
+ * class `_2k9Ys`) that sits in normal document flow right after the
+ * last row. The `position: sticky` rule below is what actually pins
+ * that scrollbar to the bottom of the visible viewport as you scroll
+ * down through the rows — without it, on any project with enough rows
+ * to need vertical scrolling, that horizontal scrollbar renders *below*
+ * the last row and is invisible until you scroll all the way past
+ * every row to reach it, confirmed directly by measuring its position
+ * against the root's own scrolled bounding box.
  */
-.wx-willow-theme,
-.wx-willow-theme * {
+.gantt-task-react-root,
+.gantt-task-react-root * {
   scrollbar-width: thin; /* Firefox */
 }
-.wx-willow-theme *::-webkit-scrollbar {
+.gantt-task-react-root::-webkit-scrollbar,
+.gantt-task-react-root *::-webkit-scrollbar {
   display: block;
   width: 8px;
   height: 8px;
 }
-.wx-willow-theme *::-webkit-scrollbar-thumb {
+.gantt-task-react-root::-webkit-scrollbar-thumb,
+.gantt-task-react-root *::-webkit-scrollbar-thumb {
   background: #d4d4d8;
   border-radius: 4px;
 }
-.wx-willow-theme *::-webkit-scrollbar-thumb:hover {
+.gantt-task-react-root::-webkit-scrollbar-thumb:hover,
+.gantt-task-react-root *::-webkit-scrollbar-thumb:hover {
   background: #a1a1aa;
 }
-.wx-willow-theme *::-webkit-scrollbar-track {
+.gantt-task-react-root::-webkit-scrollbar-track,
+.gantt-task-react-root *::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/*
- * Gantt Chart progress-bar color differentiation. By default
- * @svar-ui/react-gantt's "completed" fill (.wx-progress-percent) and
- * its "remaining" base bar (.wx-bar.wx-task / .wx-bar.wx-summary) both
- * read from the same design-token family (verified by measuring real
- * computed colors: rgb(57,131,235) base vs rgb(31,107,217) fill for a
- * task — a real but subtle ~25-unit difference, not the clear
- * track-vs-fill contrast a progress indicator needs). Overridden here
- * with a genuinely light "remaining" tone and a solid "completed" tone
- * per task type, chosen to still keep the white progress-percentage
- * label (see taskTemplate in gantt-chart-view.tsx) readable against
- * both.
- *
- * `!important` on the base-bar rules specifically: matched the
- * library's own selector specificity exactly (3 classes each) without
- * it, which ties resolve by CSS source order — and since
- * @svar-ui/react-gantt's stylesheet is imported from inside the
- * component file while this global stylesheet loads at the app root,
- * the library's rule was winning that tie (confirmed by measuring the
- * computed color still coming back as the library's own default, not
- * this override). The fill rules didn't need it — different selector
- * shape there wasn't a tie.
- */
-.wx-willow-theme .wx-bar.wx-task {
-  background-color: #60a5fa !important; /* remaining */
-}
-.wx-willow-theme .wx-bar.wx-task .wx-progress-percent {
-  background-color: #2563eb; /* completed */
-}
-.wx-willow-theme .wx-bar.wx-summary {
-  background-color: #34d399 !important; /* remaining */
-}
-.wx-willow-theme .wx-bar.wx-summary .wx-progress-percent {
-  background-color: #059669; /* completed */
+/* See the long comment above — pins the library's own internal
+   horizontal-scroll element to the bottom of .gantt-task-react-root's
+   viewport so it's always reachable, never buried below the last row. */
+.gantt-task-react-root ._2k9Ys {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  z-index: 5;
 }
 
 /*
- * Gantt Chart "Task" column width. Passing `flexgrow: 0` in the column
- * config (gantt-chart-view.tsx) has no effect — the "text" column's
- * rendered inline style keeps `flex-grow: 1` regardless of what's
- * passed, confirmed by inspecting the actual DOM (an explicit `0` is
- * very likely being treated as "not set" internally, a common falsy-
- * value bug: `column.flexgrow || 1`). It's the only one of the six
- * columns with any flex-grow at all — the other five are already
- * fixed-width — so left alone it silently claims any extra space the
- * grid pane has beyond the other columns' widths, growing well past
- * its own configured 176px. `!important` here overrides the inline
- * style directly (inline styles otherwise always win over an external
- * stylesheet); `.wx-col-text` is a stable class the library itself
- * applies to both the header cell and every body cell of this specific
- * column, not a generated/hashed one.
+ * Hides only gantt-task-react's "outside" task-name label — the one it
+ * floats to the right of a bar too narrow to fit the label inside
+ * (redundant with the Task column this app's own custom TaskListTable
+ * already renders to the left, and reads as clutter once several
+ * float at slightly different heights). The "inside" label (shown when
+ * a bar IS wide enough) is left alone — that's the clean look the
+ * reference demo has, and cellWidth below is sized so it applies to
+ * most bars at the default zoom rather than falling back to "outside".
+ *
+ * `_3KcaM` is a CSS-module-generated class name (the library's own
+ * `style` map: {barLabel: "_3zRJQ", barLabelOutside: "_3KcaM"}) — no
+ * prop exists to suppress just this one, so this is the only way.
+ * Confirmed by reading the compiled bundle directly, not assumed; if
+ * this stops matching after a `gantt-task-react` version bump, re-check
+ * dist/index.js's `style` map for the current barLabelOutside value.
  */
-.wx-willow-theme .wx-col-text {
-  flex-grow: 0 !important;
+.gantt-task-react-root ._3KcaM {
+  display: none;
 }

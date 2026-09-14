@@ -29,6 +29,13 @@ export type CostTask = {
    * 0029_estimate_task_predecessor.sql) — draws as a dependency arrow
    * in the Gantt Chart. Null means no predecessor set. */
   predecessorTaskId: number | null;
+  /** Manually flagged by the admin (see
+   * 0030_estimate_task_milestone.sql) — a real point-in-time event
+   * ("Permit Approved", "Client Sign-off") rather than a task with
+   * duration. Renders as a diamond instead of a bar in the Gantt Chart;
+   * still an ordinary task otherwise (its own cost/category/
+   * predecessor), not a separate concept. */
+  isMilestone: boolean;
 };
 
 export type CostCategory = {
@@ -148,6 +155,7 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       plannedStartDate: row.planned_start_date,
       plannedEndDate: row.planned_end_date,
       predecessorTaskId: row.predecessor_task_id,
+      isMilestone: row.is_milestone ?? false,
     };
     const existing = tasksByCategory.get(row.category_id) ?? [];
     existing.push(task);

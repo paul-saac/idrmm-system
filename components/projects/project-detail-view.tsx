@@ -11,11 +11,10 @@ import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { TotalCostsChart } from "@/components/projects/total-costs-chart";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
 import { ProgressView } from "@/components/projects/progress/progress-view";
-// @svar-ui/react-gantt draws a background pattern that depends on
-// client-measured layout, which it only computes post-mount — loaded
-// with ssr:false so that mismatch never reaches hydration at all,
-// instead of rendering it on the server just to have the client patch
-// it over.
+// gantt-task-react renders its timeline as an SVG sized from
+// client-measured container layout, computed post-mount — loaded with
+// ssr:false so that mismatch never reaches hydration at all, instead of
+// rendering it on the server just to have the client patch it over.
 const GanttChartView = dynamic(
   () =>
     import("@/components/projects/progress/gantt-chart-view").then(
@@ -85,13 +84,13 @@ type MainTab = (typeof MAIN_TABS)[number]["value"];
 const SUB_TABS = [
   { value: "overview", label: "Project Overview" },
   { value: "cost-estimate", label: "Cost Estimate" },
+  { value: "schedule", label: "Schedule" },
 ] as const;
 type SubTab = (typeof SUB_TABS)[number]["value"];
 
 const PROGRESS_SUB_TABS = [
   { value: "overview", label: "Progress Overview" },
   { value: "daily-logs", label: "Daily Logs" },
-  { value: "schedule", label: "Schedule" },
 ] as const;
 type ProgressSubTab = (typeof PROGRESS_SUB_TABS)[number]["value"];
 
@@ -523,7 +522,7 @@ export function ProjectDetailView({
               progress={progress}
               risk={risk}
             />
-          ) : activeProgressSubTab === "daily-logs" ? (
+          ) : (
             <DailyLogsView
               projectId={project.id}
               categories={costEstimate.categories}
@@ -532,12 +531,6 @@ export function ProjectDetailView({
               equipmentRequests={fulfillableEquipmentRequests}
               logs={dailyLogs}
               toolbarSlot={toolbarSlotEl}
-            />
-          ) : (
-            <GanttChartView
-              categories={costEstimate.categories}
-              progress={progress}
-              projectStartDate={project.startDate}
             />
           )
         ) : activeTab === "materials" ? (
@@ -598,6 +591,13 @@ export function ProjectDetailView({
           <>
             {activeSubTab === "cost-estimate" ? (
               <CostEstimateView projectId={project.id} estimate={costEstimate} />
+            ) : activeSubTab === "schedule" ? (
+              <GanttChartView
+                projectId={project.id}
+                categories={costEstimate.categories}
+                progress={progress}
+                projectStartDate={project.startDate}
+              />
             ) : (
               <div className="flex flex-col gap-4">
                 <div className="grid gap-6 rounded-lg border border-zinc-200 bg-white p-6 sm:grid-cols-2">

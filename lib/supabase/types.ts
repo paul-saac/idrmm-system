@@ -121,6 +121,7 @@ export interface Database {
           planned_start_date: string | null;
           planned_end_date: string | null;
           predecessor_task_id: number | null;
+          is_milestone: boolean;
         };
         Insert: {
           project_id: number;
@@ -137,6 +138,7 @@ export interface Database {
           planned_start_date?: string | null;
           planned_end_date?: string | null;
           predecessor_task_id?: number | null;
+          is_milestone?: boolean;
         };
         Update: {
           category_id?: number;
@@ -152,6 +154,7 @@ export interface Database {
           planned_start_date?: string | null;
           planned_end_date?: string | null;
           predecessor_task_id?: number | null;
+          is_milestone?: boolean;
         };
         Relationships: [];
       };

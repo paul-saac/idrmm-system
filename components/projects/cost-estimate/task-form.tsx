@@ -285,6 +285,26 @@ export function TaskForm({
         />
       </div>
 
+      <div className="flex items-center gap-2 sm:col-span-2">
+        <input
+          id={`${formId}-isMilestone`}
+          name="isMilestone"
+          type="checkbox"
+          defaultChecked={task?.isMilestone ?? false}
+          className="size-4 cursor-pointer rounded border-zinc-300 text-zinc-800 focus:ring-2 focus:ring-zinc-200"
+        />
+        <label
+          htmlFor={`${formId}-isMilestone`}
+          className="cursor-pointer text-sm font-medium text-zinc-800"
+        >
+          Milestone
+        </label>
+        <span className="text-xs text-zinc-400">
+          — a point-in-time event (e.g. &quot;Permit Approved&quot;), shown as
+          a diamond on the Gantt Chart Schedule instead of a bar.
+        </span>
+      </div>
+
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor={`${formId}-predecessorTaskId`}

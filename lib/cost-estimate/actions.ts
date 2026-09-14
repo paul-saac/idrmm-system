@@ -267,6 +267,106 @@ export async function deleteCategory(
   });
 }
 
+/**
+ * The Gantt Chart Schedule's own "Add Phase" flow (the "+" next to the
+ * Task column header) — unlike the Cost Estimate Breakdown's plain
+ * createCategory above, a brand-new phase there is created together
+ * with a first task item in one step, since an empty phase has no
+ * planned dates of its own to show on the chart (its row is a computed
+ * rollup of its tasks' dates — see gantt-chart-view.tsx) and would just
+ * render a placeholder bar until someone came back to add one.
+ *
+ * There's no separate task-name field in that form: the phase itself
+ * *is* the main task being scheduled here, not a subtask underneath it,
+ * so the underlying task row reuses the phase's own name rather than
+ * asking the admin to type it twice. Cost fields (quantity, labor/
+ * material/equipment estimates, predecessor, other costs) default to
+ * zero/empty and stay editable afterward through the normal Edit Task
+ * Item form, same as any other task — including renaming it separately
+ * from its phase later, if it ever needs one.
+ */
+export async function createPhaseWithFirstTask(
+  projectId: number,
+  _prevState: CostEstimateActionState,
+  formData: FormData
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const categoryName = String(formData.get("categoryName") ?? "").trim();
+    if (!categoryName) {
+      return { error: "Phase name is required." };
+    }
+    const plannedStartDate = parseOptionalDate(formData.get("plannedStartDate"));
+    const plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
+    if (!plannedStartDate || !plannedEndDate) {
+      return { error: "Start and end dates are required." };
+    }
+    if (plannedEndDate < plannedStartDate) {
+      return { error: "End date can't be before the start date." };
+    }
+    const isMilestone = formData.get("isMilestone") === "on";
+
+    const supabase = await createClient();
+
+    const { data: category, error: categoryError } = await supabase
+      .from("estimate_categories")
+      .insert({
+        project_id: projectId,
+        category_name: categoryName,
+      })
+      .select("id")
+      .single();
+
+    if (categoryError || !category) {
+      if (categoryError) {
+        logSupabaseError(
+          "[createPhaseWithFirstTask] category insert failed",
+          categoryError
+        );
+      }
+      return { error: "Could not create the phase. Please try again." };
+    }
+
+    const { error: taskError } = await supabase.from("estimate_tasks").insert({
+      project_id: projectId,
+      category_id: category.id,
+      task_name: categoryName,
+      estimated_quantity: 0,
+      unit: null,
+      labor_estimate: 0,
+      material_estimate: 0,
+      equipment_estimate: 0,
+      other_cost_estimate: 0,
+      total_estimate_cost: 0,
+      planned_start_date: plannedStartDate,
+      planned_end_date: plannedEndDate,
+      predecessor_task_id: null,
+      is_milestone: isMilestone,
+    });
+
+    if (taskError) {
+      logSupabaseError(
+        "[createPhaseWithFirstTask] task insert failed",
+        taskError
+      );
+      // The phase itself was already created successfully at this point
+      // — say so, rather than implying nothing happened and inviting a
+      // resubmit that would create a duplicate phase.
+      return {
+        error:
+          'Phase created, but its schedule could not be saved. Add it from the phase\'s own "+" instead.',
+      };
+    }
+
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Task items
 // ---------------------------------------------------------------------------
@@ -303,6 +403,7 @@ function buildTaskFields(formData: FormData) {
   const plannedStartDate = parseOptionalDate(formData.get("plannedStartDate"));
   const plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
   const predecessorTaskId = parseOptionalId(formData.get("predecessorTaskId"));
+  const isMilestone = formData.get("isMilestone") === "on";
 
   const otherCostItems = buildOtherCostItems(formData);
   const otherCostEstimate = otherCostItems.reduce(
@@ -327,6 +428,7 @@ function buildTaskFields(formData: FormData) {
     plannedStartDate,
     plannedEndDate,
     predecessorTaskId,
+    isMilestone,
   };
 }
 
@@ -384,6 +486,7 @@ export async function createTask(
         planned_start_date: fields.plannedStartDate,
         planned_end_date: fields.plannedEndDate,
         predecessor_task_id: fields.predecessorTaskId,
+        is_milestone: fields.isMilestone,
       })
       .select("id")
       .single();
@@ -485,6 +588,7 @@ export async function updateTask(
         planned_start_date: fields.plannedStartDate,
         planned_end_date: fields.plannedEndDate,
         predecessor_task_id: fields.predecessorTaskId,
+        is_milestone: fields.isMilestone,
       })
       .eq("id", taskId);
 

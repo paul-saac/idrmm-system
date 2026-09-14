@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, X } from "lucide-react";
 
 export function Modal({
@@ -21,6 +21,21 @@ export function Modal({
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // Children mount only once the <dialog> is actually showModal()-open,
+  // not the instant `open` flips true — a checkbox/select rendered
+  // while the dialog is still closed (display:none per the UA
+  // stylesheet, since showModal() itself only runs in the effect below,
+  // one tick after the children that need it would otherwise already
+  // have been created) doesn't reliably pick up its checked/selected
+  // state as a live DOM property once the dialog later becomes visible
+  // — confirmed directly: the "checked" attribute was present in the
+  // rendered HTML, but the live .checked property still read false,
+  // and a <select>'s defaultValue-chosen option showed the same way
+  // (falling back to the placeholder instead of the real selection).
+  // Unmounting on close (rather than just hiding) also means every
+  // open starts genuinely fresh, matching how every Add/Edit form in
+  // this app is already built to re-derive its fields from props.
+  const [hasOpened, setHasOpened] = useState(false);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -28,8 +43,10 @@ export function Modal({
 
     if (open && !dialog.open) {
       dialog.showModal();
+      setHasOpened(true);
     } else if (!open && dialog.open) {
       dialog.close();
+      setHasOpened(false);
     }
   }, [open]);
 
@@ -80,7 +97,9 @@ export function Modal({
       </div>
       {/* Grows to fit its content; only scrolls once the dialog would
           otherwise run off the top/bottom of the viewport. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        {hasOpened && children}
+      </div>
     </dialog>
   );
 }
