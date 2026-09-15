@@ -200,34 +200,35 @@ export function CostEstimateView({
 
   const { categories, summary } = estimate;
   const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
-  // Every task across every phase, for the Predecessor dropdown — a task
-  // can depend on a task in a different phase (e.g. "Pour Slab" waiting
-  // on "Site Grading" from an earlier phase), not just its own siblings.
-  const allTasks = categories.flatMap((c) =>
-    c.tasks.map((t) => ({ id: t.id, name: t.name, categoryName: c.name }))
-  );
   const columnCount = 9 + (manageMode ? 1 : 0);
 
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-lg border border-zinc-200 bg-white p-5">
+        {/* A plain fill bar, not a border-b — see StatCard's own comment
+            in project-detail-view.tsx for why a border-b here mitered a
+            visible diagonal notch into the corner instead of a straight
+            edge. */}
+        <div className="relative rounded-t-lg border border-zinc-200 bg-white p-5">
           <p className="text-sm text-zinc-500">Total Estimated Cost</p>
           <p className="mt-2 text-xl font-semibold text-zinc-900">
             {formatCurrency(summary.totalEstimatedCost)}
           </p>
+          <div className="absolute inset-x-0 bottom-0 h-1 bg-zinc-900" />
         </div>
-        <div className="rounded-lg border border-zinc-200 bg-white p-5">
+        <div className="relative rounded-t-lg border border-zinc-200 bg-white p-5">
           <p className="text-sm text-zinc-500">Total Phase</p>
           <p className="mt-2 text-xl font-semibold text-zinc-900">
             {String(summary.categoryCount).padStart(2, "0")}
           </p>
+          <div className="absolute inset-x-0 bottom-0 h-1 bg-zinc-900" />
         </div>
-        <div className="rounded-lg border border-zinc-200 bg-white p-5">
+        <div className="relative rounded-t-lg border border-zinc-200 bg-white p-5">
           <p className="text-sm text-zinc-500">Total Task Items</p>
           <p className="mt-2 text-xl font-semibold text-zinc-900">
             {String(summary.taskCount).padStart(2, "0")}
           </p>
+          <div className="absolute inset-x-0 bottom-0 h-1 bg-zinc-900" />
         </div>
       </div>
 
@@ -535,7 +536,6 @@ export function CostEstimateView({
         <TaskForm
           projectId={projectId}
           categories={categoryOptions}
-          tasks={allTasks}
           task={taskModal ?? undefined}
           onSuccess={() => setTaskModal(null)}
         />

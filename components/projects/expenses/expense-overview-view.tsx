@@ -14,7 +14,7 @@ function ExpenseStatCard({
   icon: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-5">
+    <div className="relative rounded-t-lg border border-zinc-200 bg-white p-5">
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm text-zinc-500">{label}</p>
         <span className="flex-shrink-0 text-zinc-400">{icon}</span>
@@ -22,6 +22,11 @@ function ExpenseStatCard({
       <p className="mt-2 text-xl font-semibold text-zinc-900">
         {String(value).padStart(2, "0")}
       </p>
+      {/* A plain fill bar, not a border-b — see StatCard's own comment
+          in project-detail-view.tsx for why a border-b here mitered a
+          visible diagonal notch into the corner instead of a straight
+          edge. */}
+      <div className="absolute inset-x-0 bottom-0 h-1 bg-zinc-900" />
     </div>
   );
 }

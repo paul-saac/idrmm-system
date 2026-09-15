@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import type { ProcurementType } from "@/lib/daily-logs/data";
 
 export type MaterialStatus = "available" | "low_stock" | "fully_consumed";
 
@@ -149,4 +150,87 @@ export function summarizeMaterials(
     consumedMaterials: materials.filter((m) => m.status === "fully_consumed")
       .length,
   };
+}
+
+export type TodayProcurementItem = {
+  id: number;
+  materialName: string;
+  specification: string | null;
+  quantity: number;
+  unit: string | null;
+  cost: number;
+};
+
+export type TodayProcurementEntry = {
+  id: number;
+  dailyLogId: number;
+  procurementType: ProcurementType;
+  supplierName: string | null;
+  additionalFees: number;
+  items: TodayProcurementItem[];
+};
+
+/**
+ * The Materials Overview sub-tab's "Material Procurement (Today)" card —
+ * every procurement entry logged on *today's* daily log, in full detail,
+ * not just a count. A project has at most one daily log per date
+ * (0019_daily_logs_one_per_day.sql), so this is a single lookup by
+ * date, not a date-range query. Unlike the Expenses tab's own Material
+ * Expenses ledger, this isn't limited to *approved* logs — a
+ * still-pending log's procurement is exactly what a foreman/admin
+ * checking "what came in today" wants to see, before it's been
+ * reviewed.
+ */
+export async function getTodayMaterialProcurement(
+  projectId: number
+): Promise<TodayProcurementEntry[]> {
+  const supabase = await createClient();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data: log } = await supabase
+    .from("daily_logs")
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("log_date", today)
+    .maybeSingle();
+
+  if (!log) return [];
+
+  const { data: procurementRows } = await supabase
+    .from("daily_log_material_procurement")
+    .select("id, procurement_type, supplier_name, additional_fees")
+    .eq("daily_log_id", log.id)
+    .order("id", { ascending: true });
+
+  if (!procurementRows || procurementRows.length === 0) return [];
+
+  const procurementIds = procurementRows.map((row) => row.id);
+  const { data: itemRows } = await supabase
+    .from("daily_log_material_procurement_items")
+    .select("id, procurement_id, material_name, specification, quantity, unit, cost")
+    .in("procurement_id", procurementIds)
+    .order("id", { ascending: true });
+
+  const itemsByProcurementId = new Map<number, TodayProcurementItem[]>();
+  for (const item of itemRows ?? []) {
+    const list = itemsByProcurementId.get(item.procurement_id) ?? [];
+    list.push({
+      id: item.id,
+      materialName: item.material_name,
+      specification: item.specification,
+      quantity: item.quantity ?? 0,
+      unit: item.unit,
+      cost: item.cost ?? 0,
+    });
+    itemsByProcurementId.set(item.procurement_id, list);
+  }
+
+  return procurementRows.map((row) => ({
+    id: row.id,
+    dailyLogId: log.id,
+    procurementType: row.procurement_type,
+    supplierName: row.supplier_name,
+    additionalFees: row.additional_fees ?? 0,
+    items: itemsByProcurementId.get(row.id) ?? [],
+  }));
 }

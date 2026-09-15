@@ -14,10 +14,7 @@ export default async function AdminInventoryPage() {
 
   return (
     <>
-      <AdminPageHeader
-        title="Tools and Equipment"
-        description="Manage the company's equipment catalog and assign items to projects."
-      />
+      <AdminPageHeader title="Tools and Equipment" />
       <main className="flex-1 overflow-y-auto px-8 py-6">
         <InventoryBrowser
           equipment={equipment}

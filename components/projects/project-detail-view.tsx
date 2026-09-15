@@ -43,6 +43,7 @@ import type {
   MaterialsOverviewCounts,
   MaterialUsageHistoryEntry,
   ProjectMaterial,
+  TodayProcurementEntry,
 } from "@/lib/materials/data";
 import type {
   MaterialRequestDetail,
@@ -191,12 +192,17 @@ function StatCard({
   icon: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-200 border-b-4 border-b-zinc-300 bg-white p-5">
+    <div className="relative rounded-t-lg border border-zinc-200 bg-white p-5">
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm text-zinc-500">{label}</p>
         <span className="flex-shrink-0 text-zinc-400">{icon}</span>
       </div>
       <p className="mt-2 text-2xl font-bold text-zinc-900">{value}</p>
+      {/* A plain fill bar, not a border-b — a differently-colored/sized
+          border segment meets its neighboring 1px zinc-200 side borders
+          at a 45deg mitered corner by default, which showed up as a
+          visible diagonal notch cut into this bar's own corners. */}
+      <div className="absolute inset-x-0 bottom-0 h-1 bg-zinc-900" />
     </div>
   );
 }
@@ -261,6 +267,7 @@ export function ProjectDetailView({
   materials,
   materialsCounts,
   materialUsageHistory,
+  todayProcurement,
   materialRequests,
   fulfillableMaterialRequests,
   equipmentRequests,
@@ -284,6 +291,7 @@ export function ProjectDetailView({
   materials: ProjectMaterial[];
   materialsCounts: MaterialsOverviewCounts;
   materialUsageHistory: MaterialUsageHistoryEntry[];
+  todayProcurement: TodayProcurementEntry[];
   materialRequests: MaterialRequestListItem[];
   /** Requests that can still receive a delivery — for the Add Daily
    * Log modal's Material Procurement "Select Material Request" picker. */
@@ -397,7 +405,7 @@ export function ProjectDetailView({
         <LogoutButton />
       </header>
 
-      <main className="flex-1 overflow-y-auto  ">
+      <main className="flex-1 overflow-y-auto">
         <div className="rounded-lg border border-none pt-6 bg-white">
           <div className="flex items-start justify-between gap-3 mx-8">
             <h1 className="text-2xl font-semibold text-zinc-900">
@@ -473,7 +481,7 @@ export function ProjectDetailView({
 
 
 
-        <div className="px-8">
+        <div className="px-8 pb-8">
         {activeTab === "overview" && (
           <SubTabsRow
             tabs={SUB_TABS}
@@ -541,7 +549,12 @@ export function ProjectDetailView({
           )
         ) : activeTab === "materials" ? (
           activeMaterialsSubTab === "overview" ? (
-            <MaterialsOverviewView counts={materialsCounts} />
+            <MaterialsOverviewView
+              projectId={project.id}
+              counts={materialsCounts}
+              materialUsageHistory={materialUsageHistory}
+              todayProcurement={todayProcurement}
+            />
           ) : activeMaterialsSubTab === "monitoring" ? (
             <MaterialsMonitoringView
               projectId={project.id}

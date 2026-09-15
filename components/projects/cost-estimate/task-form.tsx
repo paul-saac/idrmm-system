@@ -21,16 +21,12 @@ type OtherCostRow = {
 export function TaskForm({
   projectId,
   categories,
-  tasks,
   task,
   defaultCategoryId,
   onSuccess,
 }: {
   projectId: number;
   categories: Pick<CostCategory, "id" | "name">[];
-  /** Every task across every phase, for the Predecessor dropdown — see
-   * task-form.tsx's own Predecessor <select> below. */
-  tasks: { id: number; name: string; categoryName: string }[];
   task?: CostTask;
   defaultCategoryId?: number;
   onSuccess?: () => void;
@@ -78,20 +74,6 @@ export function TaskForm({
     // passed inline by the parent and would otherwise re-run this every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
-
-  // Grouped by phase so the dropdown reads like the Cost Estimate
-  // Breakdown table itself; a task can't be its own predecessor, so it's
-  // excluded from its own edit form's options.
-  const predecessorGroups = new Map<
-    string,
-    { id: number; name: string }[]
-  >();
-  for (const t of tasks) {
-    if (t.id === task?.id) continue;
-    const group = predecessorGroups.get(t.categoryName) ?? [];
-    group.push({ id: t.id, name: t.name });
-    predecessorGroups.set(t.categoryName, group);
-  }
 
   return (
     <form action={formAction} className="grid gap-4 sm:grid-cols-2" noValidate>
@@ -285,55 +267,19 @@ export function TaskForm({
         />
       </div>
 
-      <div className="flex items-center gap-2 sm:col-span-2">
-        <input
-          id={`${formId}-isMilestone`}
-          name="isMilestone"
-          type="checkbox"
-          defaultChecked={task?.isMilestone ?? false}
-          className="size-4 cursor-pointer rounded border-zinc-300 text-zinc-800 focus:ring-2 focus:ring-zinc-200"
-        />
-        <label
-          htmlFor={`${formId}-isMilestone`}
-          className="cursor-pointer text-sm font-medium text-zinc-800"
-        >
-          Milestone
-        </label>
-        <span className="text-xs text-zinc-400">
-          — a point-in-time event (e.g. &quot;Permit Approved&quot;), shown as
-          a diamond on the Gantt Chart Schedule instead of a bar.
-        </span>
-      </div>
-
-      <div className="flex flex-col gap-1.5 sm:col-span-2">
-        <label
-          htmlFor={`${formId}-predecessorTaskId`}
-          className="text-sm font-medium text-zinc-800"
-        >
-          Predecessor
-        </label>
-        <select
-          id={`${formId}-predecessorTaskId`}
-          name="predecessorTaskId"
-          defaultValue={task?.predecessorTaskId ?? ""}
-          className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        >
-          <option value="">None — starts independently</option>
-          {[...predecessorGroups.entries()].map(([categoryName, group]) => (
-            <optgroup key={categoryName} label={categoryName}>
-              {group.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-        <p className="text-xs text-zinc-400">
-          This task starts after its predecessor finishes — shown as a
-          dependency arrow on the Gantt Chart Schedule.
-        </p>
-      </div>
+      {/* Milestone and Predecessor are set from the Gantt Chart Schedule
+          instead (its own subtask form + drag-to-connect predecessor
+          arrows) — this form no longer shows them, but still carries
+          whatever's already set through as hidden fields so saving a
+          plain cost/quantity edit here can't silently wipe either one. */}
+      <input
+        type="hidden"
+        name="predecessorTaskId"
+        defaultValue={task?.predecessorTaskId ?? ""}
+      />
+      {task?.isMilestone && (
+        <input type="hidden" name="isMilestone" value="on" />
+      )}
 
       <div className="flex flex-col gap-3 border-t border-zinc-200 pt-4 sm:col-span-2">
         <div className="flex items-center justify-between">

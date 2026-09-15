@@ -65,7 +65,7 @@ export function GroupHeaderRow({
           <Link
             href={`/admin/projects/${projectId}/daily-logs/${dailyLogId}`}
             onClick={(e) => e.stopPropagation()}
-            className="flex-shrink-0 text-xs font-medium text-zinc-500 transition hover:text-zinc-900 hover:underline"
+            className="inline-flex flex-shrink-0 cursor-pointer items-center rounded-sm border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
           >
             View Details
           </Link>

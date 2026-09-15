@@ -7,6 +7,7 @@ import { getCostEstimate } from "@/lib/cost-estimate/data";
 import { getProjectProgress } from "@/lib/progress/data";
 import { listDailyLogs, listSurveyQuestions } from "@/lib/daily-logs/data";
 import {
+  getTodayMaterialProcurement,
   listMaterialUsageHistory,
   listProjectMaterials,
   summarizeMaterials,
@@ -54,6 +55,7 @@ export default async function ProjectDetailPage({
     surveyQuestions,
     materials,
     materialUsageHistory,
+    todayProcurement,
     materialRequests,
     fulfillableMaterialRequests,
     equipmentRequests,
@@ -73,6 +75,7 @@ export default async function ProjectDetailPage({
     listSurveyQuestions(projectId),
     listProjectMaterials(projectId),
     listMaterialUsageHistory(projectId),
+    getTodayMaterialProcurement(projectId),
     listMaterialRequests(projectId),
     listFulfillableMaterialRequests(projectId),
     listEquipmentRequests(projectId),
@@ -146,6 +149,7 @@ export default async function ProjectDetailPage({
       materials={materials}
       materialsCounts={summarizeMaterials(materials)}
       materialUsageHistory={materialUsageHistory}
+      todayProcurement={todayProcurement}
       materialRequests={materialRequests}
       fulfillableMaterialRequests={fulfillableMaterialRequests}
       equipmentRequests={equipmentRequests}
