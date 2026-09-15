@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, Pencil, Trash2 } from "lucide-react";
 import { LogoutButton } from "@/components/auth/logout-button";
@@ -25,8 +25,14 @@ import {
   type DailyLogStatus,
   type MaterialUsageStatus,
   type SurveyAnswer,
+  type SurveyQuestion,
 } from "@/lib/daily-logs/data";
-import { flagState, type EntryFlag } from "@/lib/daily-logs/flag-state";
+import {
+  flagState,
+  entryDomId,
+  type EntryFlag,
+  type EntryType,
+} from "@/lib/daily-logs/flag-state";
 import type { ProjectMaterial } from "@/lib/materials/data";
 import type { MaterialRequestDetail } from "@/lib/material-requests/data";
 import type { EquipmentRequestDetail } from "@/lib/equipment-requests/data";
@@ -40,6 +46,16 @@ type FlagSectionProps = {
   logStatus: DailyLogStatus;
   flags: EntryFlag[];
 };
+
+/** Background highlight for the one row/block whose id matches the
+ * entry this page was navigated to highlight (see entryDomId and
+ * DailyLogDetailView's own scroll+highlight effect). transition-colors
+ * stays on unconditionally so the highlight fades back out smoothly
+ * once highlightedId clears a couple seconds after landing, rather than
+ * disappearing abruptly. */
+function highlightClass(id: string, highlightedId: string | null) {
+  return `transition-colors duration-1000 ${id === highlightedId ? "bg-amber-50" : ""}`;
+}
 
 /** Whether a flagged entry can still be corrected in place — only while
  * its flag hasn't been resolved yet and the log is approved (a pending
@@ -95,11 +111,11 @@ function StatusBadge({
   if (status === "approved") {
     return (
       <span className="flex items-center gap-1.5">
-        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+        <span className="rounded-sm bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
           Approved
         </span>
         {unresolvedFlagCount > 0 && (
-          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+          <span className="rounded-sm bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
             {unresolvedFlagCount} flagged
           </span>
         )}
@@ -108,13 +124,13 @@ function StatusBadge({
   }
   if (status === "rejected") {
     return (
-      <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+      <span className="rounded-sm bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
         Rejected
       </span>
     );
   }
   return (
-    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
+    <span className="rounded-sm bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
       Submitted
     </span>
   );
@@ -239,9 +255,11 @@ function DeleteButton({
 function LaborLogsSection({
   items,
   flagProps,
+  highlightedId,
 }: {
   items: DailyLogLaborItemDetail[];
   flagProps: FlagSectionProps;
+  highlightedId: string | null;
 }) {
   return (
     <div className="p-4">
@@ -267,8 +285,9 @@ function LaborLogsSection({
             <tbody className="divide-y divide-zinc-100">
               {items.map((item) => {
                 const flag = findFlag(flagProps.flags, "labor_item", item.id);
+                const id = entryDomId("labor_item", item.id);
                 return (
-                  <tr key={item.id}>
+                  <tr key={item.id} id={id} className={highlightClass(id, highlightedId)}>
                     <td className="px-2 py-2.5 font-medium text-zinc-900">
                       {item.workerRole}
                     </td>
@@ -318,9 +337,11 @@ function LaborLogsSection({
 function ExpenseLogsSection({
   items,
   flagProps,
+  highlightedId,
 }: {
   items: DailyLogExpenseItemDetail[];
   flagProps: FlagSectionProps;
+  highlightedId: string | null;
 }) {
   return (
     <div className="p-4">
@@ -344,8 +365,9 @@ function ExpenseLogsSection({
             <tbody className="divide-y divide-zinc-100">
               {items.map((item) => {
                 const flag = findFlag(flagProps.flags, "expense_item", item.id);
+                const id = entryDomId("expense_item", item.id);
                 return (
-                  <tr key={item.id}>
+                  <tr key={item.id} id={id} className={highlightClass(id, highlightedId)}>
                     <td className="px-2 py-2.5 font-medium text-zinc-900">
                       {item.expenseCategory}
                     </td>
@@ -398,9 +420,11 @@ const PROCUREMENT_TYPE_LABELS: Record<string, string> = {
 function ProcurementLogsSection({
   logs,
   flagProps,
+  highlightedId,
 }: {
   logs: DailyLogProcurementDetail[];
   flagProps: FlagSectionProps;
+  highlightedId: string | null;
 }) {
   return (
     <div className="p-4">
@@ -416,8 +440,13 @@ function ProcurementLogsSection({
               "material_procurement",
               procurement.id
             );
+            const id = entryDomId("material_procurement", procurement.id);
             return (
-            <div key={procurement.id} className={logs.length > 1 ? "py-4 first:pt-0 last:pb-0" : undefined}>
+            <div
+              key={procurement.id}
+              id={id}
+              className={`${logs.length > 1 ? "py-4 first:pt-0 last:pb-0" : ""} ${highlightClass(id, highlightedId)}`}
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium text-zinc-900">
@@ -425,7 +454,7 @@ function ProcurementLogsSection({
                       PROCUREMENT_TYPE_LABELS[procurement.procurementType]}
                   </span>
                   {procurement.materialRequestMrNo && (
-                    <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
+                    <span className="rounded-sm bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
                       Fulfilling {procurement.materialRequestMrNo}
                     </span>
                   )}
@@ -502,9 +531,11 @@ const ACQUISITION_TYPE_LABELS: Record<string, string> = {
 function EquipmentAcquisitionLogsSection({
   logs,
   flagProps,
+  highlightedId,
 }: {
   logs: DailyLogEquipmentAcquisitionDetail[];
   flagProps: FlagSectionProps;
+  highlightedId: string | null;
 }) {
   return (
     <div className="p-4">
@@ -534,8 +565,9 @@ function EquipmentAcquisitionLogsSection({
                   "equipment_acquisition",
                   item.id
                 );
+                const id = entryDomId("equipment_acquisition", item.id);
                 return (
-                <tr key={item.id}>
+                <tr key={item.id} id={id} className={highlightClass(id, highlightedId)}>
                   <td className="px-2 py-2.5 font-medium text-zinc-900">
                     {item.equipmentName}
                   </td>
@@ -551,7 +583,7 @@ function EquipmentAcquisitionLogsSection({
                   </td>
                   <td className="px-2 py-2.5 text-zinc-600">
                     {item.equipmentRequestErNo ? (
-                      <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
+                      <span className="rounded-sm bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
                         Fulfilling {item.equipmentRequestErNo}
                       </span>
                     ) : (
@@ -593,20 +625,20 @@ function EquipmentAcquisitionLogsSection({
 function UsageStatusBadge({ status }: { status: MaterialUsageStatus }) {
   if (status === "available") {
     return (
-      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+      <span className="rounded-sm bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
         Available
       </span>
     );
   }
   if (status === "low_stock") {
     return (
-      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+      <span className="rounded-sm bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
         Low Stock
       </span>
     );
   }
   return (
-    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+    <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
       Fully Consumed
     </span>
   );
@@ -616,10 +648,12 @@ function MaterialUsageSection({
   items,
   flagProps,
   materials,
+  highlightedId,
 }: {
   items: DailyLogMaterialUsageItemDetail[];
   flagProps: FlagSectionProps;
   materials: ProjectMaterial[];
+  highlightedId: string | null;
 }) {
   return (
     <div className="p-4">
@@ -648,8 +682,9 @@ function MaterialUsageSection({
                   "material_usage_item",
                   item.id
                 );
+                const id = entryDomId("material_usage_item", item.id);
                 return (
-                <tr key={item.id}>
+                <tr key={item.id} id={id} className={highlightClass(id, highlightedId)}>
                   <td className="px-2 py-2.5 font-medium text-zinc-900">
                     {item.materialCode}
                   </td>
@@ -783,12 +818,24 @@ export function DailyLogDetailView({
   materials,
   materialRequests,
   equipmentRequests,
+  surveyQuestions,
+  highlightEntryType,
+  highlightEntryId,
 }: {
   log: DailyLogDetail;
   categories: CategoryOption[];
   materials: ProjectMaterial[];
   materialRequests: MaterialRequestDetail[];
   equipmentRequests: EquipmentRequestDetail[];
+  surveyQuestions: SurveyQuestion[];
+  /** Set when this page was reached from a ledger table's own record —
+   * Material Usage History or one of the Expenses tables — pointing at
+   * the specific entry that record came from (see dailyLogEntryHref).
+   * Scrolled to and briefly highlighted once below, so the user lands
+   * right on the entry they clicked through for instead of the top of
+   * a possibly long page. */
+  highlightEntryType?: EntryType;
+  highlightEntryId?: number | null;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const canEdit = log.status === "pending" || log.status === "rejected";
@@ -798,6 +845,20 @@ export function DailyLogDetailView({
     logStatus: log.status,
     flags: log.flags,
   };
+
+  // Cleared automatically a couple seconds after landing — the target
+  // row's own highlight classes fade out via transition-colors once
+  // this goes back to null, not an abrupt disappearance.
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!highlightEntryType || highlightEntryId == null) return;
+    const id = entryDomId(highlightEntryType, highlightEntryId);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHighlightedId(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const timeout = setTimeout(() => setHighlightedId(null), 2500);
+    return () => clearTimeout(timeout);
+  }, [highlightEntryType, highlightEntryId]);
 
   return (
     <>
@@ -914,8 +975,9 @@ export function DailyLogDetailView({
                     <tbody className="divide-y divide-zinc-100">
                       {log.workItems.map((item) => {
                         const flag = findFlag(flagProps.flags, "work_item", item.id);
+                        const id = entryDomId("work_item", item.id);
                         return (
-                        <tr key={item.id}>
+                        <tr key={item.id} id={id} className={highlightClass(id, highlightedId)}>
                           <td className="px-2 py-2.5 text-zinc-700">
                             {item.categoryName}
                           </td>
@@ -1009,6 +1071,7 @@ export function DailyLogDetailView({
               items={log.materialUsageItems}
               flagProps={flagProps}
               materials={materials}
+              highlightedId={highlightedId}
             />
           </div>
 
@@ -1016,7 +1079,11 @@ export function DailyLogDetailView({
             <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
               Labor Logs
             </div>
-            <LaborLogsSection items={log.laborItems} flagProps={flagProps} />
+            <LaborLogsSection
+              items={log.laborItems}
+              flagProps={flagProps}
+              highlightedId={highlightedId}
+            />
           </div>
           <AttachmentGallery
             title="Labor Log Photos"
@@ -1031,7 +1098,11 @@ export function DailyLogDetailView({
             <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
               Material Procurement Logs
             </div>
-            <ProcurementLogsSection logs={log.procurementLogs} flagProps={flagProps} />
+            <ProcurementLogsSection
+              logs={log.procurementLogs}
+              flagProps={flagProps}
+              highlightedId={highlightedId}
+            />
           </div>
           <AttachmentGallery
             title="Material Procurement Photos"
@@ -1051,6 +1122,7 @@ export function DailyLogDetailView({
             <EquipmentAcquisitionLogsSection
               logs={log.equipmentAcquisitionLogs}
               flagProps={flagProps}
+              highlightedId={highlightedId}
             />
           </div>
           <AttachmentGallery
@@ -1066,7 +1138,11 @@ export function DailyLogDetailView({
             <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
               Other Expense
             </div>
-            <ExpenseLogsSection items={log.expenseItems} flagProps={flagProps} />
+            <ExpenseLogsSection
+              items={log.expenseItems}
+              flagProps={flagProps}
+              highlightedId={highlightedId}
+            />
           </div>
           <AttachmentGallery
             title="Other Expense Photos"
@@ -1091,18 +1167,29 @@ export function DailyLogDetailView({
                 </tr>
               </thead>
               <tbody>
-                <SurveyRow
-                  question="Any accidents on site today?"
-                  answer={log.survey.accidents}
-                />
-                <SurveyRow
-                  question="Any schedule delays occur?"
-                  answer={log.survey.scheduleDelays}
-                />
-                <SurveyRow
-                  question="Did weather cause any delays?"
-                  answer={log.survey.weatherDelays}
-                />
+                {surveyQuestions.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-sm text-zinc-400">
+                      This project has no Survey questions configured yet.
+                    </td>
+                  </tr>
+                ) : (
+                  surveyQuestions.map((question) => {
+                    const answer = log.surveyAnswers.find(
+                      (a) => a.questionId === question.id
+                    );
+                    return (
+                      <SurveyRow
+                        key={question.id}
+                        question={question.questionText}
+                        answer={{
+                          occurred: answer?.occurred ?? null,
+                          notes: answer?.notes ?? null,
+                        }}
+                      />
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -1117,6 +1204,7 @@ export function DailyLogDetailView({
           materials={materials}
           materialRequests={materialRequests}
           equipmentRequests={equipmentRequests}
+          surveyQuestions={surveyQuestions}
           editLog={log}
           open={editOpen}
           onClose={() => setEditOpen(false)}

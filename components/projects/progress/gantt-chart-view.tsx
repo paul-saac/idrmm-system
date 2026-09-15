@@ -738,6 +738,30 @@ export function GanttChartView({
   // leaves the rest of the card as dead white space (confirmed directly
   // by inspecting a short-range render: the chart's own SVG came out
   // hundreds of pixels narrower than the wrapper around it).
+  //
+  // Deliberately a *separate* ref from chartWrapRef below, both pointing
+  // at nested elements (this one the outer overflow-hidden box,
+  // chartWrapRef the inner overflow-auto one) that normally report the
+  // same width — except right at the edge where effectiveColumnWidth's
+  // own output causes chartWrapRef's content to just barely need (or
+  // just barely stop needing) a scrollbar. A scrollbar's own width
+  // shrinks chartWrapRef's *content-box* width, which is exactly what
+  // ResizeObserver reports — so observing chartWrapRef itself closes a
+  // feedback loop: containerWidth -> effectiveColumnWidth -> content
+  // width -> scrollbar toggles -> containerWidth changes again,
+  // indefinitely, tripping React's "Maximum update depth exceeded"
+  // (confirmed directly: reproducible whenever a project's real column
+  // count sits within a few pixels of that threshold, since
+  // estimateColumnCount above is only an estimate — its own "+3" fudge
+  // factor doesn't always land on gantt-task-react's actual rendered
+  // count). This outer box has overflow-hidden, not overflow-auto — it
+  // never grows a scrollbar of its own no matter what its content does,
+  // so its width is stable and immune to this loop, while still
+  // matching the same visible area chartWrapRef fills.
+  const chartOuterRef = useRef<HTMLDivElement>(null);
+  // The inner, actually-scrolling element (overflow-auto) — unrelated to
+  // the ResizeObserver above; see its own doc comment for why that
+  // observes chartOuterRef instead of this one.
   const chartWrapRef = useRef<HTMLDivElement>(null);
   // Wraps *only* <Gantt>'s own rendered output. The connector-handle/
   // line overlay below renders as a `position: absolute` sibling
@@ -752,7 +776,7 @@ export function GanttChartView({
   const [containerWidth, setContainerWidth] = useState(0);
 
   useEffect(() => {
-    const el = chartWrapRef.current;
+    const el = chartOuterRef.current;
     if (!el) return;
     const observer = new ResizeObserver((entries) => {
       setContainerWidth(entries[0].contentRect.width);
@@ -915,12 +939,29 @@ export function GanttChartView({
   // Detects a native gantt-task-react drag starting (move, resize, or
   // progress) so hover tracking can step aside for its duration — see
   // barDragActiveRef above. Every such interaction happens on the
-  // chart's own <svg> content; this app's own connector handles are
-  // plain HTML <button>s that stopPropagation() their own mousedown, so
-  // they never reach this handler, and neither does anything in the
-  // task-list panel (also plain HTML, not SVG).
+  // chart's own <svg> content, so "target is inside an svg" was the
+  // original check here — but the task list's own Edit/Add/Expand
+  // buttons render a lucide-react icon too, which is *also* an <svg>,
+  // and (unlike the connector handles, which stopPropagation() their
+  // own mousedown) those buttons don't opt out. Confirmed directly:
+  // clicking dead-center on an Edit button's icon (not its padding)
+  // matched this "inside an svg" check, which called setIsBarDragging —
+  // a state update on this component, which CustomTaskListTable/Header
+  // are declared *inside* (so every render passes React a brand-new
+  // component reference for them), forcing gantt-task-react to unmount
+  // and remount the whole task list before the browser's mouseup/click
+  // could fire on that now-destroyed button — per standard DOM
+  // semantics, no `click` event is dispatched once its mousedown target
+  // has been removed, so the button's onClick silently never ran. Right
+  // at the icon's own edge (the button's padding) the click worked fine
+  // — exactly the "sometimes" a user clicking anywhere on a small icon
+  // button would see. `svg.closest("button")` excludes exactly this
+  // case: none of gantt-task-react's own bar/grid SVG content is ever
+  // inside an HTML <button>, only this app's own icon buttons are.
   function handleChartMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    if (!(e.target instanceof Element) || !e.target.closest("svg")) return;
+    if (!(e.target instanceof Element)) return;
+    const svg = e.target.closest("svg");
+    if (!svg || svg.closest("button")) return;
     barDragActiveRef.current = true;
     setIsBarDragging(true);
     setHoveredTaskId(null);
@@ -1549,7 +1590,10 @@ export function GanttChartView({
               toolbarSlot
             )}
 
-          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+          <div
+            ref={chartOuterRef}
+            className="overflow-hidden rounded-lg border border-zinc-200 bg-white"
+          >
           <div
             ref={chartWrapRef}
             className="gantt-task-react-root h-220 overflow-auto"

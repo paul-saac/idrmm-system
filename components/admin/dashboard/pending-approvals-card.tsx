@@ -9,7 +9,7 @@ export function PendingApprovalsCard({
         <h2 className="text-sm font-semibold text-zinc-900">
           Pending Approvals
         </h2>
-        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+        <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
           {items.length}
         </span>
       </div>

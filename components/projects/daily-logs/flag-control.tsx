@@ -166,7 +166,7 @@ export function FlagControl({
     return (
       <span
         title={`Flagged by ${flag.flaggedByName}: "${flag.reason}" — resolved by ${flag.resolvedByName ?? "—"} on ${formatFlagDate(flag.resolvedAt!)}`}
-        className="inline-flex w-fit items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500"
+        className="inline-flex w-fit items-center gap-1 rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500"
       >
         <Flag className="size-3" />
         Resolved{flag.entryUpdatedAt ? " — corrected" : ""}
@@ -215,7 +215,7 @@ export function FlagControl({
       <div className="flex flex-wrap items-center gap-1.5">
         <span
           title={`Originally flagged by ${flag.flaggedByName}: "${flag.reason}"`}
-          className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"
+          className="inline-flex items-center gap-1 rounded-sm bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"
         >
           <Flag className="size-3" />
           Corrected — needs review
@@ -246,7 +246,7 @@ export function FlagControl({
     <div className="flex flex-wrap items-center gap-1.5">
       <span
         title={`Flagged by ${flag.flaggedByName} on ${formatFlagDate(flag.flaggedAt)}`}
-        className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
+        className="inline-flex items-center gap-1 rounded-sm bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
       >
         <Flag className="size-3" />
         {flag.reason}

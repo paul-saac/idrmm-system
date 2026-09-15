@@ -25,13 +25,13 @@ function formatDateTime(iso: string) {
 function StatusBadge({ returnedAt }: { returnedAt: string | null }) {
   if (returnedAt) {
     return (
-      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+      <span className="rounded-sm bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
         Returned
       </span>
     );
   }
   return (
-    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+    <span className="rounded-sm bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
       Not returned
     </span>
   );

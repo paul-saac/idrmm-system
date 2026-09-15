@@ -349,6 +349,94 @@ function buildEquipmentAcquisitionDrafts(formData: FormData) {
   return drafts;
 }
 
+function parseSurveyOccurred(
+  value: FormDataEntryValue | null
+): boolean | null {
+  const raw = String(value ?? "");
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return null;
+}
+
+/**
+ * Same repeated-field convention as buildWorkItemDrafts, for a
+ * project's Survey questions (daily_log_survey_questions) — one row per
+ * question the modal showed, in the same order every time since the
+ * modal builds this list off the same listSurveyQuestions read that
+ * ordered it by sort_order. Every project's questions (including the
+ * three every project starts with — see seedDefaultSurveyQuestions)
+ * answer into daily_log_survey_answers this same way; there's no
+ * separate "fixed question" path anymore (see
+ * 0034_daily_log_survey_defaults.sql).
+ */
+function buildSurveyAnswerDrafts(formData: FormData) {
+  const questionIds = formData.getAll("surveyQuestionId");
+  const occurredValues = formData.getAll("surveyOccurred");
+  const notesValues = formData.getAll("surveyNotes");
+
+  const drafts: { questionId: number; occurred: boolean | null; notes: string | null }[] =
+    [];
+  for (let i = 0; i < questionIds.length; i++) {
+    drafts.push({
+      questionId: Number(questionIds[i]),
+      occurred: parseSurveyOccurred(occurredValues[i] ?? null),
+      notes: String(notesValues[i] ?? "").trim() || null,
+    });
+  }
+  return drafts;
+}
+
+/**
+ * Seeds a freshly-created project with the same three Survey questions
+ * every project has always asked (accidents/schedule delays/weather
+ * delays — see 0011_daily_log_survey.sql's original three fixed
+ * columns, folded into this dynamic table by
+ * 0034_daily_log_survey_defaults.sql). An admin can rename, reorder, or
+ * delete them afterward like any other question via the Survey
+ * Questions settings modal — this only sets the starting point.
+ * affects_delay_risk marks the two that feed the Delay Risk
+ * Assessment's "Delay Reports (30d)" stat (see countRecentDelayIncidents
+ * in lib/forecasting/data.ts); accidents doesn't affect it, matching
+ * the original fixed-column behavior.
+ */
+export async function seedDefaultSurveyQuestions(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: number
+) {
+  const { error } = await supabase.from("daily_log_survey_questions").insert([
+    {
+      project_id: projectId,
+      question_text: "Any accidents on site today?",
+      is_required: true,
+      sort_order: 0,
+      affects_delay_risk: false,
+    },
+    {
+      project_id: projectId,
+      question_text: "Any schedule delays occur?",
+      is_required: true,
+      sort_order: 1,
+      affects_delay_risk: true,
+    },
+    {
+      project_id: projectId,
+      question_text: "Did weather cause any delays?",
+      is_required: true,
+      sort_order: 2,
+      affects_delay_risk: true,
+    },
+  ]);
+  if (error) {
+    // The project itself already saved successfully — don't fail project
+    // creation over its starter Survey questions, just leave a trail;
+    // an admin can always add them by hand via the settings modal.
+    console.error(
+      "[seedDefaultSurveyQuestions] Supabase insert failed:",
+      error.message
+    );
+  }
+}
+
 export async function createDailyLog(
   projectId: number,
   _prevState: DailyLogActionState,
@@ -485,6 +573,28 @@ export async function createDailyLog(
     equipmentAcquisitionLogs,
   });
   if (entriesError) return { error: entriesError };
+
+  const surveyAnswers = buildSurveyAnswerDrafts(formData);
+  if (surveyAnswers.length > 0) {
+    const { error: surveyError } = await supabase
+      .from("daily_log_survey_answers")
+      .insert(
+        surveyAnswers.map((answer) => ({
+          daily_log_id: dailyLog.id,
+          question_id: answer.questionId,
+          occurred: answer.occurred,
+          notes: answer.notes,
+        }))
+      );
+    if (surveyError) {
+      // The log itself already saved successfully — don't fail the whole
+      // submission over the Survey answers, just leave a trail.
+      console.error(
+        "[createDailyLog] survey answers insert failed:",
+        surveyError.message
+      );
+    }
+  }
 
   revalidatePath(`/admin/projects/${projectId}`);
   return { success: true };
@@ -861,11 +971,36 @@ export async function updateDailyLog(
 
   const { error: statusError } = await supabase
     .from("daily_logs")
-    .update({ status: "pending", reviewed_by: null, reviewed_at: null })
+    .update({
+      status: "pending",
+      reviewed_by: null,
+      reviewed_at: null,
+    })
     .eq("id", dailyLogId);
   if (statusError) {
     console.error("[updateDailyLog] status reset failed:", statusError.message);
     return { error: "Could not save the daily log. Please try again." };
+  }
+
+  const surveyAnswers = buildSurveyAnswerDrafts(formData);
+  if (surveyAnswers.length > 0) {
+    const { error: surveyError } = await supabase
+      .from("daily_log_survey_answers")
+      .upsert(
+        surveyAnswers.map((answer) => ({
+          daily_log_id: dailyLogId,
+          question_id: answer.questionId,
+          occurred: answer.occurred,
+          notes: answer.notes,
+        })),
+        { onConflict: "daily_log_id,question_id" }
+      );
+    if (surveyError) {
+      console.error(
+        "[updateDailyLog] survey answers upsert failed:",
+        surveyError.message
+      );
+    }
   }
 
   if (attachmentPaths.length > 0) {
@@ -1885,5 +2020,110 @@ export async function updateFlaggedEntry(
   }
 
   revalidatePath(`/admin/projects/${projectId}/daily-logs/${dailyLogId}`);
+  return { success: true };
+}
+
+export type SurveyQuestionsActionState = {
+  error?: string;
+  success?: boolean;
+};
+
+/**
+ * Replaces a project's whole custom Survey question list in one go,
+ * matching the settings modal's own Cancel/Save shape — nothing is
+ * committed until Save, so this reconciles the submitted list against
+ * what's stored rather than exposing separate add/edit/delete actions.
+ * Same repeated-field convention as buildWorkItemDrafts and friends
+ * above: questionId is empty string for a row added in this same
+ * session (insert), or an existing id (update); any existing id not
+ * present in the submission was deleted client-side and is removed here
+ * too. Deleting a question cascades its daily_log_survey_answers rows
+ * (0033_daily_log_survey_questions.sql) — no history kept past that,
+ * same tradeoff every other daily-log child table already accepts.
+ */
+export async function saveSurveyQuestions(
+  projectId: number,
+  _prevState: SurveyQuestionsActionState,
+  formData: FormData
+): Promise<SurveyQuestionsActionState> {
+  const profile = await getSessionProfile();
+  if (!profile || profile.role !== "admin") {
+    return { error: "You are not authorized to edit survey questions." };
+  }
+
+  const ids = formData.getAll("questionId");
+  const texts = formData.getAll("questionText");
+  const required = formData.getAll("questionRequired");
+
+  const rows: { id: number | null; questionText: string; isRequired: boolean }[] =
+    [];
+  for (let i = 0; i < texts.length; i++) {
+    const questionText = String(texts[i] ?? "").trim();
+    if (!questionText) {
+      return { error: "Every question needs its own text." };
+    }
+    const idRaw = String(ids[i] ?? "").trim();
+    rows.push({
+      id: idRaw ? Number(idRaw) : null,
+      questionText,
+      isRequired: String(required[i] ?? "false") === "true",
+    });
+  }
+
+  const supabase = await createClient();
+
+  const { data: existing } = await supabase
+    .from("daily_log_survey_questions")
+    .select("id")
+    .eq("project_id", projectId);
+
+  const existingIds = new Set((existing ?? []).map((r) => r.id));
+  const submittedIds = new Set(
+    rows.filter((r) => r.id != null).map((r) => r.id as number)
+  );
+  const removedIds = Array.from(existingIds).filter((id) => !submittedIds.has(id));
+
+  if (removedIds.length > 0) {
+    const { error } = await supabase
+      .from("daily_log_survey_questions")
+      .delete()
+      .in("id", removedIds);
+    if (error) {
+      console.error("[saveSurveyQuestions] delete failed:", error.message);
+      return { error: "Could not save the survey questions. Please try again." };
+    }
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.id != null) {
+      const { error } = await supabase
+        .from("daily_log_survey_questions")
+        .update({
+          question_text: row.questionText,
+          is_required: row.isRequired,
+          sort_order: i,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", row.id);
+      if (error) {
+        console.error("[saveSurveyQuestions] update failed:", error.message);
+        return { error: "Could not save the survey questions. Please try again." };
+      }
+    } else {
+      const { error } = await supabase.from("daily_log_survey_questions").insert({
+        project_id: projectId,
+        question_text: row.questionText,
+        is_required: row.isRequired,
+        sort_order: i,
+      });
+      if (error) {
+        console.error("[saveSurveyQuestions] insert failed:", error.message);
+        return { error: "Could not save the survey questions. Please try again." };
+      }
+    }
+  }
+
+  revalidatePath(`/admin/projects/${projectId}`);
   return { success: true };
 }

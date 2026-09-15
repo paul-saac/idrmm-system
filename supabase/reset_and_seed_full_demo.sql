@@ -35,7 +35,8 @@
 -- Total budget: ₱18,000,000
 --
 -- Run manually in the Supabase SQL Editor. Requires
--- 0027_estimate_task_schedule.sql to already be applied.
+-- 0027_estimate_task_schedule.sql and 0034_daily_log_survey_defaults.sql
+-- to already be applied.
 -- ============================================================================
 
 do $$
@@ -44,6 +45,9 @@ declare
   v_pm_id uuid;
   v_foreman_id uuid;
   v_project_id bigint;
+  v_q_accidents bigint;
+  v_q_schedule_delays bigint;
+  v_q_weather_delays bigint;
   v_log_id bigint;
   v_mr_id bigint;
   v_er_id bigint;
@@ -163,6 +167,25 @@ begin
     v_foreman_id,
     v_admin_id
   ) returning id into v_project_id;
+
+  -- Survey questions (0033/0034) — every project starts with these
+  -- three by default (see seedDefaultSurveyQuestions); this raw-SQL
+  -- seed inserts new project rows directly, bypassing createProject, so
+  -- it seeds them itself the same way.
+  insert into public.daily_log_survey_questions
+    (project_id, question_text, is_required, sort_order, affects_delay_risk)
+  values (v_project_id, 'Any accidents on site today?', true, 0, false)
+  returning id into v_q_accidents;
+
+  insert into public.daily_log_survey_questions
+    (project_id, question_text, is_required, sort_order, affects_delay_risk)
+  values (v_project_id, 'Any schedule delays occur?', true, 1, true)
+  returning id into v_q_schedule_delays;
+
+  insert into public.daily_log_survey_questions
+    (project_id, question_text, is_required, sort_order, affects_delay_risk)
+  values (v_project_id, 'Did weather cause any delays?', true, 2, true)
+  returning id into v_q_weather_delays;
 
   -- ======================================================================
   -- Cost Estimate Breakdown + Schedule
@@ -1038,9 +1061,11 @@ begin
   insert into public.daily_log_equipment_acquisition (daily_log_id, equipment_name, quantity, acquisition_type, amount, remarks)
   values (v_log_id, 'Scaffolding Set A', 1, 'rental', 15000, 'Scaffolding Set A for site work');
 
-  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at, weather_delays_occurred, weather_delays_notes)
-  values (v_project_id, v_foreman_id, '2026-06-03', 'approved', v_admin_id, '2026-06-04', true, 'Heavy rain halted concrete pouring for the day.')
+  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at)
+  values (v_project_id, v_foreman_id, '2026-06-03', 'approved', v_admin_id, '2026-06-04')
   returning id into v_log_id;
+  insert into public.daily_log_survey_answers (daily_log_id, question_id, occurred, notes)
+  values (v_log_id, v_q_weather_delays, true, 'Heavy rain halted concrete pouring for the day.');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
   values (v_log_id, v_cat_4, v_task_10, 1080, 'm2', 'Column & Beam Formworks — progress update');
   insert into public.daily_log_labor_items (daily_log_id, worker_role, worker_count, daily_rate)
@@ -1052,9 +1077,11 @@ begin
   insert into public.daily_log_equipment_acquisition (daily_log_id, equipment_name, quantity, acquisition_type, amount, remarks)
   values (v_log_id, 'Welding Machine', 1, 'rental', 6500, 'Welding Machine for site work');
 
-  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at, schedule_delays_occurred, schedule_delays_notes)
-  values (v_project_id, v_foreman_id, '2026-06-23', 'approved', v_admin_id, '2026-06-24', true, 'Rebar delivery delayed by supplier by about a week.')
+  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at)
+  values (v_project_id, v_foreman_id, '2026-06-23', 'approved', v_admin_id, '2026-06-24')
   returning id into v_log_id;
+  insert into public.daily_log_survey_answers (daily_log_id, question_id, occurred, notes)
+  values (v_log_id, v_q_schedule_delays, true, 'Rebar delivery delayed by supplier by about a week.');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
   values (v_log_id, v_cat_4, v_task_11, 24750, 'kg', 'Reinforcement Installation — progress update');
   insert into public.daily_log_labor_items (daily_log_id, worker_role, worker_count, daily_rate)
@@ -1082,9 +1109,11 @@ begin
   insert into public.daily_log_expense_items (daily_log_id, expense_category, amount, description)
   values (v_log_id, 'Site Security Services', 28000, 'Monthly site security guard services');
 
-  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at, weather_delays_occurred, weather_delays_notes)
-  values (v_project_id, v_foreman_id, '2026-07-28', 'approved', v_admin_id, '2026-07-29', true, 'Typhoon signal no. 1 raised; work suspended as a precaution.')
+  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at)
+  values (v_project_id, v_foreman_id, '2026-07-28', 'approved', v_admin_id, '2026-07-29')
   returning id into v_log_id;
+  insert into public.daily_log_survey_answers (daily_log_id, question_id, occurred, notes)
+  values (v_log_id, v_q_weather_delays, true, 'Typhoon signal no. 1 raised; work suspended as a precaution.');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
   values (v_log_id, v_cat_4, v_task_12, 605, 'm3', 'Concrete Pouring (Columns, Beams, Slabs) — progress update');
   insert into public.daily_log_labor_items (daily_log_id, worker_role, worker_count, daily_rate)
@@ -1161,9 +1190,11 @@ begin
   insert into public.daily_log_material_usage_items (daily_log_id, project_material_id, status, activity)
   values (v_log_id, v_mat_4, 'available', 'Used CHB 6" for ongoing site work');
 
-  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at, weather_delays_occurred, weather_delays_notes)
-  values (v_project_id, v_foreman_id, '2026-08-20', 'approved', v_admin_id, '2026-08-21', true, 'Continuous rain over the weekend delayed masonry work.')
+  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at)
+  values (v_project_id, v_foreman_id, '2026-08-20', 'approved', v_admin_id, '2026-08-21')
   returning id into v_log_id;
+  insert into public.daily_log_survey_answers (daily_log_id, question_id, occurred, notes)
+  values (v_log_id, v_q_weather_delays, true, 'Continuous rain over the weekend delayed masonry work.');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
   values (v_log_id, v_cat_6, v_task_17, 481, 'm2', 'CHB Wall Laying (Upper Floors) — progress update');
   insert into public.daily_log_labor_items (daily_log_id, worker_role, worker_count, daily_rate)
@@ -1186,9 +1217,11 @@ begin
   insert into public.daily_log_material_usage_items (daily_log_id, project_material_id, status, activity)
   values (v_log_id, v_mat_6, 'available', 'Used Sand for ongoing site work');
 
-  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at, schedule_delays_occurred, schedule_delays_notes)
-  values (v_project_id, v_foreman_id, '2026-08-27', 'approved', v_admin_id, '2026-08-28', true, 'Electrical materials backordered, rough-in paused on 2 tasks.')
+  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at)
+  values (v_project_id, v_foreman_id, '2026-08-27', 'approved', v_admin_id, '2026-08-28')
   returning id into v_log_id;
+  insert into public.daily_log_survey_answers (daily_log_id, question_id, occurred, notes)
+  values (v_log_id, v_q_schedule_delays, true, 'Electrical materials backordered, rough-in paused on 2 tasks.');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
   values (v_log_id, v_cat_5, v_task_14, 427, 'm2', 'Roof Sheathing & Insulation — progress update');
   insert into public.daily_log_labor_items (daily_log_id, worker_role, worker_count, daily_rate)
@@ -1215,9 +1248,11 @@ begin
   insert into public.daily_log_expense_items (daily_log_id, expense_category, amount, description)
   values (v_log_id, 'Site Security Services', 28000, 'Monthly site security guard services');
 
-  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at, schedule_delays_occurred, schedule_delays_notes)
-  values (v_project_id, v_foreman_id, '2026-09-03', 'approved', v_admin_id, '2026-09-04', true, 'Plumbing crew short-staffed this week; behind on rough-in.')
+  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at)
+  values (v_project_id, v_foreman_id, '2026-09-03', 'approved', v_admin_id, '2026-09-04')
   returning id into v_log_id;
+  insert into public.daily_log_survey_answers (daily_log_id, question_id, occurred, notes)
+  values (v_log_id, v_q_schedule_delays, true, 'Plumbing crew short-staffed this week; behind on rough-in.');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
   values (v_log_id, v_cat_5, v_task_15, 427, 'm2', 'Roofing Materials Installation — progress update');
   insert into public.daily_log_labor_items (daily_log_id, worker_role, worker_count, daily_rate)
@@ -1228,9 +1263,11 @@ begin
   insert into public.daily_log_material_procurement_items (procurement_id, material_name, specification, quantity, unit, cost)
   values (v_proc_id, 'Assorted construction materials', 'Per site requisition', 145, 'lot', 22475);
 
-  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at, weather_delays_occurred, weather_delays_notes)
-  values (v_project_id, v_foreman_id, '2026-09-06', 'approved', v_admin_id, '2026-09-07', true, 'Afternoon thunderstorms cut the work day short.')
+  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at)
+  values (v_project_id, v_foreman_id, '2026-09-06', 'approved', v_admin_id, '2026-09-07')
   returning id into v_log_id;
+  insert into public.daily_log_survey_answers (daily_log_id, question_id, occurred, notes)
+  values (v_log_id, v_q_weather_delays, true, 'Afternoon thunderstorms cut the work day short.');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
   values (v_log_id, v_cat_7, v_task_19, 792, 'lm', 'Conduit & Wiring Rough-in — progress update');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
@@ -1242,9 +1279,11 @@ begin
   insert into public.daily_log_equipment_acquisition (daily_log_id, equipment_name, quantity, acquisition_type, amount, remarks)
   values (v_log_id, 'Generator Set 10kVA', 1, 'rental', 9000, 'Generator Set 10kVA for site work');
 
-  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at, schedule_delays_occurred, schedule_delays_notes)
-  values (v_project_id, v_foreman_id, '2026-09-10', 'approved', v_admin_id, '2026-09-11', true, 'Waiting on additional scaffolding before masonry can continue upstairs.')
+  insert into public.daily_logs (project_id, submitted_by, log_date, status, reviewed_by, reviewed_at)
+  values (v_project_id, v_foreman_id, '2026-09-10', 'approved', v_admin_id, '2026-09-11')
   returning id into v_log_id;
+  insert into public.daily_log_survey_answers (daily_log_id, question_id, occurred, notes)
+  values (v_log_id, v_q_schedule_delays, true, 'Waiting on additional scaffolding before masonry can continue upstairs.');
   insert into public.daily_log_work_items (daily_log_id, category_id, task_id, quantity_completed, unit, activity)
   values (v_log_id, v_cat_6, v_task_18, 1020, 'm2', 'Wall Plastering — progress update');
   insert into public.daily_log_labor_items (daily_log_id, worker_role, worker_count, daily_rate)

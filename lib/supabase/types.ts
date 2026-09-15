@@ -449,6 +449,53 @@ export interface Database {
         };
         Relationships: [];
       };
+      daily_log_survey_questions: {
+        Row: {
+          id: number;
+          project_id: number;
+          question_text: string;
+          is_required: boolean;
+          sort_order: number;
+          affects_delay_risk: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          project_id: number;
+          question_text: string;
+          is_required?: boolean;
+          sort_order?: number;
+          affects_delay_risk?: boolean;
+        };
+        Update: {
+          question_text?: string;
+          is_required?: boolean;
+          sort_order?: number;
+          affects_delay_risk?: boolean;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
+      daily_log_survey_answers: {
+        Row: {
+          id: number;
+          daily_log_id: number;
+          question_id: number;
+          occurred: boolean | null;
+          notes: string | null;
+        };
+        Insert: {
+          daily_log_id: number;
+          question_id: number;
+          occurred?: boolean | null;
+          notes?: string | null;
+        };
+        Update: {
+          occurred?: boolean | null;
+          notes?: string | null;
+        };
+        Relationships: [];
+      };
       daily_log_expense_items: {
         Row: {
           id: number;

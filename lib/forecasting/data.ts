@@ -56,7 +56,16 @@ function elapsedFraction(startISO: string, endISO: string, today: Date): number 
 /** Approved daily logs in the trailing `windowDays` that reported a
  * weather or schedule delay — the qualitative signal that nudges risk
  * up when SPI alone hasn't caught up to what the foreman already
- * reported. */
+ * reported. Reads daily_log_survey_answers for whichever of the
+ * project's Survey questions are flagged affects_delay_risk (the two
+ * defaults every project starts with — "Any schedule delays occur?"
+ * and "Did weather cause any delays?" — see seedDefaultSurveyQuestions
+ * in lib/daily-logs/actions.ts) rather than the old fixed
+ * weather_delays_occurred/schedule_delays_occurred columns on
+ * daily_logs directly, since those are now editable/deletable per
+ * project (0034_daily_log_survey_defaults.sql). Counts *logs*, not
+ * answers — a log with both flagged "Yes" still only counts once,
+ * matching the original .or(...) behavior. */
 async function countRecentDelayIncidents(
   supabase: Awaited<ReturnType<typeof createClient>>,
   projectId: number,
@@ -66,15 +75,32 @@ async function countRecentDelayIncidents(
   since.setDate(since.getDate() - windowDays);
   const sinceDate = since.toISOString().slice(0, 10);
 
-  const { data } = await supabase
-    .from("daily_logs")
-    .select("id")
-    .eq("project_id", projectId)
-    .eq("status", "approved")
-    .gte("log_date", sinceDate)
-    .or("weather_delays_occurred.eq.true,schedule_delays_occurred.eq.true");
+  const [{ data: logs }, { data: delayQuestions }] = await Promise.all([
+    supabase
+      .from("daily_logs")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("status", "approved")
+      .gte("log_date", sinceDate),
+    supabase
+      .from("daily_log_survey_questions")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("affects_delay_risk", true),
+  ]);
 
-  return (data ?? []).length;
+  const logIds = (logs ?? []).map((log) => log.id);
+  const questionIds = (delayQuestions ?? []).map((question) => question.id);
+  if (logIds.length === 0 || questionIds.length === 0) return 0;
+
+  const { data: answers } = await supabase
+    .from("daily_log_survey_answers")
+    .select("daily_log_id")
+    .in("daily_log_id", logIds)
+    .in("question_id", questionIds)
+    .eq("occurred", true);
+
+  return new Set((answers ?? []).map((answer) => answer.daily_log_id)).size;
 }
 
 export type DelayRiskAssessment = {

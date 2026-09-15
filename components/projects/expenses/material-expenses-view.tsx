@@ -9,6 +9,7 @@ import {
   TableShell,
   formatCurrency,
 } from "@/components/projects/expenses/expense-table-shared";
+import { dailyLogEntryHref } from "@/lib/daily-logs/flag-state";
 import type { MaterialExpenseGroup } from "@/lib/expenses/data";
 
 const PROCUREMENT_TYPE_LABELS: Record<string, string> = {
@@ -73,7 +74,12 @@ function ProcurementSubRow({
             )}
           </button>
           <Link
-            href={`/admin/projects/${projectId}/daily-logs/${dailyLogId}`}
+            href={dailyLogEntryHref(
+              projectId,
+              dailyLogId,
+              "material_procurement",
+              procurement.id
+            )}
             className="flex-shrink-0 text-xs font-medium text-zinc-500 transition hover:text-zinc-900 hover:underline"
           >
             View Details
@@ -185,20 +191,20 @@ export function MaterialExpensesView({
                               key={item.id}
                               className="border-y border-zinc-100 transition-colors hover:bg-zinc-50"
                             >
-                              <td className="border-r border-zinc-100 px-4 py-2.5" />
-                              <td className="border-r border-zinc-100 px-4 py-2.5 font-medium text-zinc-900">
+                              <td className="border-r border-zinc-200 px-4 py-2.5" />
+                              <td className="border-r border-zinc-200 px-4 py-2.5 font-medium text-zinc-900">
                                 {item.materialName}
                               </td>
-                              <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-600">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-600">
                                 {item.specification || "—"}
                               </td>
-                              <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                                 {String(item.quantity).padStart(2, "0")}
                               </td>
-                              <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-600">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-600">
                                 {item.unit || "—"}
                               </td>
-                              <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                                 {formatCurrency(item.unitCost)}
                               </td>
                               <td className="px-4 py-2.5 font-medium text-zinc-900">

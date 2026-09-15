@@ -39,7 +39,7 @@ function StatusBadge({ status }: { status: EquipmentRequestStatus }) {
     canceled: "Canceled",
   };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[status]}`}>
+    <span className={`rounded-sm px-2 py-0.5 text-xs font-medium ${styles[status]}`}>
       {labels[status]}
     </span>
   );
@@ -57,7 +57,7 @@ function PriorityBadge({ priority }: { priority: EquipmentRequestPriority }) {
     emergency: "Emergency",
   };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[priority]}`}>
+    <span className={`rounded-sm px-2 py-0.5 text-xs font-medium ${styles[priority]}`}>
       {labels[priority]}
     </span>
   );
@@ -75,7 +75,7 @@ function FulfilmentBadge({ fulfilment }: { fulfilment: EquipmentRequestItemFulfi
     fulfilled: "Fulfilled",
   };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[fulfilment]}`}>
+    <span className={`rounded-sm px-2 py-0.5 text-xs font-medium ${styles[fulfilment]}`}>
       {labels[fulfilment]}
     </span>
   );

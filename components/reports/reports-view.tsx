@@ -99,7 +99,7 @@ export function ReportsView({
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-semibold">{data.project.name}</h2>
               <span
-                className={`rounded-full px-2 py-0.5 text-xs font-medium ${projectStatusBadgeClasses(data.project.status)}`}
+                className={`rounded-sm px-2 py-0.5 text-xs font-medium ${projectStatusBadgeClasses(data.project.status)}`}
               >
                 {projectStatusLabel(data.project.status)}
               </span>
@@ -161,9 +161,9 @@ export function ReportsView({
             </div>
           </div>
         </div>
-        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-sm bg-zinc-100">
           <div
-            className="h-full rounded-full bg-emerald-500"
+            className="h-full rounded-sm bg-emerald-500"
             style={{ width: `${Math.min(100, Math.max(0, data.progressPercent))}%` }}
           />
         </div>

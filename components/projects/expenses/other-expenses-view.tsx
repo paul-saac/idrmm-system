@@ -1,12 +1,14 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   GroupHeaderRow,
   TotalFooterRow,
   TableShell,
   formatCurrency,
 } from "@/components/projects/expenses/expense-table-shared";
+import { dailyLogEntryHref } from "@/lib/daily-logs/flag-state";
 import type { OtherExpenseGroup } from "@/lib/expenses/data";
 
 const COLUMN_COUNT = 7;
@@ -18,6 +20,7 @@ export function OtherExpensesView({
   projectId: number;
   groups: OtherExpenseGroup[];
 }) {
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState<Set<number>>(
     new Set(groups.slice(1).map((g) => g.dailyLogId))
   );
@@ -81,32 +84,46 @@ export function OtherExpensesView({
                   colSpan={COLUMN_COUNT}
                 />
                 {isOpen &&
-                  group.items.map((item) => (
+                  group.items.map((item) => {
+                    const href = dailyLogEntryHref(
+                      projectId,
+                      group.dailyLogId,
+                      "expense_item",
+                      item.id
+                    );
+                    return (
                     <tr
                       key={item.id}
-                      className="border-y border-zinc-100 transition-colors hover:bg-zinc-50"
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => router.push(href)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") router.push(href);
+                      }}
+                      className="cursor-pointer border-y border-zinc-100 transition-colors hover:bg-zinc-100"
                     >
-                      <td className="border-r border-zinc-100 px-4 py-2.5" />
-                      <td className="border-r border-zinc-100 px-4 py-2.5 font-medium text-zinc-900">
+                      <td className="border-r border-zinc-200 px-4 py-2.5" />
+                      <td className="border-r border-zinc-200 px-4 py-2.5 font-medium text-zinc-900">
                         {item.expenseCategory}
                       </td>
-                      <td className="truncate border-r border-zinc-100 px-4 py-2.5 text-zinc-600">
+                      <td className="truncate border-r border-zinc-200 px-4 py-2.5 text-zinc-600">
                         {item.description || "—"}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {formatCurrency(item.amount)}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {formatCurrency(item.additionalFees)}
                       </td>
-                      <td className="truncate border-r border-zinc-100 px-4 py-2.5 text-zinc-600">
+                      <td className="truncate border-r border-zinc-200 px-4 py-2.5 text-zinc-600">
                         {item.remarks || "—"}
                       </td>
                       <td className="px-4 py-2.5 font-medium text-zinc-900">
                         {formatCurrency(item.total)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
               </Fragment>
             );
           })}

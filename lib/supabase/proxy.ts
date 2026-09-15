@@ -13,10 +13,6 @@ import type { Database } from "@/lib/supabase/types";
  * Runs from the root proxy.ts (Next.js 16 renamed middleware.ts -> proxy.ts).
  */
 export async function updateSession(request: NextRequest) {
-  if (request.nextUrl.pathname.startsWith("/dev-ev-check")) {
-    return NextResponse.next({ request });
-  }
-
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient<Database>(

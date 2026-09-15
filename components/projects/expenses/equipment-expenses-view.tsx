@@ -1,12 +1,14 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   GroupHeaderRow,
   TotalFooterRow,
   TableShell,
   formatCurrency,
 } from "@/components/projects/expenses/expense-table-shared";
+import { dailyLogEntryHref } from "@/lib/daily-logs/flag-state";
 import type { EquipmentExpenseGroup } from "@/lib/expenses/data";
 
 const ACQUISITION_TYPE_LABELS: Record<string, string> = {
@@ -27,6 +29,7 @@ export function EquipmentExpensesView({
   projectId: number;
   groups: EquipmentExpenseGroup[];
 }) {
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState<Set<number>>(
     new Set(groups.slice(1).map((g) => g.dailyLogId))
   );
@@ -90,30 +93,43 @@ export function EquipmentExpensesView({
                   colSpan={COLUMN_COUNT}
                 />
                 {isOpen &&
-                  group.items.map((item) => (
+                  group.items.map((item) => {
+                    const href = dailyLogEntryHref(
+                      projectId,
+                      group.dailyLogId,
+                      "equipment_acquisition",
+                      item.id
+                    );
+                    return (
                     <tr
                       key={item.id}
-                      className="border-y border-zinc-100 transition-colors hover:bg-zinc-50"
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => router.push(href)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") router.push(href);
+                      }}
+                      className="cursor-pointer border-y border-zinc-100 transition-colors hover:bg-zinc-100"
                     >
-                      <td className="border-r border-zinc-100 px-4 py-2.5" />
-                      <td className="border-r border-zinc-100 px-4 py-2.5 font-medium text-zinc-900">
+                      <td className="border-r border-zinc-200 px-4 py-2.5" />
+                      <td className="border-r border-zinc-200 px-4 py-2.5 font-medium text-zinc-900">
                         {item.equipmentName}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-600">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-600">
                         {item.specification || "—"}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {String(item.quantity).padStart(2, "0")}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {ACQUISITION_TYPE_LABELS[item.acquisitionType]}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 font-medium text-zinc-900">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 font-medium text-zinc-900">
                         {formatCurrency(item.amount)}
                       </td>
                       <td className="px-4 py-2.5 text-zinc-600">
                         {item.equipmentRequestErNo ? (
-                          <span className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
+                          <span className="rounded-sm bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
                             {item.equipmentRequestErNo}
                           </span>
                         ) : (
@@ -121,7 +137,8 @@ export function EquipmentExpensesView({
                         )}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
               </Fragment>
             );
           })}

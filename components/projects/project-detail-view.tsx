@@ -70,7 +70,7 @@ import type { AccountRow } from "@/lib/accounts/data";
 import type { CostEstimate } from "@/lib/cost-estimate/data";
 import type { ProjectProgress } from "@/lib/progress/data";
 import type { DelayRiskAssessment } from "@/lib/forecasting/data";
-import type { DailyLogSummary } from "@/lib/daily-logs/data";
+import type { DailyLogSummary, SurveyQuestion } from "@/lib/daily-logs/data";
 
 const MAIN_TABS = [
   { value: "overview", label: "Overview" },
@@ -257,6 +257,7 @@ export function ProjectDetailView({
   progress,
   risk,
   dailyLogs,
+  surveyQuestions,
   materials,
   materialsCounts,
   materialUsageHistory,
@@ -279,6 +280,7 @@ export function ProjectDetailView({
   progress: ProjectProgress;
   risk: DelayRiskAssessment;
   dailyLogs: DailyLogSummary[];
+  surveyQuestions: SurveyQuestion[];
   materials: ProjectMaterial[];
   materialsCounts: MaterialsOverviewCounts;
   materialUsageHistory: MaterialUsageHistoryEntry[];
@@ -419,7 +421,7 @@ export function ProjectDetailView({
 
           <div className="mt-3 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm mx-7">
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-medium ${projectStatusBadgeClasses(project.status)}`}
+              className={`rounded-sm px-2 py-0.5 text-xs font-medium ${projectStatusBadgeClasses(project.status)}`}
             >
               {projectStatusLabel(project.status)}
             </span>
@@ -533,6 +535,7 @@ export function ProjectDetailView({
               materialRequests={fulfillableMaterialRequests}
               equipmentRequests={fulfillableEquipmentRequests}
               logs={dailyLogs}
+              surveyQuestions={surveyQuestions}
               toolbarSlot={toolbarSlotEl}
             />
           )
@@ -634,9 +637,9 @@ export function ProjectDetailView({
                         {Math.round(progress.overallPercent)}%
                       </span>
                     </div>
-                    <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-zinc-100">
+                    <div className="mt-2 h-3 w-full overflow-hidden rounded-sm bg-zinc-100">
                       <div
-                        className="h-full rounded-full bg-emerald-400 transition-all"
+                        className="h-full rounded-sm bg-emerald-400 transition-all"
                         style={{ width: `${progress.overallPercent}%` }}
                       />
                     </div>

@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { CalendarDays, Plus } from "lucide-react";
-import { DailyLogCard } from "@/components/projects/daily-logs/daily-log-card";
+import { CalendarDays, Plus, Settings2 } from "lucide-react";
+import { DailyLogsTable } from "@/components/projects/daily-logs/daily-logs-table";
 import { AddDailyLogModal } from "@/components/projects/daily-logs/add-daily-log-modal";
-import type { DailyLogStatus, DailyLogSummary } from "@/lib/daily-logs/data";
+import { SurveyQuestionsModal } from "@/components/projects/daily-logs/survey-questions-modal";
+import type { DailyLogStatus, DailyLogSummary, SurveyQuestion } from "@/lib/daily-logs/data";
 import type { CostCategory } from "@/lib/cost-estimate/data";
 import type { ProjectMaterial } from "@/lib/materials/data";
 import type { MaterialRequestDetail } from "@/lib/material-requests/data";
@@ -25,6 +26,7 @@ export function DailyLogsView({
   materialRequests,
   equipmentRequests,
   logs,
+  surveyQuestions,
   toolbarSlot,
 }: {
   projectId: number;
@@ -33,6 +35,7 @@ export function DailyLogsView({
   materialRequests: MaterialRequestDetail[];
   equipmentRequests: EquipmentRequestDetail[];
   logs: DailyLogSummary[];
+  surveyQuestions: SurveyQuestion[];
   /** DOM node (rendered by the parent's sub-tabs row) this view's own
    * toolbar portals into, so it lines up beside the sub-tab pills
    * instead of stacking below them — see SubTabsRow in
@@ -40,6 +43,7 @@ export function DailyLogsView({
   toolbarSlot: HTMLDivElement | null;
 }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [surveyOpen, setSurveyOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | DailyLogStatus>(
     "all"
   );
@@ -104,6 +108,15 @@ export function DailyLogsView({
 
       <button
         type="button"
+        onClick={() => setSurveyOpen(true)}
+        className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+      >
+        <Settings2 className="size-4" />
+        Survey Questions
+      </button>
+
+      <button
+        type="button"
         onClick={() => setAddOpen(true)}
         className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
       >
@@ -131,11 +144,7 @@ export function DailyLogsView({
           </p>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
-          {filtered.map((log) => (
-            <DailyLogCard key={log.id} projectId={projectId} log={log} />
-          ))}
-        </div>
+        <DailyLogsTable projectId={projectId} logs={filtered} />
       )}
 
       <AddDailyLogModal
@@ -144,9 +153,17 @@ export function DailyLogsView({
         materials={materials}
         materialRequests={materialRequests}
         equipmentRequests={equipmentRequests}
+        surveyQuestions={surveyQuestions}
         existingLogDates={logs.map((log) => log.logDate)}
         open={addOpen}
         onClose={() => setAddOpen(false)}
+      />
+
+      <SurveyQuestionsModal
+        projectId={projectId}
+        questions={surveyQuestions}
+        open={surveyOpen}
+        onClose={() => setSurveyOpen(false)}
       />
     </div>
   );

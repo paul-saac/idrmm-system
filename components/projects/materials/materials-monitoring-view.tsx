@@ -21,20 +21,20 @@ const STATUS_FILTERS: { value: MaterialStatus | "all"; label: string }[] = [
 function StatusBadge({ status }: { status: MaterialStatus }) {
   if (status === "available") {
     return (
-      <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+      <span className="rounded-sm bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
         Available
       </span>
     );
   }
   if (status === "low_stock") {
     return (
-      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+      <span className="rounded-sm bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
         Low Stock
       </span>
     );
   }
   return (
-    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+    <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
       Fully Consumed
     </span>
   );

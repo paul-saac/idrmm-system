@@ -39,9 +39,9 @@ export function ActiveProjectCard({
         <span>Completion</span>
         <span className="font-medium text-white">{project.completion}%</span>
       </div>
-      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-700">
+      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-sm bg-zinc-700">
         <div
-          className="h-full rounded-full bg-emerald-400"
+          className="h-full rounded-sm bg-emerald-400"
           style={{ width: `${project.completion}%` }}
         />
       </div>

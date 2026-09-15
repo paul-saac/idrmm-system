@@ -5,7 +5,7 @@ import { getProjectById } from "@/lib/projects/data";
 import { listAccountsByRole } from "@/lib/accounts/data";
 import { getCostEstimate } from "@/lib/cost-estimate/data";
 import { getProjectProgress } from "@/lib/progress/data";
-import { listDailyLogs } from "@/lib/daily-logs/data";
+import { listDailyLogs, listSurveyQuestions } from "@/lib/daily-logs/data";
 import {
   listMaterialUsageHistory,
   listProjectMaterials,
@@ -51,6 +51,7 @@ export default async function ProjectDetailPage({
     foremen,
     costEstimate,
     dailyLogs,
+    surveyQuestions,
     materials,
     materialUsageHistory,
     materialRequests,
@@ -69,6 +70,7 @@ export default async function ProjectDetailPage({
     listAccountsByRole(["foreman"]),
     getCostEstimate(projectId),
     listDailyLogs(projectId),
+    listSurveyQuestions(projectId),
     listProjectMaterials(projectId),
     listMaterialUsageHistory(projectId),
     listMaterialRequests(projectId),
@@ -140,6 +142,7 @@ export default async function ProjectDetailPage({
       progress={progress}
       risk={risk}
       dailyLogs={dailyLogs}
+      surveyQuestions={surveyQuestions}
       materials={materials}
       materialsCounts={summarizeMaterials(materials)}
       materialUsageHistory={materialUsageHistory}

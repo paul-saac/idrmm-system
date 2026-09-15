@@ -1,12 +1,14 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   GroupHeaderRow,
   TotalFooterRow,
   TableShell,
   formatCurrency,
 } from "@/components/projects/expenses/expense-table-shared";
+import { dailyLogEntryHref } from "@/lib/daily-logs/flag-state";
 import type { LaborExpenseGroup } from "@/lib/expenses/data";
 
 const COLUMN_COUNT = 8;
@@ -18,6 +20,7 @@ export function LaborExpensesView({
   projectId: number;
   groups: LaborExpenseGroup[];
 }) {
+  const router = useRouter();
   // Newest date open by default, the rest collapsed — keeps a project
   // with a long history from opening as one huge wall of rows.
   const [collapsed, setCollapsed] = useState<Set<number>>(
@@ -85,35 +88,49 @@ export function LaborExpensesView({
                   colSpan={COLUMN_COUNT}
                 />
                 {isOpen &&
-                  group.items.map((item) => (
+                  group.items.map((item) => {
+                    const href = dailyLogEntryHref(
+                      projectId,
+                      group.dailyLogId,
+                      "labor_item",
+                      item.id
+                    );
+                    return (
                     <tr
                       key={item.id}
-                      className="border-y border-zinc-100 transition-colors hover:bg-zinc-50"
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => router.push(href)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") router.push(href);
+                      }}
+                      className="cursor-pointer border-y border-zinc-100 transition-colors hover:bg-zinc-100"
                     >
-                      <td className="border-r border-zinc-100 px-4 py-2.5" />
-                      <td className="border-r border-zinc-100 px-4 py-2.5 font-medium text-zinc-900">
+                      <td className="border-r border-zinc-200 px-4 py-2.5" />
+                      <td className="border-r border-zinc-200 px-4 py-2.5 font-medium text-zinc-900">
                         {item.workerRole}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {String(item.workerCount).padStart(2, "0")}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {formatCurrency(item.dailyRate)}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {String(item.workersRenderedHalfday).padStart(2, "0")}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {String(item.workersRenderedOvertime).padStart(2, "0")}
                       </td>
-                      <td className="border-r border-zinc-100 px-4 py-2.5 text-zinc-700">
+                      <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-700">
                         {String(item.otHours).padStart(2, "0")}
                       </td>
                       <td className="px-4 py-2.5 font-medium text-zinc-900">
                         {formatCurrency(item.total)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
               </Fragment>
             );
           })}

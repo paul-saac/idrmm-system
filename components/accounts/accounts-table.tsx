@@ -143,7 +143,7 @@ export function AccountsTable({
               )}
               <td className="px-4 py-2.5">
                 <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                  className={`rounded-sm px-2 py-0.5 text-xs font-medium ${
                     account.status === "active"
                       ? "bg-emerald-50 text-emerald-700"
                       : "bg-amber-50 text-amber-700"

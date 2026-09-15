@@ -34,21 +34,21 @@ function formatDateTime(iso: string) {
 function StatusBadge({ equipment }: { equipment: EquipmentRow }) {
   if (equipment.status === "assigned") {
     return (
-      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+      <span className="rounded-sm bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
         Assigned
       </span>
     );
   }
   if (equipment.status === "maintenance") {
     return (
-      <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+      <span className="rounded-sm bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
         Maintenance
       </span>
     );
   }
   if (equipment.status === "retired") {
     return (
-      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500">
+      <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500">
         Retired
       </span>
     );
@@ -57,7 +57,7 @@ function StatusBadge({ equipment }: { equipment: EquipmentRow }) {
   // same green end-state as a fresh, never-assigned item, just a more
   // informative label.
   return (
-    <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+    <span className="rounded-sm bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
       {equipment.lastReturnedAt ? "Returned" : "Available"}
     </span>
   );

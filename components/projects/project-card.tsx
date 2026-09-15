@@ -13,7 +13,7 @@ export function ProjectCard({ project }: { project: ProjectRow }) {
           {project.name}
         </h3>
         <span
-          className={`flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${projectStatusBadgeClasses(project.status)}`}
+          className={`flex-shrink-0 rounded-sm px-2 py-0.5 text-xs font-medium ${projectStatusBadgeClasses(project.status)}`}
         >
           {projectStatusLabel(project.status)}
         </span>

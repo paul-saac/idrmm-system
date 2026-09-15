@@ -204,16 +204,16 @@ export function MaterialRequestsView({
                             }}
                             className="cursor-pointer border-y border-zinc-100 transition-colors hover:bg-zinc-100"
                           >
-                            <td className="whitespace-nowrap border-r border-zinc-100 px-4 py-2.5 text-zinc-500">
+                            <td className="whitespace-nowrap border-r border-zinc-200 px-4 py-2.5 text-zinc-500">
                               {formatDateTime(request.requestDate)}
                             </td>
-                            <td className="border-r border-zinc-100 px-4 py-2.5 font-medium text-zinc-900">
+                            <td className="border-r border-zinc-200 px-4 py-2.5 font-medium text-zinc-900">
                               {request.mrNo}
                             </td>
-                            <td className="truncate border-r border-zinc-100 px-4 py-2.5 text-zinc-600">
+                            <td className="truncate border-r border-zinc-200 px-4 py-2.5 text-zinc-600">
                               {request.requestedByName}
                             </td>
-                            <td className="border-r border-zinc-100 px-4 py-2.5">
+                            <td className="border-r border-zinc-200 px-4 py-2.5">
                               <StatusBadge status={request.status} />
                             </td>
                           </tr>

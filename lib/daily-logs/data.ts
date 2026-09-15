@@ -1,32 +1,112 @@
 import { createClient } from "@/lib/supabase/server";
-import { flagState, type EntryFlag, type EntryType, type FlagState } from "@/lib/daily-logs/flag-state";
+import {
+  flagState,
+  entryDomId,
+  dailyLogEntryHref,
+  type EntryFlag,
+  type EntryType,
+  type FlagState,
+} from "@/lib/daily-logs/flag-state";
 
 export type { EntryType, EntryFlag, FlagState };
-export { flagState };
+export { flagState, entryDomId, dailyLogEntryHref };
 
 export type DailyLogStatus = "pending" | "approved" | "rejected";
+
+export type MaterialUsageStatus = "available" | "low_stock" | "fully_consumed";
+export type ProcurementType = "direct_purchase" | "supplier_delivery";
+export type EquipmentAcquisitionType = "rental" | "purchase";
+
+// Lightweight, list-view-only shapes for each entry type: no signed
+// attachment URLs (see signAttachmentUrls' own doc comment — minting
+// those is a real network round trip per attachment, worth paying for
+// on a single log's own detail page but not for every entry of every
+// log in the whole list at once) and no raw foreign-key ids beyond what
+// display needs. getDailyLogDetail below stays the full, heavier shape
+// the detail page itself uses.
+export type DailyLogWorkEntry = {
+  id: number;
+  categoryName: string;
+  taskName: string;
+  quantityCompleted: number;
+  unit: string | null;
+  activity: string | null;
+};
+
+export type DailyLogLaborEntry = {
+  id: number;
+  workerRole: string;
+  workerCount: number;
+  dailyRate: number;
+  otHours: number;
+};
+
+export type DailyLogMaterialUsageEntry = {
+  id: number;
+  materialName: string;
+  specification: string | null;
+  unit: string | null;
+  status: MaterialUsageStatus;
+  activity: string | null;
+};
+
+export type DailyLogProcurementEntry = {
+  id: number;
+  procurementType: ProcurementType;
+  supplierName: string | null;
+  additionalFees: number;
+  items: {
+    id: number;
+    materialName: string;
+    specification: string | null;
+    quantity: number;
+    unit: string | null;
+    cost: number;
+  }[];
+};
+
+export type DailyLogEquipmentAcquisitionEntry = {
+  id: number;
+  equipmentName: string;
+  specification: string | null;
+  quantity: number;
+  acquisitionType: EquipmentAcquisitionType;
+  amount: number;
+};
+
+export type DailyLogOtherExpenseEntry = {
+  id: number;
+  expenseCategory: string;
+  amount: number;
+  additionalFees: number;
+  description: string | null;
+};
 
 export type DailyLogSummary = {
   id: number;
   logDate: string;
   status: DailyLogStatus;
   submittedByName: string;
+  /** Who approved this log (updateDailyLogStatus sets reviewed_by on
+   * both an approval and a rejection, but this is only ever populated
+   * for "approved" — a rejection has nothing worth labeling "Approved
+   * By" for). Null for a log that's still pending, even if reviewed_by
+   * is already set some other way. */
+  approvedByName: string | null;
   /** Flags on this log's entries still awaiting a fix — see EntryFlag.
    * Shown alongside status ("Approved — 2 flagged") since an approved
    * log can still have open flags on it. */
   unresolvedFlagCount: number;
-  /**
-   * Only workLogs has a real table behind it right now — the rest exist
-   * so the list card's badges are ready to light up the moment each log
-   * type gets built, without changing this type again.
-   */
-  counts: {
-    workLogs: number;
-    laborLogs: number;
-    materialUsage: number;
-    materialProcurement: number;
-    equipmentAcquisition: number;
-    otherExpense: number;
+  /** Every entry actually recorded on this log, grouped by type — the
+   * list view's own breakdown drills into these directly instead of
+   * just showing a bare count per type. */
+  entries: {
+    workLogs: DailyLogWorkEntry[];
+    laborLogs: DailyLogLaborEntry[];
+    materialUsage: DailyLogMaterialUsageEntry[];
+    materialProcurement: DailyLogProcurementEntry[];
+    equipmentAcquisition: DailyLogEquipmentAcquisitionEntry[];
+    otherExpense: DailyLogOtherExpenseEntry[];
   };
 };
 
@@ -68,6 +148,17 @@ function formatName(
   return name || "—";
 }
 
+/**
+ * Every daily log for a project, each carrying its own full (but
+ * lightweight — see DailyLogWorkEntry's own doc comment) breakdown of
+ * entries by type. Every query below is batched across *all* of the
+ * project's logs at once — one round trip per entry type, not one per
+ * log — the same shape listDailyLogs always had when it was only
+ * counting rows; this just selects more columns off those same rows,
+ * plus two more batched lookups (task/category names for work items,
+ * material names for usage items, procurement's own items) needed to
+ * actually display them instead of just counting them.
+ */
 export async function listDailyLogs(
   projectId: number
 ): Promise<DailyLogSummary[]> {
@@ -75,7 +166,7 @@ export async function listDailyLogs(
 
   const { data: logs, error } = await supabase
     .from("daily_logs")
-    .select("id, log_date, status, submitted_by")
+    .select("id, log_date, status, submitted_by, reviewed_by")
     .eq("project_id", projectId)
     .order("log_date", { ascending: false })
     .order("id", { ascending: false });
@@ -86,54 +177,69 @@ export async function listDailyLogs(
 
   const [
     { data: profiles },
-    { data: workItems },
-    { data: laborItems },
-    { data: expenseItems },
-    { data: materialUsageItems },
-    { data: procurementLogs },
-    { data: equipmentAcquisitionLogs },
+    { data: workItemRows },
+    { data: laborItemRows },
+    { data: expenseItemRows },
+    { data: materialUsageRows },
+    { data: procurementRows },
+    { data: equipmentAcquisitionRows },
     { data: unresolvedFlags },
   ] = await Promise.all([
     supabase
       .from("profiles")
       .select("id, first_name, last_name")
-      .in("id", Array.from(new Set(logs.map((log) => log.submitted_by)))),
+      .in(
+        "id",
+        Array.from(
+          new Set(
+            logs.flatMap((log) =>
+              log.reviewed_by ? [log.submitted_by, log.reviewed_by] : [log.submitted_by]
+            )
+          )
+        )
+      ),
     logIds.length > 0
       ? supabase
           .from("daily_log_work_items")
-          .select("daily_log_id")
+          .select("id, daily_log_id, category_id, task_id, quantity_completed, unit, activity")
           .in("daily_log_id", logIds)
-      : Promise.resolve({ data: [] as { daily_log_id: number }[] }),
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
     logIds.length > 0
       ? supabase
           .from("daily_log_labor_items")
-          .select("daily_log_id")
+          .select("id, daily_log_id, worker_role, worker_count, daily_rate, ot_hours")
           .in("daily_log_id", logIds)
-      : Promise.resolve({ data: [] as { daily_log_id: number }[] }),
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
     logIds.length > 0
       ? supabase
           .from("daily_log_expense_items")
-          .select("daily_log_id")
+          .select("id, daily_log_id, expense_category, amount, additional_fees, description")
           .in("daily_log_id", logIds)
-      : Promise.resolve({ data: [] as { daily_log_id: number }[] }),
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
     logIds.length > 0
       ? supabase
           .from("daily_log_material_usage_items")
-          .select("daily_log_id")
+          .select("id, daily_log_id, project_material_id, status, activity")
           .in("daily_log_id", logIds)
-      : Promise.resolve({ data: [] as { daily_log_id: number }[] }),
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
     logIds.length > 0
       ? supabase
           .from("daily_log_material_procurement")
-          .select("daily_log_id")
+          .select("id, daily_log_id, procurement_type, supplier_name, additional_fees")
           .in("daily_log_id", logIds)
-      : Promise.resolve({ data: [] as { daily_log_id: number }[] }),
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
     logIds.length > 0
       ? supabase
           .from("daily_log_equipment_acquisition")
-          .select("daily_log_id")
+          .select("id, daily_log_id, equipment_name, specification, quantity, acquisition_type, amount")
           .in("daily_log_id", logIds)
-      : Promise.resolve({ data: [] as { daily_log_id: number }[] }),
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
     logIds.length > 0
       ? supabase
           .from("daily_log_entry_flags")
@@ -145,6 +251,91 @@ export async function listDailyLogs(
 
   const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
 
+  const categoryIds = Array.from(
+    new Set((workItemRows ?? []).map((item) => item.category_id))
+  );
+  const taskIds = Array.from(
+    new Set((workItemRows ?? []).map((item) => item.task_id))
+  );
+  const materialIds = Array.from(
+    new Set((materialUsageRows ?? []).map((item) => item.project_material_id))
+  );
+  const procurementIds = (procurementRows ?? []).map((p) => p.id);
+
+  const [
+    { data: categories },
+    { data: tasks },
+    { data: usageMaterials },
+    { data: procurementItemRows },
+  ] = await Promise.all([
+    categoryIds.length > 0
+      ? supabase.from("estimate_categories").select("id, category_name").in("id", categoryIds)
+      : Promise.resolve({ data: [] as { id: number; category_name: string }[] }),
+    taskIds.length > 0
+      ? supabase.from("estimate_tasks").select("id, task_name").in("id", taskIds)
+      : Promise.resolve({ data: [] as { id: number; task_name: string }[] }),
+    materialIds.length > 0
+      ? supabase
+          .from("project_materials")
+          .select("id, material_name, specification, unit")
+          .in("id", materialIds)
+      : Promise.resolve({
+          data: [] as {
+            id: number;
+            material_name: string;
+            specification: string | null;
+            unit: string | null;
+          }[],
+        }),
+    procurementIds.length > 0
+      ? supabase
+          .from("daily_log_material_procurement_items")
+          .select("id, procurement_id, material_name, specification, quantity, unit, cost")
+          .in("procurement_id", procurementIds)
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
+  ]);
+
+  const categoryNameById = new Map((categories ?? []).map((c) => [c.id, c.category_name]));
+  const taskNameById = new Map((tasks ?? []).map((t) => [t.id, t.task_name]));
+  const materialById = new Map((usageMaterials ?? []).map((m) => [m.id, m]));
+
+  function groupByLog<T extends { daily_log_id: number }>(
+    rows: T[] | null
+  ): Map<number, T[]> {
+    const map = new Map<number, T[]>();
+    for (const row of rows ?? []) {
+      const list = map.get(row.daily_log_id) ?? [];
+      list.push(row);
+      map.set(row.daily_log_id, list);
+    }
+    return map;
+  }
+
+  const workItemsByLog = groupByLog(workItemRows);
+  const laborItemsByLog = groupByLog(laborItemRows);
+  const expenseItemsByLog = groupByLog(expenseItemRows);
+  const materialUsageItemsByLog = groupByLog(materialUsageRows);
+  const procurementByLog = groupByLog(procurementRows);
+  const equipmentAcquisitionByLog = groupByLog(equipmentAcquisitionRows);
+
+  const procurementItemsByProcurementId = new Map<
+    number,
+    DailyLogProcurementEntry["items"]
+  >();
+  for (const item of procurementItemRows ?? []) {
+    const list = procurementItemsByProcurementId.get(item.procurement_id) ?? [];
+    list.push({
+      id: item.id,
+      materialName: item.material_name,
+      specification: item.specification,
+      quantity: item.quantity ?? 0,
+      unit: item.unit,
+      cost: item.cost ?? 0,
+    });
+    procurementItemsByProcurementId.set(item.procurement_id, list);
+  }
+
   function countByLog(rows: { daily_log_id: number }[] | null) {
     const map = new Map<number, number>();
     for (const row of rows ?? []) {
@@ -153,12 +344,6 @@ export async function listDailyLogs(
     return map;
   }
 
-  const workLogCountByLog = countByLog(workItems);
-  const laborLogCountByLog = countByLog(laborItems);
-  const expenseLogCountByLog = countByLog(expenseItems);
-  const materialUsageCountByLog = countByLog(materialUsageItems);
-  const procurementCountByLog = countByLog(procurementLogs);
-  const equipmentAcquisitionCountByLog = countByLog(equipmentAcquisitionLogs);
   const unresolvedFlagCountByLog = countByLog(unresolvedFlags);
 
   return logs.map((log) => ({
@@ -166,14 +351,62 @@ export async function listDailyLogs(
     logDate: log.log_date,
     status: log.status,
     submittedByName: formatName(profileById.get(log.submitted_by)),
+    approvedByName:
+      log.status === "approved" && log.reviewed_by
+        ? formatName(profileById.get(log.reviewed_by))
+        : null,
     unresolvedFlagCount: unresolvedFlagCountByLog.get(log.id) ?? 0,
-    counts: {
-      workLogs: workLogCountByLog.get(log.id) ?? 0,
-      laborLogs: laborLogCountByLog.get(log.id) ?? 0,
-      materialUsage: materialUsageCountByLog.get(log.id) ?? 0,
-      materialProcurement: procurementCountByLog.get(log.id) ?? 0,
-      equipmentAcquisition: equipmentAcquisitionCountByLog.get(log.id) ?? 0,
-      otherExpense: expenseLogCountByLog.get(log.id) ?? 0,
+    entries: {
+      workLogs: (workItemsByLog.get(log.id) ?? []).map((item) => ({
+        id: item.id,
+        categoryName: categoryNameById.get(item.category_id) ?? "—",
+        taskName: taskNameById.get(item.task_id) ?? "—",
+        quantityCompleted: item.quantity_completed ?? 0,
+        unit: item.unit,
+        activity: item.activity,
+      })),
+      laborLogs: (laborItemsByLog.get(log.id) ?? []).map((item) => ({
+        id: item.id,
+        workerRole: item.worker_role,
+        workerCount: item.worker_count ?? 0,
+        dailyRate: item.daily_rate ?? 0,
+        otHours: item.ot_hours ?? 0,
+      })),
+      materialUsage: (materialUsageItemsByLog.get(log.id) ?? []).map((item) => {
+        const material = materialById.get(item.project_material_id);
+        return {
+          id: item.id,
+          materialName: material?.material_name ?? "—",
+          specification: material?.specification ?? null,
+          unit: material?.unit ?? null,
+          status: item.status,
+          activity: item.activity,
+        };
+      }),
+      materialProcurement: (procurementByLog.get(log.id) ?? []).map((row) => ({
+        id: row.id,
+        procurementType: row.procurement_type,
+        supplierName: row.supplier_name,
+        additionalFees: row.additional_fees ?? 0,
+        items: procurementItemsByProcurementId.get(row.id) ?? [],
+      })),
+      equipmentAcquisition: (equipmentAcquisitionByLog.get(log.id) ?? []).map(
+        (row) => ({
+          id: row.id,
+          equipmentName: row.equipment_name,
+          specification: row.specification,
+          quantity: row.quantity ?? 0,
+          acquisitionType: row.acquisition_type,
+          amount: row.amount ?? 0,
+        })
+      ),
+      otherExpense: (expenseItemsByLog.get(log.id) ?? []).map((item) => ({
+        id: item.id,
+        expenseCategory: item.expense_category,
+        amount: item.amount ?? 0,
+        additionalFees: item.additional_fees ?? 0,
+        description: item.description,
+      })),
     },
   }));
 }
@@ -215,8 +448,6 @@ export type DailyLogExpenseItemDetail = {
   attachmentUrls: string[];
 };
 
-export type ProcurementType = "direct_purchase" | "supplier_delivery";
-
 export type DailyLogProcurementItemDetail = {
   id: number;
   materialRequestItemId: number | null;
@@ -239,8 +470,6 @@ export type DailyLogProcurementDetail = {
   items: DailyLogProcurementItemDetail[];
 };
 
-export type EquipmentAcquisitionType = "rental" | "purchase";
-
 export type DailyLogEquipmentAcquisitionDetail = {
   id: number;
   equipmentRequestId: number | null;
@@ -254,8 +483,6 @@ export type DailyLogEquipmentAcquisitionDetail = {
   attachmentUrls: string[];
   remarks: string | null;
 };
-
-export type MaterialUsageStatus = "available" | "low_stock" | "fully_consumed";
 
 export type DailyLogMaterialUsageItemDetail = {
   id: number;
@@ -274,6 +501,50 @@ export type SurveyAnswer = {
   notes: string | null;
 };
 
+export type SurveyQuestion = {
+  id: number;
+  questionText: string;
+  isRequired: boolean;
+  sortOrder: number;
+};
+
+/**
+ * A project's Survey questions (0033_daily_log_survey_questions.sql,
+ * folded into the single source of truth by
+ * 0034_daily_log_survey_defaults.sql) — every question asked on that
+ * project's Daily Logs, including the three defaults every project
+ * starts with (accidents/schedule delays/weather delays, seeded by
+ * createProject/the 0034 backfill) alongside anything an admin adds of
+ * their own. Ordered by sort_order so the settings modal and the Add
+ * Daily Log Survey screen show them in the same order every time.
+ */
+export async function listSurveyQuestions(
+  projectId: number
+): Promise<SurveyQuestion[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("daily_log_survey_questions")
+    .select("id, question_text, is_required, sort_order")
+    .eq("project_id", projectId)
+    .order("sort_order", { ascending: true })
+    .order("id", { ascending: true });
+
+  if (error || !data) return [];
+
+  return data.map((row) => ({
+    id: row.id,
+    questionText: row.question_text,
+    isRequired: row.is_required,
+    sortOrder: row.sort_order,
+  }));
+}
+
+export type DailyLogSurveyAnswer = {
+  questionId: number;
+  occurred: boolean | null;
+  notes: string | null;
+};
+
 export type DailyLogDetail = {
   id: number;
   projectId: number;
@@ -282,11 +553,13 @@ export type DailyLogDetail = {
   logDate: string;
   status: DailyLogStatus;
   submittedByName: string;
-  survey: {
-    accidents: SurveyAnswer;
-    scheduleDelays: SurveyAnswer;
-    weatherDelays: SurveyAnswer;
-  };
+  /** One row per project question (daily_log_survey_questions) this log
+   * actually has an answer for — a question added after this log was
+   * submitted simply has no row here, shown as "Not yet recorded".
+   * Matched to its question by id against the project's own
+   * listSurveyQuestions, not embedded here, same "options come from a
+   * separate prop" convention as categories/materials. */
+  surveyAnswers: DailyLogSurveyAnswer[];
   workItems: DailyLogWorkItemDetail[];
   laborItems: DailyLogLaborItemDetail[];
   expenseItems: DailyLogExpenseItemDetail[];
@@ -587,6 +860,19 @@ export async function getDailyLogDetail(
     };
   });
 
+  const { data: surveyAnswerRows } = await supabase
+    .from("daily_log_survey_answers")
+    .select("question_id, occurred, notes")
+    .eq("daily_log_id", dailyLogId);
+
+  const surveyAnswers: DailyLogSurveyAnswer[] = (surveyAnswerRows ?? []).map(
+    (row) => ({
+      questionId: row.question_id,
+      occurred: row.occurred,
+      notes: row.notes,
+    })
+  );
+
   const { data: flagRows } = await supabase
     .from("daily_log_entry_flags")
     .select(
@@ -633,20 +919,7 @@ export async function getDailyLogDetail(
     logDate: log.log_date,
     status: log.status,
     submittedByName: formatName(profile ?? undefined),
-    survey: {
-      accidents: {
-        occurred: log.accidents_occurred,
-        notes: log.accidents_notes,
-      },
-      scheduleDelays: {
-        occurred: log.schedule_delays_occurred,
-        notes: log.schedule_delays_notes,
-      },
-      weatherDelays: {
-        occurred: log.weather_delays_occurred,
-        notes: log.weather_delays_notes,
-      },
-    },
+    surveyAnswers,
     workItems,
     laborItems,
     expenseItems,

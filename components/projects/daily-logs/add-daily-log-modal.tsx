@@ -16,6 +16,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  ClipboardList,
   CloudUpload,
   Hammer,
   Pencil,
@@ -35,7 +36,7 @@ import {
 import type { MaterialStatus, ProjectMaterial } from "@/lib/materials/data";
 import type { MaterialRequestDetail } from "@/lib/material-requests/data";
 import type { EquipmentRequestDetail } from "@/lib/equipment-requests/data";
-import type { DailyLogDetail } from "@/lib/daily-logs/data";
+import type { DailyLogDetail, SurveyQuestion } from "@/lib/daily-logs/data";
 
 type WorkItemOption = {
   id: number;
@@ -154,6 +155,7 @@ type EquipmentAcquisitionLogDraft = {
 
 type Screen =
   | "main"
+  | "survey"
   | "work-log-list"
   | "work-log-form"
   | "labor-log-list"
@@ -247,6 +249,9 @@ function formatSelectedDate(iso: string) {
 
 const dailyLogInitialState: DailyLogActionState = {};
 
+type SurveyAnswerDraft = { occurred: boolean; notes: string };
+type SurveyDraft = { questionId: number; occurred: boolean; notes: string };
+
 type RemovedEntries = {
   workItems: Set<number>;
   laborItems: Set<number>;
@@ -271,6 +276,7 @@ export function AddDailyLogModal({
   materials,
   materialRequests,
   equipmentRequests,
+  surveyQuestions,
   editLog,
   existingLogDates,
   open,
@@ -285,6 +291,9 @@ export function AddDailyLogModal({
   /** Only requests that can still receive an acquisition (approved or
    * partially fulfilled) — see listFulfillableEquipmentRequests. */
   equipmentRequests: EquipmentRequestDetail[];
+  /** This project's own custom Survey questions, asked alongside the
+   * three fixed ones below — see 0033_daily_log_survey_questions.sql. */
+  surveyQuestions: SurveyQuestion[];
   /** When set, the modal edits this existing (pending/rejected) log
    * instead of creating a new one — the date is fixed, existing entries
    * can be removed, and submitting resets it to "pending" for a fresh
@@ -316,6 +325,45 @@ export function AddDailyLogModal({
   >([]);
   const [removed, setRemoved] = useState<RemovedEntries>(emptyRemoved);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [surveyDrafts, setSurveyDrafts] = useState<SurveyDraft[]>(() =>
+    surveyQuestions.map((question) => {
+      const existing = editLog?.surveyAnswers.find(
+        (answer) => answer.questionId === question.id
+      );
+      return {
+        questionId: question.id,
+        occurred: existing?.occurred ?? false,
+        notes: existing?.notes ?? "",
+      };
+    })
+  );
+
+  /** Back to editLog's saved values in edit mode (discarding any unsaved
+   * survey edits, same as ExistingEntriesSection's removal marks below),
+   * or back to blank in create mode — shared by the post-submit reset
+   * and handleClose (Cancel/X). */
+  function resetSurveyState() {
+    setSurveyDrafts(
+      surveyQuestions.map((question) => {
+        const existing = editLog?.surveyAnswers.find(
+          (answer) => answer.questionId === question.id
+        );
+        return {
+          questionId: question.id,
+          occurred: existing?.occurred ?? false,
+          notes: existing?.notes ?? "",
+        };
+      })
+    );
+  }
+
+  function updateSurveyDraft(questionId: number, patch: Partial<SurveyAnswerDraft>) {
+    setSurveyDrafts((current) =>
+      current.map((draft) =>
+        draft.questionId === questionId ? { ...draft, ...patch } : draft
+      )
+    );
+  }
 
   const boundAction = editLog
     ? updateDailyLog.bind(null, editLog.id, projectId)
@@ -341,6 +389,7 @@ export function AddDailyLogModal({
       setEquipmentAcquisitionDrafts([]);
       setRemoved(emptyRemoved());
       if (!isEditing) setSelectedDate(todayIso());
+      resetSurveyState();
       onClose();
     }
     // Only re-run when the action produces a new result — `onClose` is
@@ -357,6 +406,7 @@ export function AddDailyLogModal({
     setProcurementDrafts([]);
     setEquipmentAcquisitionDrafts([]);
     setRemoved(emptyRemoved());
+    resetSurveyState();
     onClose();
   }
 
@@ -381,6 +431,11 @@ export function AddDailyLogModal({
   function handleSubmit() {
     const formData = new FormData();
     formData.append("logDate", selectedDate);
+    for (const draft of surveyDrafts) {
+      formData.append("surveyQuestionId", String(draft.questionId));
+      formData.append("surveyOccurred", String(draft.occurred));
+      formData.append("surveyNotes", draft.notes);
+    }
     for (const draft of workLogDrafts) {
       formData.append("workItemCategoryId", String(draft.categoryId));
       formData.append("workItemTaskId", String(draft.taskId));
@@ -488,6 +543,7 @@ export function AddDailyLogModal({
 
   const titleByScreen: Record<Screen, string> = {
     main: isEditing ? "Edit Daily Log" : "Add Daily Log",
+    survey: "Survey",
     "work-log-list": "Work Logs",
     "work-log-form": editingIndex !== null ? "Edit Work Log" : "Add Work Log",
     "labor-log-list": "Labor Logs",
@@ -511,6 +567,7 @@ export function AddDailyLogModal({
   };
 
   const backByScreen: Partial<Record<Screen, () => void>> = {
+    survey: () => setScreen("main"),
     "work-log-list": () => setScreen("main"),
     "work-log-form": () => setScreen("work-log-list"),
     "labor-log-list": () => setScreen("main"),
@@ -572,10 +629,21 @@ export function AddDailyLogModal({
               ).length ?? 0),
           }}
           onOpenLogType={openLogType}
+          surveyAnsweredCount={surveyDrafts.filter((draft) => draft.occurred).length}
+          onOpenSurvey={() => setScreen("survey")}
           onCancel={handleClose}
           onSubmit={handleSubmit}
           pending={pending}
           error={state.error}
+        />
+      )}
+
+      {screen === "survey" && (
+        <SurveyScreen
+          surveyQuestions={surveyQuestions}
+          surveyDrafts={surveyDrafts}
+          onSurveyChange={updateSurveyDraft}
+          onDone={() => setScreen("main")}
         />
       )}
 
@@ -825,6 +893,8 @@ function MainScreen({
   onToggleRemoved,
   counts,
   onOpenLogType,
+  surveyAnsweredCount,
+  onOpenSurvey,
   onCancel,
   onSubmit,
   pending,
@@ -839,6 +909,12 @@ function MainScreen({
   onToggleRemoved: (key: keyof RemovedEntries, id: number) => void;
   counts: Partial<Record<LogTypeKey, number>>;
   onOpenLogType: (key: LogTypeKey) => void;
+  /** How many Survey questions (fixed + custom) are currently marked
+   * "Yes" — shown as this row's own badge count, same spot every other
+   * entry type shows how many entries it has, since "questions flagged
+   * Yes" is the number worth glancing at without opening the screen. */
+  surveyAnsweredCount: number;
+  onOpenSurvey: () => void;
   onCancel: () => void;
   onSubmit: () => void;
   pending: boolean;
@@ -1044,7 +1120,7 @@ function MainScreen({
               <span className="flex items-center gap-2.5">
                 <Icon className="size-4" />
                 {type.label}
-                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+                <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
                   {counts[type.key] ?? 0}
                 </span>
               </span>
@@ -1054,6 +1130,19 @@ function MainScreen({
             </button>
           );
         })}
+        <button
+          type="button"
+          onClick={onOpenSurvey}
+          className="flex cursor-pointer items-center justify-between rounded border border-zinc-200 px-3 py-2.5 text-left text-sm text-zinc-800 transition hover:border-zinc-300 hover:bg-zinc-50"
+        >
+          <span className="flex items-center gap-2.5">
+            <ClipboardList className="size-4" />
+            Survey
+            <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+              {surveyAnsweredCount}
+            </span>
+          </span>
+        </button>
       </div>
 
       <div className="flex items-center justify-end gap-3">
@@ -1082,6 +1171,128 @@ function MainScreen({
         <p role="alert" className="text-sm text-red-600">
           {error}
         </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Its own screen (opened from the "Survey" row on the main screen,
+ * same drill-down pattern as Work Logs/Labor Logs/etc.) rather than
+ * inline on the main screen — five-plus questions inline made the form
+ * scroll long even before a project added its own custom ones. Answers
+ * live in the parent's surveyDrafts state either way, so navigating
+ * here and back via "Done" doesn't lose anything. Every question shown
+ * here comes from the project's own listSurveyQuestions — including
+ * the three every project starts with (see seedDefaultSurveyQuestions)
+ * — there's no separate hardcoded set anymore.
+ */
+function SurveyScreen({
+  surveyQuestions,
+  surveyDrafts,
+  onSurveyChange,
+  onDone,
+}: {
+  surveyQuestions: SurveyQuestion[];
+  surveyDrafts: SurveyDraft[];
+  onSurveyChange: (questionId: number, patch: Partial<SurveyAnswerDraft>) => void;
+  onDone: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        {surveyQuestions.length === 0 ? (
+          <p className="rounded border border-dashed border-zinc-300 py-6 text-center text-sm text-zinc-400">
+            This project has no Survey questions configured yet.
+          </p>
+        ) : (
+          surveyQuestions.map((question) => {
+            const draft = surveyDrafts.find((d) => d.questionId === question.id);
+            if (!draft) return null;
+            return (
+              <SurveyQuestionField
+                key={question.id}
+                question={question.questionText}
+                required={question.isRequired}
+                answer={draft}
+                onChange={(patch) => onSurveyChange(question.id, patch)}
+              />
+            );
+          })
+        )}
+      </div>
+
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={onDone}
+          className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One Survey question — a No/Yes segmented toggle plus an optional
+ * notes field that only appears once "Yes" is picked, matching the
+ * No/Yes/Description columns the detail view's own Survey table reads
+ * these same answers back into (see SurveyRow in
+ * daily-log-detail-view.tsx).
+ */
+function SurveyQuestionField({
+  question,
+  required,
+  answer,
+  onChange,
+}: {
+  question: string;
+  required?: boolean;
+  answer: SurveyAnswerDraft;
+  onChange: (patch: Partial<SurveyAnswerDraft>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded border border-zinc-200 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-zinc-800">
+          {question}
+          {required && <span className="ml-0.5 text-red-500">*</span>}
+        </p>
+        <div className="flex flex-shrink-0 overflow-hidden rounded border border-zinc-200">
+          <button
+            type="button"
+            onClick={() => onChange({ occurred: false })}
+            className={`cursor-pointer px-3 py-1 text-xs font-medium transition ${
+              !answer.occurred
+                ? "bg-zinc-900 text-white"
+                : "bg-white text-zinc-600 hover:bg-zinc-50"
+            }`}
+          >
+            No
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange({ occurred: true })}
+            className={`cursor-pointer border-l border-zinc-200 px-3 py-1 text-xs font-medium transition ${
+              answer.occurred
+                ? "bg-zinc-900 text-white"
+                : "bg-white text-zinc-600 hover:bg-zinc-50"
+            }`}
+          >
+            Yes
+          </button>
+        </div>
+      </div>
+      {answer.occurred && (
+        <input
+          type="text"
+          value={answer.notes}
+          onChange={(e) => onChange({ notes: e.target.value })}
+          placeholder="Add details..."
+          className="w-full rounded border border-zinc-200 px-2.5 py-1.5 text-sm text-zinc-800 outline-none focus:border-zinc-400"
+        />
       )}
     </div>
   );
@@ -2391,7 +2602,7 @@ function RequestStatusBadge({ status }: { status: MaterialRequestDetail["status"
     canceled: "Canceled",
   };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[status]}`}>
+    <span className={`rounded-sm px-2 py-0.5 text-xs font-medium ${styles[status]}`}>
       {labels[status]}
     </span>
   );

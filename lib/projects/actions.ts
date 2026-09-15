@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
+import { seedDefaultSurveyQuestions } from "@/lib/daily-logs/actions";
 
 export type ProjectActionState = {
   error?: string;
@@ -49,21 +50,31 @@ export async function createProject(
 
   const supabase = await createClient();
 
-  const { error } = await supabase.from("projects").insert({
-    project_name: projectName,
-    location: location || null,
-    start_date: parseOptionalDate(formData.get("startDate")),
-    target_end_date: parseOptionalDate(formData.get("targetEndDate")),
-    allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
-    project_manager_id: projectManagerId,
-    foreman_id: foremanId,
-    created_by: profile.id,
-  });
+  const { data: project, error } = await supabase
+    .from("projects")
+    .insert({
+      project_name: projectName,
+      location: location || null,
+      start_date: parseOptionalDate(formData.get("startDate")),
+      target_end_date: parseOptionalDate(formData.get("targetEndDate")),
+      allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
+      project_manager_id: projectManagerId,
+      foreman_id: foremanId,
+      created_by: profile.id,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
+  if (error || !project) {
     console.error("[createProject] Supabase insert failed:", error);
     return { error: "Could not create project. Please try again." };
   }
+
+  // Every project starts with the same three Survey questions Daily
+  // Logs have always asked — an admin can rename/reorder/delete them
+  // afterward via the Survey Questions settings modal like any other
+  // question (see seedDefaultSurveyQuestions's own doc comment).
+  await seedDefaultSurveyQuestions(supabase, project.id);
 
   revalidatePath("/admin/projects");
   return { success: true };
