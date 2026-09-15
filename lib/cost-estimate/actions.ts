@@ -686,6 +686,177 @@ export async function updateTaskSchedule(
   });
 }
 
+/**
+ * Sets one task's predecessor by dragging a connector on the Gantt Chart
+ * Schedule directly from one bar to another — called directly (not
+ * bound to a <form>), same as updateTaskSchedule above. This is a
+ * narrower entry point than the Predecessor <select> in the Task form:
+ * that dropdown already lets you pick any task in the project as a
+ * predecessor, but a connector dragged on the chart is deliberately
+ * scoped to "within this phase" (see gantt-chart-view.tsx's own
+ * connector-drag handler, which only ever offers same-phase targets to
+ * drop onto) — enforced here too, not just assumed from the client.
+ */
+export async function setPredecessor(
+  taskId: number,
+  predecessorTaskId: number,
+  projectId: number
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const supabase = await createClient();
+
+    const predecessorError = await validatePredecessor(
+      supabase,
+      predecessorTaskId,
+      projectId,
+      taskId
+    );
+    if (predecessorError) {
+      return { error: predecessorError };
+    }
+
+    const { data: rows } = await supabase
+      .from("estimate_tasks")
+      .select("id, category_id")
+      .in("id", [taskId, predecessorTaskId])
+      .eq("project_id", projectId);
+
+    if (
+      !rows ||
+      rows.length !== 2 ||
+      rows[0].category_id !== rows[1].category_id
+    ) {
+      return { error: "Both tasks must be in the same phase." };
+    }
+
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({ predecessor_task_id: predecessorTaskId })
+      .eq("id", taskId);
+
+    if (error) {
+      logSupabaseError("[setPredecessor] Supabase update failed", error);
+      return { error: "Could not link the tasks. Please try again." };
+    }
+
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * The Gantt Chart Schedule's own lightweight "Edit Task" form — updates
+ * a task's own schedule fields (name/dates/milestone) and, unlike
+ * updateTask's own Predecessor field (which points *this* task at
+ * whichever one it starts after), manages the *inverse* relationship: a
+ * "Successor" field picking which *other* task should start after this
+ * one — the same thing dragging this task's own connector handle onto
+ * another bar sets (see setPredecessor above, reused here for the
+ * "assign" half, since the same-phase/not-self validation is identical
+ * either way). Reassigning or clearing a successor means writing to the
+ * *other* task's own predecessor_task_id, never this task's own row.
+ *
+ * A task can only have one predecessor (a single FK column), so
+ * "current successor" is "whichever other task in the project already
+ * has its own predecessor_task_id pointing here" — normally at most
+ * one, by construction (every write path that sets one, including this
+ * one, goes through the same same-phase/single-select flow), but this
+ * still defensively clears *every* match, not just the first, in case
+ * an older, less-restrictive edit ever left more than one.
+ */
+export async function updateSubtask(
+  taskId: number,
+  projectId: number,
+  _prevState: CostEstimateActionState,
+  formData: FormData
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const taskName = String(formData.get("taskName") ?? "").trim();
+    const plannedStartDate = parseOptionalDate(formData.get("plannedStartDate"));
+    const plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
+    const isMilestone = formData.get("isMilestone") === "on";
+    const successorTaskId = parseOptionalId(formData.get("successorTaskId"));
+
+    if (!taskName) {
+      return { error: "Task name is required." };
+    }
+    if (
+      plannedStartDate &&
+      plannedEndDate &&
+      plannedEndDate < plannedStartDate
+    ) {
+      return { error: "Planned end date can't be before the planned start date." };
+    }
+
+    const supabase = await createClient();
+
+    const { data: currentSuccessors } = await supabase
+      .from("estimate_tasks")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("predecessor_task_id", taskId);
+
+    const toClear = (currentSuccessors ?? [])
+      .map((row) => row.id)
+      .filter((id) => id !== successorTaskId);
+
+    if (toClear.length > 0) {
+      const { error: clearError } = await supabase
+        .from("estimate_tasks")
+        .update({ predecessor_task_id: null })
+        .in("id", toClear);
+      if (clearError) {
+        logSupabaseError(
+          "[updateSubtask] Supabase successor-clear failed",
+          clearError
+        );
+        return {
+          error: "Could not update the successor link. Please try again.",
+        };
+      }
+    }
+
+    const alreadyLinked = (currentSuccessors ?? []).some(
+      (row) => row.id === successorTaskId
+    );
+    if (successorTaskId !== null && !alreadyLinked) {
+      const linkResult = await setPredecessor(successorTaskId, taskId, projectId);
+      if (linkResult.error) {
+        return linkResult;
+      }
+    }
+
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({
+        task_name: taskName,
+        planned_start_date: plannedStartDate,
+        planned_end_date: plannedEndDate,
+        is_milestone: isMilestone,
+      })
+      .eq("id", taskId)
+      .eq("project_id", projectId);
+
+    if (error) {
+      logSupabaseError("[updateSubtask] Supabase update failed", error);
+      return { error: "Could not update task. Please try again." };
+    }
+
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
 export async function deleteTask(
   taskId: number,
   projectId: number,

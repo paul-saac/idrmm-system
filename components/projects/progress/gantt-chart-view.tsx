@@ -9,18 +9,15 @@ import {
   ChevronsUp,
   ChevronDown,
   ChevronRight,
+  Diamond,
   Pencil,
   Plus,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
-import { TaskForm } from "@/components/projects/cost-estimate/task-form";
 import { AddPhaseForm } from "@/components/projects/progress/add-phase-form";
-import {
-  CategoryDeleteButton,
-  TaskDeleteButton,
-} from "@/components/projects/cost-estimate/cost-estimate-view";
-import { updateTaskSchedule } from "@/lib/cost-estimate/actions";
+import { SubtaskForm } from "@/components/projects/progress/subtask-form";
+import { updateTaskSchedule, setPredecessor } from "@/lib/cost-estimate/actions";
 import type { CostCategory, CostTask } from "@/lib/cost-estimate/data";
 import type { ProjectProgress } from "@/lib/progress/data";
 
@@ -199,6 +196,200 @@ const TOOLBAR_BUTTON_ACTIVE_CLASS =
 
 const ROW_HEIGHT = 34;
 const HEADER_HEIGHT = 44;
+// gantt-task-react's own taskHeight = rowHeight * barFill / 100 (barFill
+// defaults to 60, not overridden by this app's own <Gantt> below) —
+// needed to place a milestone's connector handles on its actual
+// diamond, which is sized off taskHeight, not off any date range (see
+// convertToMilestone in the compiled bundle).
+const BAR_HEIGHT = ROW_HEIGHT * 0.6;
+// gantt-task-react widens any "task"-type bar (not "project") narrower
+// than 2*handleWidth so its own resize handles stay grabbable —
+// handleWidth defaults to 8, not overridden here, so this is that same
+// 16px floor. Confirmed directly: at Year zoom, a short task's true
+// date-based width comes out well under this, and skipping the clamp
+// left this file's connector handles several pixels off the bar's own
+// actual (wider) rendered edge.
+const MIN_TASK_BAR_WIDTH = 16;
+
+// The predecessor-connector feature (drag from one bar's own end-point
+// to another bar within the same phase, to link them) needs each
+// visible task/milestone bar's real position. Earlier this was measured
+// off the rendered DOM (a MutationObserver watching gantt-task-react's
+// own SVG output) — abandoned after three rounds of bugs (stale
+// positions after a zoom change, an infinite render loop, then
+// lag/flicker during any bar drag) all traceable to the same root
+// cause: DOM measurement can only ever be a step behind whatever
+// gantt-task-react is doing internally.
+//
+// This instead reimplements the library's own date-to-pixel math
+// directly (addToDate/startOfDate/getMonday/computeChartDateRange/
+// seedGanttDates/computeTaskX below), transcribed from the compiled
+// bundle (node_modules/gantt-task-react/dist/index.js), restricted to
+// the 4 ViewModes this app actually uses (Day/Week/Month/Year — the
+// Hour/QuarterDay/HalfDay branches are dead code here). Bar positions
+// become a plain, synchronous function of `tasks`/`view`/
+// `effectiveColumnWidth` — recomputed by React on every render exactly
+// like the Days column already was, with no DOM to measure, no
+// observer, and nothing that can ever be stale.
+type DateScale = "year" | "month" | "day";
+
+function addToDate(date: Date, quantity: number, scale: DateScale): Date {
+  return new Date(
+    date.getFullYear() + (scale === "year" ? quantity : 0),
+    date.getMonth() + (scale === "month" ? quantity : 0),
+    date.getDate() + (scale === "day" ? quantity : 0),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+    date.getMilliseconds()
+  );
+}
+
+// Restricted to scale in {day, month, year} — the only values this
+// file ever passes in — so this skips the library's own generic
+// "scores" table and just special-cases the two coarser levels
+// directly: startOfDate(d, "day") keeps year/month/date and zeroes the
+// time; "month" also resets date to 1; "year" also resets month to 0.
+function startOfDate(date: Date, scale: DateScale): Date {
+  return new Date(
+    date.getFullYear(),
+    scale === "year" ? 0 : date.getMonth(),
+    scale === "year" || scale === "month" ? 1 : date.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+// Mutates and returns its own argument (matches the library exactly) —
+// every call site below only ever passes it an already-freshly-`new
+// Date`'d value, so this never touches a task's own start/end Date.
+function getMonday(date: Date): Date {
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(date.setDate(diff));
+}
+
+// The same padded start/end range gantt-task-react computes for itself
+// to decide how many header columns to draw — this has to match
+// exactly, since a one-column difference here would throw every bar's
+// computed x position off by a full columnWidth.
+function computeChartDateRange(
+  rangeTasks: { start: Date; end: Date }[],
+  view: TimelineView
+): [Date, Date] {
+  let newStartDate = rangeTasks[0].start;
+  let newEndDate = rangeTasks[0].start;
+  for (const t of rangeTasks) {
+    if (t.start < newStartDate) newStartDate = t.start;
+    if (t.end > newEndDate) newEndDate = t.end;
+  }
+
+  switch (view) {
+    case "year":
+      newStartDate = addToDate(newStartDate, -1, "year");
+      newStartDate = startOfDate(newStartDate, "year");
+      newEndDate = addToDate(newEndDate, 1, "year");
+      newEndDate = startOfDate(newEndDate, "year");
+      break;
+    case "month":
+      newStartDate = addToDate(newStartDate, -1, "month");
+      newStartDate = startOfDate(newStartDate, "month");
+      newEndDate = addToDate(newEndDate, 1, "year");
+      newEndDate = startOfDate(newEndDate, "year");
+      break;
+    case "week":
+      newStartDate = startOfDate(newStartDate, "day");
+      newStartDate = addToDate(getMonday(newStartDate), -7, "day");
+      newEndDate = startOfDate(newEndDate, "day");
+      newEndDate = addToDate(newEndDate, 1.5, "month");
+      break;
+    case "day":
+      newStartDate = startOfDate(newStartDate, "day");
+      newStartDate = addToDate(newStartDate, -1, "day");
+      newEndDate = startOfDate(newEndDate, "day");
+      newEndDate = addToDate(newEndDate, 19, "day");
+      break;
+  }
+  return [newStartDate, newEndDate];
+}
+
+// The tick-date array the chart's header columns are drawn at —
+// computeTaskX below finds where a given date falls between two
+// consecutive ticks.
+function seedGanttDates(startDate: Date, endDate: Date, view: TimelineView): Date[] {
+  let currentDate = new Date(startDate);
+  const dates = [currentDate];
+  while (currentDate < endDate) {
+    switch (view) {
+      case "year":
+        currentDate = addToDate(currentDate, 1, "year");
+        break;
+      case "month":
+        currentDate = addToDate(currentDate, 1, "month");
+        break;
+      case "week":
+        currentDate = addToDate(currentDate, 7, "day");
+        break;
+      case "day":
+        currentDate = addToDate(currentDate, 1, "day");
+        break;
+    }
+    dates.push(currentDate);
+  }
+  return dates;
+}
+
+// gantt-task-react's own taskXCoordinate, verbatim: locates xDate
+// between the two ticks that bracket it and interpolates linearly
+// across that one column's width.
+function computeTaskX(xDate: Date, dates: Date[], columnWidth: number): number {
+  const index = dates.findIndex((d) => d.getTime() >= xDate.getTime()) - 1;
+  const remainderMillis = xDate.getTime() - dates[index].getTime();
+  const percentOfInterval =
+    remainderMillis / (dates[index + 1].getTime() - dates[index].getTime());
+  return index * columnWidth + percentOfInterval * columnWidth;
+}
+
+type BarPosition = {
+  taskId: string;
+  categoryId: number;
+  // Both already include the task-list column's own width (when
+  // shown) and the header row's own height, so these are ready to use
+  // as-is as `left`/`top` for a `position: absolute` element inside
+  // the same positioned container `<Gantt>` itself renders into — no
+  // further offsetting needed at the call site.
+  left: number;
+  right: number;
+  centerY: number;
+  // Only actually used for a milestone row's own name label — see the
+  // milestone-label overlay below. gantt-task-react's own Milestone
+  // component (confirmed directly by reading the compiled bundle)
+  // renders *only* the diamond `<rect>` itself, no `<text>` at all —
+  // unlike a task/project bar, which gets one from the library for
+  // free. Carried on every row here (not just milestones) simply
+  // because it's already sitting right there in the same loop that
+  // computes everything else.
+  name: string;
+  isMilestone: boolean;
+};
+
+type ConnectorDragState = {
+  sourceTaskId: string;
+  originX: number;
+  originY: number;
+  pointerX: number;
+  pointerY: number;
+};
+
+// Small visible gap between a bar's own edge and its connector handle
+// (not touching it), and the handle's own diameter — both drive the
+// handle's `left` position below and the extra margin hitTest() gives
+// hovering so moving from the bar onto its handle doesn't hide it.
+const CONNECTOR_HANDLE_SIZE = 10;
+const CONNECTOR_HANDLE_GAP = 4;
+const CONNECTOR_HOVER_MARGIN = 14;
 
 // No per-task `styles` override and no barCornerRadius prop below —
 // both deliberately left at the library's own defaults (barBackgroundColor
@@ -214,6 +405,73 @@ const HEADER_HEIGHT = 44;
 // than a clean pill — confirmed directly on a handful of 1-2 day tasks.
 // The library's own default of 3 stays proportionate at any bar width.
 
+type ScheduleOverride = { start: string; end: string };
+
+const EMPTY_SCHEDULE_OVERRIDES: ReadonlyMap<number, ScheduleOverride> = new Map();
+
+// Optimistic local override for a task's own schedule, set the instant a
+// drag (or an inline Start/End edit) finishes — see persistTaskDates in
+// GanttChartView below. Without this, `tasks` only reflects the new
+// dates once router.refresh() pulls fresh `categories`/`progress` props
+// back down from the server, and gantt-task-react itself resets its own
+// in-progress-drag visual state to "" the moment the mouse comes up
+// (confirmed directly by reading the compiled bundle: setGanttEvent
+// clears synchronously on mouseup, *before* onDateChange's promise even
+// starts) — so for however long that round trip takes, the bar has
+// nowhere correct to fall back to and snaps to its *pre-drag* position,
+// then jumps again once the server round trip lands. Setting an
+// override here closes that gap: `tasks` (and this component's own
+// connector-handle positions, computed from it) reflect the dragged-to
+// dates immediately, synchronously, with no round trip to wait for.
+//
+// Rather than reconciling field-by-field once fresh props arrive (tried
+// first — needed either a useEffect calling setState directly in its
+// body, or a render-phase "adjust state when a prop changes" setState
+// call; the React Compiler refused to preserve this component's other
+// memoized values, e.g. timelineExtent/visibleTasks, with either one in
+// place, confirmed directly), every override is tagged with the exact
+// `categories` array reference that was live when it was set, and
+// **all** overrides expire together the instant that reference changes
+// — which only happens when a fresh router.refresh() actually lands. A
+// persist that succeeded is, by then, already reflected in the new
+// props, so expiring the override right as it stops being read from
+// prop data is invisible; nothing to reconcile field-by-field, and no
+// setState call anywhere outside an event handler.
+function usePendingScheduleOverrides(categories: CostCategory[]) {
+  const [state, setState] = useState<{
+    categoriesAtSet: CostCategory[];
+    overrides: Map<number, ScheduleOverride>;
+  } | null>(null);
+
+  const overrides =
+    state && state.categoriesAtSet === categories
+      ? state.overrides
+      : EMPTY_SCHEDULE_OVERRIDES;
+
+  function setOverride(taskId: number, override: ScheduleOverride) {
+    setState((prev) => {
+      const base =
+        prev && prev.categoriesAtSet === categories ? prev.overrides : new Map();
+      const next = new Map(base);
+      next.set(taskId, override);
+      return { categoriesAtSet: categories, overrides: next };
+    });
+  }
+
+  function clearOverride(taskId: number) {
+    setState((prev) => {
+      if (!prev || prev.categoriesAtSet !== categories || !prev.overrides.has(taskId)) {
+        return prev;
+      }
+      const next = new Map(prev.overrides);
+      next.delete(taskId);
+      return { categoriesAtSet: categories, overrides: next };
+    });
+  }
+
+  return [overrides, setOverride, clearOverride] as const;
+}
+
 /**
  * The Schedule tab: the project's planning workspace, built on
  * `gantt-task-react` (MIT-licensed, dependency-free). Third Gantt
@@ -222,9 +480,12 @@ const HEADER_HEIGHT = 44;
  * TaskListHeader/TaskListTable props: unlike SVAR's string-based column
  * config or DHTMLX's HTML-string cell templates, these are plain React
  * components we supply outright, so the Task/Start/End/Days/Actions
- * grid below is real JSX — including mounting the actual
- * CategoryDeleteButton/TaskDeleteButton components directly in a cell,
- * which DHTMLX's HTML-template cells couldn't do at all.
+ * grid below is real JSX — including mounting the actual Pencil-edit
+ * buttons directly in a cell, which DHTMLX's HTML-template cells
+ * couldn't do at all. Delete itself isn't a separate Actions-column
+ * icon here (unlike the Cost Estimate Breakdown's own table) — it's a
+ * button inside each row's own Edit modal instead, see SubtaskForm's
+ * and CategoryForm's own doc comments.
  *
  * Its React peer dependency is `^18.0.0` — this app runs React 19, so
  * it's installed with --legacy-peer-deps. Works in practice (verified
@@ -411,6 +672,33 @@ export function GanttChartView({
     collapsedPhaseIds,
   ]);
 
+  const [pendingScheduleOverrides, setScheduleOverride, clearScheduleOverride] =
+    usePendingScheduleOverrides(categories);
+
+  // Applies any pending optimistic overrides (see usePendingScheduleOverrides'
+  // own doc comment) on top of the otherwise-unaware `tasks` above — kept
+  // as a separate pass, rather than reading pendingScheduleOverrides
+  // inside `tasks` itself, purely to satisfy the React Compiler: with the
+  // override hook's own useState called any earlier than this (in
+  // particular, anywhere before `tasks`'s own useMemo), it silently gave
+  // up preserving memoization for timelineExtent/visibleTasks below,
+  // confirmed directly by bisecting hook-call position. Phase ("project")
+  // rows are deliberately left untouched — they're not directly
+  // draggable (see this component's own doc comment below), so no
+  // override is ever set for one; their own start/end stays a rollup of
+  // their children's *persisted* dates until the real refresh lands,
+  // which only affects how soon a phase bar's own edges visually catch
+  // up, not the flicker this was written to fix.
+  const effectiveTasks: GanttTask[] = useMemo(() => {
+    if (pendingScheduleOverrides.size === 0) return tasks;
+    return tasks.map((row) => {
+      if (row.type === "project") return row;
+      const override = pendingScheduleOverrides.get(Number(row.id));
+      if (!override) return row;
+      return { ...row, start: toDate(override.start), end: toDate(override.end) };
+    });
+  }, [tasks, pendingScheduleOverrides]);
+
   const hasAnyCategory = categories.length > 0;
 
   const totalColumnsWidth =
@@ -421,15 +709,15 @@ export function GanttChartView({
   // task), used only to estimate how many header columns the current
   // zoom level will draw — see estimateColumnCount above.
   const timelineExtent = useMemo(() => {
-    if (tasks.length === 0) return null;
-    let min = tasks[0].start.getTime();
-    let max = tasks[0].end.getTime();
-    for (const t of tasks) {
+    if (effectiveTasks.length === 0) return null;
+    let min = effectiveTasks[0].start.getTime();
+    let max = effectiveTasks[0].end.getTime();
+    for (const t of effectiveTasks) {
       if (t.start.getTime() < min) min = t.start.getTime();
       if (t.end.getTime() > max) max = t.end.getTime();
     }
     return { min: new Date(min), max: new Date(max) };
-  }, [tasks]);
+  }, [effectiveTasks]);
 
   // Measures the chart's own bordered wrapper so columnWidth can be
   // widened to fill it exactly when the project's date range is short
@@ -438,6 +726,16 @@ export function GanttChartView({
   // by inspecting a short-range render: the chart's own SVG came out
   // hundreds of pixels narrower than the wrapper around it).
   const chartWrapRef = useRef<HTMLDivElement>(null);
+  // Wraps *only* <Gantt>'s own rendered output. The connector-handle/
+  // line overlay below renders as a `position: absolute` sibling
+  // inside this same element (given `position: relative`), so it
+  // scrolls in lockstep with the chart's own bars for free — no scroll
+  // listener needed, unlike the old DOM-measurement version. Also the
+  // reference point `getBoundingClientRect()` is read against for
+  // converting a live mouse event's viewport coordinates into this
+  // same local coordinate space (see handleConnectorDragStart /
+  // handleChartMouseMove below).
+  const ganttRootRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
 
   useEffect(() => {
@@ -463,6 +761,273 @@ export function GanttChartView({
     );
     return Math.max(base, Math.floor(chartAreaWidth / unitCount));
   }, [view, containerWidth, timelineExtent, showTaskList, totalColumnsWidth]);
+
+  // Mirrors gantt-task-react's own removeHiddenTasks: a collapsed
+  // phase's own row still counts toward row height/index (it's still
+  // drawn), but its children are skipped entirely — both for computing
+  // the chart's date range below (collapsing a phase can shrink the
+  // visible date span) and for each remaining row's own index (see
+  // taskYCoordinate's derivation in the barPositions memo below).
+  const visibleTasks = useMemo(
+    () =>
+      effectiveTasks.filter(
+        (row) => row.type === "project" || !collapsedPhaseIds.has(row.project ?? "")
+      ),
+    [effectiveTasks, collapsedPhaseIds]
+  );
+
+  // Every visible task/milestone bar's position, computed directly from
+  // task dates + the chart's own column width — see the long comment
+  // above BarPosition for why this replaced DOM measurement. A plain
+  // useMemo means this is exactly as "live" as the Days column: it
+  // recomputes synchronously whenever the inputs it actually depends on
+  // change, nothing more, nothing stale.
+  const barPositions = useMemo<BarPosition[]>(() => {
+    if (visibleTasks.length === 0) return [];
+    const [rangeStart, rangeEnd] = computeChartDateRange(visibleTasks, view);
+    const dates = seedGanttDates(rangeStart, rangeEnd, view);
+    const xOffset = showTaskList ? totalColumnsWidth : 0;
+
+    const positions: BarPosition[] = [];
+    visibleTasks.forEach((row, index) => {
+      if (row.type === "project") return; // no connector on phase rows
+      const task = taskById.get(row.id);
+      if (!task) return;
+
+      const x1 = xOffset + computeTaskX(row.start, dates, effectiveColumnWidth);
+      let left: number;
+      let right: number;
+      if (row.type === "milestone") {
+        // A fixed-size diamond centered on its one date, not a
+        // date-range-based bar — see convertToMilestone above.
+        left = x1 - BAR_HEIGHT / 2;
+        right = x1 + BAR_HEIGHT / 2;
+      } else {
+        let x2 = xOffset + computeTaskX(row.end, dates, effectiveColumnWidth);
+        if (x2 - x1 < MIN_TASK_BAR_WIDTH) x2 = x1 + MIN_TASK_BAR_WIDTH;
+        left = Math.min(x1, x2);
+        right = Math.max(x1, x2);
+      }
+
+      // The taskHeight terms in gantt-task-react's own taskYCoordinate
+      // cancel out for a bar's vertical *center* regardless of barFill,
+      // leaving just this — see the derivation in the connector-handle
+      // research this was ported from.
+      const centerY = HEADER_HEIGHT + index * ROW_HEIGHT + ROW_HEIGHT / 2;
+      positions.push({
+        taskId: row.id,
+        categoryId: task.categoryId,
+        left,
+        right,
+        centerY,
+        name: row.name,
+        isMilestone: row.type === "milestone",
+      });
+    });
+    return positions;
+  }, [visibleTasks, view, effectiveColumnWidth, showTaskList, totalColumnsWidth, taskById]);
+
+  // Only the bar currently under the cursor shows its handles — see
+  // handleChartMouseMove below. A plain hit-test against the same
+  // barPositions numbers used to draw everything else, not a second
+  // DOM-based hover mechanism.
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
+  const [connectorDragState, setConnectorDragState] =
+    useState<ConnectorDragState | null>(null);
+  const connectorDragStateRef = useRef<ConnectorDragState | null>(null);
+  // Where the dashed line/pointer-dot's own live position is written
+  // to directly on every mousemove during a connector drag, bypassing
+  // React state entirely — see handleConnectorDragStart's own doc
+  // comment for why. connectorDragState (above) still drives the
+  // *origin* endpoint (fixed for the whole drag) and mounts/unmounts
+  // this SVG overlay at drag start/end, just not this hot path.
+  const connectorLineRef = useRef<SVGLineElement>(null);
+  const connectorPointerRef = useRef<SVGCircleElement>(null);
+  // True for the duration of a *native* gantt-task-react bar drag
+  // (move/resize/progress) — see handleChartMouseDown below. While
+  // true, hover tracking is suppressed entirely: barPositions can't
+  // track the dragged bar's own live, mid-drag position (that only
+  // exists inside gantt-task-react's own internal state, which this
+  // component has no access to — onDateChange fires once, on release,
+  // not per frame), so a handle left showing during the drag would
+  // visibly lag behind the bar it's supposed to belong to.
+  const barDragActiveRef = useRef(false);
+
+  function hitTestBar(clientX: number, clientY: number) {
+    const root = ganttRootRef.current;
+    if (!root) return null;
+    const rect = root.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    return (
+      barPositions.find(
+        (pos) =>
+          x >= pos.left - CONNECTOR_HOVER_MARGIN &&
+          x <= pos.right + CONNECTOR_HOVER_MARGIN &&
+          Math.abs(y - pos.centerY) <= ROW_HEIGHT / 2
+      ) ?? null
+    );
+  }
+
+  function handleChartMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    // While a connector is actively being dragged, its own source bar
+    // is kept visible explicitly (see handleConnectorDragStart) rather
+    // than recomputed from cursor position on every move — the cursor
+    // is usually nowhere near the source bar by then. Same idea for an
+    // in-progress native bar drag — see barDragActiveRef above.
+    if (connectorDragStateRef.current || barDragActiveRef.current) return;
+    const hit = hitTestBar(e.clientX, e.clientY);
+    setHoveredTaskId((prev) => {
+      const next = hit ? hit.taskId : null;
+      return next === prev ? prev : next;
+    });
+  }
+
+  function handleChartMouseLeave() {
+    if (connectorDragStateRef.current || barDragActiveRef.current) return;
+    setHoveredTaskId(null);
+  }
+
+  // Detects a native gantt-task-react drag starting (move, resize, or
+  // progress) so hover tracking can step aside for its duration — see
+  // barDragActiveRef above. Every such interaction happens on the
+  // chart's own <svg> content; this app's own connector handles are
+  // plain HTML <button>s that stopPropagation() their own mousedown, so
+  // they never reach this handler, and neither does anything in the
+  // task-list panel (also plain HTML, not SVG).
+  function handleChartMouseDown(e: React.MouseEvent<HTMLDivElement>) {
+    if (!(e.target instanceof Element) || !e.target.closest("svg")) return;
+    barDragActiveRef.current = true;
+    setHoveredTaskId(null);
+
+    function onUp(ev: MouseEvent) {
+      window.removeEventListener("mouseup", onUp);
+      barDragActiveRef.current = false;
+      // Re-evaluate immediately against wherever the cursor actually
+      // is now, rather than waiting for the next physical mouse
+      // twitch — by this point persistTaskDates has already set this
+      // bar's optimistic override (see its own doc comment), so
+      // barPositions already reflects the just-dropped position.
+      const hit = hitTestBar(ev.clientX, ev.clientY);
+      setHoveredTaskId(hit ? hit.taskId : null);
+    }
+    window.addEventListener("mouseup", onUp);
+  }
+
+  // Mousedown on one of a bar's own two connector handles — hand-built,
+  // same mousedown/mousemove/mouseup pattern used throughout this file.
+  // Either end works identically as a drag source (this app stores a
+  // single undifferentiated predecessor link, not a finish-to-start /
+  // start-to-start distinction, so which edge you grab only changes
+  // where the dashed line starts from, not what dropping it does).
+  // Dropping on another bar within the *same phase* sets that bar's
+  // task as this one's successor (predecessor_task_id = the dragged-
+  // from task). Dropping anywhere else (a different phase, empty
+  // space, the bar it started on) is simply a no-op — nothing is
+  // persisted unless the drop genuinely lands on a valid target.
+  //
+  // The live dashed-line tracking deliberately never touches React
+  // state: the first version called setConnectorDragState (a full
+  // re-render of this whole component) *and* re-read
+  // getBoundingClientRect() (a synchronous layout flush) on every
+  // single mousemove — plainly-visible lag, confirmed directly, since a
+  // mouse can report well past 60 times a second and each one was
+  // paying for both. ganttRootRef's own box never moves mid-drag, so
+  // `rect` below is read exactly once, at mousedown; and the pointer's
+  // own endpoint is written straight to the SVG <line>/<circle>
+  // elements' attributes via connectorLineRef/connectorPointerRef (see
+  // their own doc comment), coalesced through requestAnimationFrame so
+  // a burst of mousemoves between two frames costs one DOM write, not
+  // one each. connectorDragState (React state) only mounts the SVG
+  // overlay at drag start and unmounts it at drag end — two renders
+  // total per drag, not one per pixel moved.
+  function handleConnectorDragStart(pos: BarPosition, edge: "left" | "right") {
+    return (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const rect = ganttRootRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      // Captured as plain numbers (not `rect` itself) so the closures
+      // below stay typed as definitely-defined — TS can't carry the
+      // `if (!rect) return` narrowing above into a function that only
+      // runs later, on a future event.
+      const originLeft = rect.left;
+      const originTop = rect.top;
+
+      const initial: ConnectorDragState = {
+        sourceTaskId: pos.taskId,
+        originX: edge === "left" ? pos.left : pos.right,
+        originY: pos.centerY,
+        pointerX: e.clientX - originLeft,
+        pointerY: e.clientY - originTop,
+      };
+      connectorDragStateRef.current = initial;
+      setConnectorDragState(initial);
+      // Keeps this bar's own handles visible for the whole drag,
+      // regardless of where the cursor wanders — handleChartMouseMove
+      // steps aside (see its own guard) while a drag is in progress.
+      setHoveredTaskId(pos.taskId);
+
+      let latestX = initial.pointerX;
+      let latestY = initial.pointerY;
+      let rafId: number | null = null;
+
+      function paint() {
+        rafId = null;
+        connectorLineRef.current?.setAttribute("x2", String(latestX));
+        connectorLineRef.current?.setAttribute("y2", String(latestY));
+        connectorPointerRef.current?.setAttribute("cx", String(latestX));
+        connectorPointerRef.current?.setAttribute("cy", String(latestY));
+      }
+
+      function onMove(ev: MouseEvent) {
+        latestX = ev.clientX - originLeft;
+        latestY = ev.clientY - originTop;
+        if (rafId === null) rafId = requestAnimationFrame(paint);
+      }
+
+      async function onUp(ev: MouseEvent) {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        if (rafId !== null) cancelAnimationFrame(rafId);
+        connectorDragStateRef.current = null;
+        setConnectorDragState(null);
+
+        const dropX = ev.clientX - originLeft;
+        const dropY = ev.clientY - originTop;
+
+        // Same forgiving vertical hit-test as a row's own slot (bars
+        // are drawn shorter than ROW_HEIGHT, centered within it), but
+        // strict horizontally — you have to drop ON the bar's own date
+        // range, not just anywhere in its row.
+        const target = barPositions.find(
+          (candidate) =>
+            candidate.taskId !== pos.taskId &&
+            candidate.categoryId === pos.categoryId &&
+            dropX >= candidate.left &&
+            dropX <= candidate.right &&
+            Math.abs(dropY - candidate.centerY) <= ROW_HEIGHT / 2
+        );
+        if (!target) return;
+
+        setScheduleError(null);
+        const result = await setPredecessor(
+          Number(target.taskId),
+          Number(pos.taskId),
+          projectId
+        );
+        if (result.error) {
+          setScheduleError(result.error);
+          return;
+        }
+        router.refresh();
+      }
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+  }
 
   // Hand-built drag-to-resize for one column header — see the
   // RESIZABLE_COLUMN_IDS comment above. Global mousemove/mouseup
@@ -498,9 +1063,17 @@ export function GanttChartView({
     endIso: string
   ): Promise<boolean> {
     setScheduleError(null);
+    // Set *before* the await — see usePendingScheduleOverrides' own doc
+    // comment above for why: this needs to land before gantt-task-react
+    // resets its own drag visual state on this same mouseup, not after.
+    setScheduleOverride(taskId, { start: startIso, end: endIso });
     const result = await updateTaskSchedule(taskId, projectId, startIso, endIso);
     if (result.error) {
       setScheduleError(result.error);
+      // Nothing was actually saved — drop the optimistic override so
+      // the bar falls back to its last-confirmed (server) position
+      // instead of getting stuck showing a change that never persisted.
+      clearScheduleOverride(taskId);
       return false;
     }
     router.refresh(); // pulls the recomputed phase-row rollup back down
@@ -692,7 +1265,14 @@ export function GanttChartView({
             <div
               key={row.id}
               style={{ height: ROW_HEIGHT }}
-              className="flex items-center border-b border-zinc-100 text-xs text-zinc-600"
+              // Phase rows get a faint darker fill so the hierarchy reads
+              // at a glance, not just from the bold name/chevron — task
+              // rows stay plain (no class) rather than an explicit white,
+              // so they still show through whatever the panel's own
+              // background is.
+              className={`flex items-center border-b border-zinc-100 text-xs text-zinc-600 ${
+                isProject ? "bg-zinc-100" : ""
+              }`}
             >
               <div
                 className="flex h-full shrink-0 items-center gap-1 truncate px-2 text-zinc-800"
@@ -711,6 +1291,18 @@ export function GanttChartView({
                       <ChevronDown className="size-3.5" />
                     )}
                   </button>
+                )}
+                {row.type === "milestone" && (
+                  // Matches gantt-task-react's own default
+                  // milestoneBackgroundColor (#f1c453) — the chart's own
+                  // diamond can be easy to miss at typical zoom (its
+                  // rendered width is often well under 20px), so this
+                  // gives the task list an unmissable second cue rather
+                  // than relying solely on the Days column's own "—".
+                  <Diamond
+                    aria-label="Milestone"
+                    className="size-3 shrink-0 fill-amber-400 text-amber-500"
+                  />
                 )}
                 <span
                   className={
@@ -803,6 +1395,9 @@ export function GanttChartView({
                     >
                       <Plus className="size-3.5" />
                     </button>
+                    {/* Delete lives inside this modal now (see
+                        CategoryForm's own showDeleteButton prop), not as
+                        a second Actions-column icon next to Edit. */}
                     <button
                       type="button"
                       onClick={() => setCategoryModal({ mode: "edit", category })}
@@ -812,31 +1407,21 @@ export function GanttChartView({
                     >
                       <Pencil className="size-3.5" />
                     </button>
-                    <CategoryDeleteButton
-                      categoryId={category.id}
-                      projectId={projectId}
-                      categoryName={category.name}
-                    />
                   </>
                 ) : (
                   !isProject &&
                   task && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setTaskModal({ mode: "edit", task })}
-                        aria-label="Edit task item"
-                        title="Edit task"
-                        className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
-                      >
-                        <Pencil className="size-3.5" />
-                      </button>
-                      <TaskDeleteButton
-                        taskId={task.id}
-                        projectId={projectId}
-                        taskName={task.name}
-                      />
-                    </>
+                    // Same idea — see SubtaskForm's own built-in Delete
+                    // button (edit mode only).
+                    <button
+                      type="button"
+                      onClick={() => setTaskModal({ mode: "edit", task })}
+                      aria-label="Edit task item"
+                      title="Edit task"
+                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                    >
+                      <Pencil className="size-3.5" />
+                    </button>
                   )
                 )}
               </div>
@@ -846,11 +1431,6 @@ export function GanttChartView({
       </div>
     );
   }
-
-  const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
-  const allTasksForPredecessor = categories.flatMap((c) =>
-    c.tasks.map((t) => ({ id: t.id, name: t.name, categoryName: c.name }))
-  );
 
   return (
     // -mx-8 breaks out of the tab content wrapper's own px-8 (set in
@@ -931,27 +1511,124 @@ export function GanttChartView({
             ref={chartWrapRef}
             className="gantt-task-react-root h-220 overflow-auto"
           >
-            <Gantt
-              tasks={tasks}
-              viewMode={VIEW_MODE[view]}
-              rowHeight={ROW_HEIGHT}
-              headerHeight={HEADER_HEIGHT}
-              listCellWidth={showTaskList ? `${totalColumnsWidth}px` : ""}
-              columnWidth={effectiveColumnWidth}
-              todayColor="rgba(252, 211, 77, 0.15)"
-              TooltipContent={GanttTooltipContent}
-              TaskListHeader={CustomTaskListHeader}
-              TaskListTable={CustomTaskListTable}
-              onDateChange={(task) => persistDrag(task)}
-              onExpanderClick={(task) => {
-                setCollapsedPhaseIds((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(task.id)) next.delete(task.id);
-                  else next.add(task.id);
-                  return next;
-                });
-              }}
-            />
+            <div
+              ref={ganttRootRef}
+              className="relative"
+              onMouseDown={handleChartMouseDown}
+              onMouseMove={handleChartMouseMove}
+              onMouseLeave={handleChartMouseLeave}
+            >
+              <Gantt
+                tasks={effectiveTasks}
+                viewMode={VIEW_MODE[view]}
+                rowHeight={ROW_HEIGHT}
+                headerHeight={HEADER_HEIGHT}
+                listCellWidth={showTaskList ? `${totalColumnsWidth}px` : ""}
+                columnWidth={effectiveColumnWidth}
+                todayColor="rgba(252, 211, 77, 0.15)"
+                TooltipContent={GanttTooltipContent}
+                TaskListHeader={CustomTaskListHeader}
+                TaskListTable={CustomTaskListTable}
+                onDateChange={(task) => persistDrag(task)}
+                onExpanderClick={(task) => {
+                  setCollapsedPhaseIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(task.id)) next.delete(task.id);
+                    else next.add(task.id);
+                    return next;
+                  });
+                }}
+              />
+              {/* position: absolute (not fixed) — a normal-flow sibling
+                  of <Gantt>'s own output inside this `relative`
+                  wrapper, so native scrolling of chartWrapRef carries
+                  every handle along for free, with no scroll listener
+                  and no re-measurement. Left mounted at all times and
+                  toggled by opacity/pointer-events rather than
+                  conditionally rendered, so showing/hiding a handle on
+                  hover is a plain className swap, not a mount/unmount. */}
+              {barPositions.flatMap((pos) => {
+                const isHovered = pos.taskId === hoveredTaskId;
+                const handleClass = `absolute z-40 size-2.5 -translate-y-1/2 cursor-crosshair rounded-full border border-white bg-zinc-400 shadow transition hover:scale-125 hover:bg-zinc-600 ${
+                  isHovered ? "opacity-100" : "pointer-events-none opacity-0"
+                }`;
+                return [
+                  <button
+                    key={`${pos.taskId}-start`}
+                    type="button"
+                    onMouseDown={handleConnectorDragStart(pos, "left")}
+                    aria-label="Drag to link a predecessor task"
+                    title="Drag to another task in this phase to set it as the successor"
+                    className={handleClass}
+                    style={{
+                      left: pos.left - CONNECTOR_HANDLE_GAP - CONNECTOR_HANDLE_SIZE,
+                      top: pos.centerY,
+                    }}
+                  />,
+                  <button
+                    key={`${pos.taskId}-end`}
+                    type="button"
+                    onMouseDown={handleConnectorDragStart(pos, "right")}
+                    aria-label="Drag to link a successor task"
+                    title="Drag to another task in this phase to set it as the successor"
+                    className={handleClass}
+                    style={{ left: pos.right + CONNECTOR_HANDLE_GAP, top: pos.centerY }}
+                  />,
+                ];
+              })}
+              {/* gantt-task-react's own Milestone component renders no
+                  label at all (see BarPosition's own doc comment) — this
+                  fills that in, always shown (not hover-gated like the
+                  connector handles above, since there's no bar for the
+                  name to sit inside of otherwise). Same zinc-800 every
+                  other task/phase name in the task list uses, not the
+                  library's own white bar-label color, since this sits
+                  next to the diamond rather than on top of it. */}
+              {barPositions
+                .filter((pos) => pos.isMilestone)
+                .map((pos) => (
+                  <span
+                    key={`${pos.taskId}-label`}
+                    className="pointer-events-none absolute z-30 -translate-y-1/2 truncate text-xs font-medium text-zinc-800"
+                    style={{ left: pos.right + 6, top: pos.centerY }}
+                  >
+                    {pos.name}
+                  </span>
+                ))}
+              {connectorDragState && (
+                <svg className="pointer-events-none absolute inset-0 z-50 h-full w-full overflow-visible">
+                  {/* x2/y2/cx/cy start at the mousedown position (this
+                      render's own connectorDragState.pointer*) and are
+                      then driven entirely by direct attribute writes in
+                      handleConnectorDragStart's onMove — never by a
+                      further React render — for as long as the drag
+                      lasts. */}
+                  <line
+                    ref={connectorLineRef}
+                    x1={connectorDragState.originX}
+                    y1={connectorDragState.originY}
+                    x2={connectorDragState.pointerX}
+                    y2={connectorDragState.pointerY}
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                    strokeDasharray="5 4"
+                  />
+                  <circle
+                    cx={connectorDragState.originX}
+                    cy={connectorDragState.originY}
+                    r={4}
+                    fill="#2563eb"
+                  />
+                  <circle
+                    ref={connectorPointerRef}
+                    cx={connectorDragState.pointerX}
+                    cy={connectorDragState.pointerY}
+                    r={4}
+                    fill="#2563eb"
+                  />
+                </svg>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -965,6 +1642,7 @@ export function GanttChartView({
           <CategoryForm
             projectId={projectId}
             category={categoryModal.category}
+            showDeleteButton
             onSuccess={() => setCategoryModal(null)}
           />
         ) : (
@@ -978,18 +1656,33 @@ export function GanttChartView({
       <Modal
         open={taskModal !== null}
         onClose={() => setTaskModal(null)}
-        title={taskModal?.mode === "edit" ? "Edit Task Item" : "Add Task Item"}
+        title={taskModal?.mode === "edit" ? "Edit Task" : "Add Task"}
       >
-        <TaskForm
-          projectId={projectId}
-          categories={categoryOptions}
-          tasks={allTasksForPredecessor}
-          task={taskModal?.mode === "edit" ? taskModal.task : undefined}
-          defaultCategoryId={
-            taskModal?.mode === "add" ? taskModal.defaultCategoryId : undefined
-          }
-          onSuccess={() => setTaskModal(null)}
-        />
+        {taskModal?.mode === "edit" ? (
+          <SubtaskForm
+            projectId={projectId}
+            categoryId={taskModal.task.categoryId}
+            task={taskModal.task}
+            siblingTasks={
+              categories.find((c) => c.id === taskModal.task.categoryId)
+                ?.tasks ?? []
+            }
+            onSuccess={() => setTaskModal(null)}
+          />
+        ) : (
+          taskModal &&
+          taskModal.defaultCategoryId !== undefined && (
+            <SubtaskForm
+              projectId={projectId}
+              categoryId={taskModal.defaultCategoryId}
+              siblingTasks={
+                categories.find((c) => c.id === taskModal.defaultCategoryId)
+                  ?.tasks ?? []
+              }
+              onSuccess={() => setTaskModal(null)}
+            />
+          )
+        )}
       </Modal>
     </div>
   );
