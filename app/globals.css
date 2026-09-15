@@ -156,3 +156,30 @@ body {
 .gantt-task-react-root ._3KcaM {
   display: none;
 }
+
+/*
+ * Milestones get their own, stronger override on top of the rule
+ * above. gantt-task-react's isTextInside logic (see the comment above)
+ * measures its own <text>'s rendered width exactly once, right after
+ * mount, to decide barLabel vs barLabelOutside — for a milestone's own
+ * ~20px-wide diamond, any real task name is wider than that, so it
+ * should always resolve to barLabelOutside (already hidden above).
+ * Confirmed directly, though, that measurement can race the SVG's own
+ * layout: a 0-width getBBox() reads as "fits inside," leaving the text
+ * stuck on the *inside* class instead — rendered directly on top of the
+ * diamond, and flickering as gantt-task-react's own later remeasurement
+ * passes flip it back and forth. Rather than depend on that measurement
+ * at all for milestones, this hides *both* possible classes for them —
+ * gantt-chart-view.tsx renders its own name label next to the diamond
+ * instead (a `position: absolute` span, entirely outside gantt-task-
+ * react's own rendering, not subject to this bug).
+ *
+ * Scoped with :has() to only a milestone's own row: a <text> whose
+ * sibling is the milestone diamond's own wrapper <g> (class _RRr13,
+ * confirmed directly from the compiled bundle) — every other row (a
+ * task/project's own "inside" label, which this app *does* want shown)
+ * is untouched.
+ */
+.gantt-task-react-root g:has(> g._RRr13) > text {
+  display: none !important;
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
@@ -364,11 +365,18 @@ type BarPosition = {
   right: number;
   centerY: number;
   // Only actually used for a milestone row's own name label — see the
-  // milestone-label overlay below. gantt-task-react's own Milestone
-  // component (confirmed directly by reading the compiled bundle)
-  // renders *only* the diamond `<rect>` itself, no `<text>` at all —
-  // unlike a task/project bar, which gets one from the library for
-  // free. Carried on every row here (not just milestones) simply
+  // milestone-label overlay below. gantt-task-react's own per-row
+  // <text> (rendered by its TaskItem wrapper for every row type, not
+  // just Milestone — confirmed directly by reading the compiled
+  // bundle) is unreliable for a milestone specifically: it measures its
+  // own rendered width once, right after mount, to decide whether to
+  // draw itself inside the bar or floated outside it, and for a
+  // milestone's narrow ~20px diamond that measurement can race the
+  // SVG's own layout and get stuck showing (and flickering) directly on
+  // top of the diamond — see the CSS rule in globals.css that now hides
+  // gantt-task-react's own text for a milestone row unconditionally.
+  // This label is this component's own, deliberately independent,
+  // replacement. Carried on every row here (not just milestones) simply
   // because it's already sitting right there in the same loop that
   // computes everything else.
   name: string;
@@ -531,11 +539,16 @@ export function GanttChartView({
   categories,
   progress,
   projectStartDate,
+  toolbarSlot,
 }: {
   projectId: number;
   categories: CostCategory[];
   progress: ProjectProgress;
   projectStartDate: string | null;
+  /** DOM node (rendered by the parent's sub-tabs row) this view's own
+   * Day/Week/Month/Year + Expand all/Collapse all/Hide Task List
+   * toolbar portals into — see SubTabsRow in project-detail-view.tsx. */
+  toolbarSlot: HTMLDivElement | null;
 }) {
   const router = useRouter();
   // Month is the default zoom: unlike Week, its column labels are plain
@@ -850,8 +863,19 @@ export function GanttChartView({
   // exists inside gantt-task-react's own internal state, which this
   // component has no access to — onDateChange fires once, on release,
   // not per frame), so a handle left showing during the drag would
-  // visibly lag behind the bar it's supposed to belong to.
+  // visibly lag behind the bar it's supposed to belong to. A ref, not
+  // state: read only from inside event handlers below, which don't
+  // need a re-render to see the latest value.
   const barDragActiveRef = useRef(false);
+  // Same flag, mirrored into actual state — the milestone label below
+  // (unlike the hover-gated connector handles) is drawn unconditionally,
+  // so hiding one during a drag needs an actual re-render, not just a
+  // ref read some other state change happens to trigger. Same root
+  // cause as the handles' own staleness: the label is this component's
+  // own overlay, positioned from barPositions (which only updates once
+  // the drag ends and settles), while the diamond itself is
+  // gantt-task-react's own SVG, moving live all through the drag.
+  const [isBarDragging, setIsBarDragging] = useState(false);
 
   function hitTestBar(clientX: number, clientY: number) {
     const root = ganttRootRef.current;
@@ -898,11 +922,13 @@ export function GanttChartView({
   function handleChartMouseDown(e: React.MouseEvent<HTMLDivElement>) {
     if (!(e.target instanceof Element) || !e.target.closest("svg")) return;
     barDragActiveRef.current = true;
+    setIsBarDragging(true);
     setHoveredTaskId(null);
 
     function onUp(ev: MouseEvent) {
       window.removeEventListener("mouseup", onUp);
       barDragActiveRef.current = false;
+      setIsBarDragging(false);
       // Re-evaluate immediately against wherever the cursor actually
       // is now, rather than waiting for the next physical mouse
       // twitch — by this point persistTaskDates has already set this
@@ -1308,7 +1334,14 @@ export function GanttChartView({
                   className={
                     isProject
                       ? "truncate font-bold"
-                      : "truncate font-medium"
+                      // pl-4 nudges a sub-task's own name in from the
+                      // cell's edge — phase names sit flush left of their
+                      // own chevron, so an unindented task name read as
+                      // the same hierarchy level instead of belonging
+                      // *under* its phase. Scoped to just this span (not
+                      // the row/cell) so it's only the name text that
+                      // shifts, not the Milestone diamond before it.
+                      : "truncate pl-4 font-medium"
                   }
                 >
                   {row.name}
@@ -1463,50 +1496,60 @@ export function GanttChartView({
           </button>
         </div>
       ) : (
-        // The toolbar and chart share one border/rounded-corner/bg
-        // instead of each having its own — a single panel with the
-        // toolbar as its header (divided off by border-b only), not two
-        // separate boxes with a gap between them.
-        <div className="flex flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white">
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-200 px-2 py-1.5">
-            {(Object.keys(VIEW_LABELS) as TimelineView[]).map((v) => (
-              <button
-                key={v}
-                type="button"
-                className={v === view ? TOOLBAR_BUTTON_ACTIVE_CLASS : TOOLBAR_BUTTON_CLASS}
-                onClick={() => setView(v)}
-              >
-                {VIEW_LABELS[v]}
-              </button>
-            ))}
-            <span className="mx-1 h-4 w-px bg-zinc-200" />
-            <button
-              type="button"
-              className={TOOLBAR_BUTTON_CLASS}
-              onClick={() => setAllPhasesOpen(true)}
-            >
-              <ChevronsDown className="size-3.5" />
-              Expand all
-            </button>
-            <button
-              type="button"
-              className={TOOLBAR_BUTTON_CLASS}
-              onClick={() => setAllPhasesOpen(false)}
-            >
-              <ChevronsUp className="size-3.5" />
-              Collapse all
-            </button>
-            <span className="mx-1 h-4 w-px bg-zinc-200" />
-            <button
-              type="button"
-              onClick={() => setShowTaskList((s) => !s)}
-              aria-pressed={showTaskList}
-              className={showTaskList ? TOOLBAR_BUTTON_ACTIVE_CLASS : TOOLBAR_BUTTON_CLASS}
-            >
-              {showTaskList ? "Hide" : "Show"} Task List
-            </button>
-          </div>
+        <>
+          {/* Portaled into the sub-tabs row's own right-aligned slot
+              (see SubTabsRow in project-detail-view.tsx) rather than
+              rendered as this panel's own header — right-aligned next
+              to Project Overview/Cost Estimate/Gantt Chart instead of
+              sitting in its own row above the chart. */}
+          {toolbarSlot &&
+            createPortal(
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(Object.keys(VIEW_LABELS) as TimelineView[]).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className={
+                      v === view ? TOOLBAR_BUTTON_ACTIVE_CLASS : TOOLBAR_BUTTON_CLASS
+                    }
+                    onClick={() => setView(v)}
+                  >
+                    {VIEW_LABELS[v]}
+                  </button>
+                ))}
+                <span className="mx-1 h-4 w-px bg-zinc-200" />
+                <button
+                  type="button"
+                  className={TOOLBAR_BUTTON_CLASS}
+                  onClick={() => setAllPhasesOpen(true)}
+                >
+                  <ChevronsDown className="size-3.5" />
+                  Expand all
+                </button>
+                <button
+                  type="button"
+                  className={TOOLBAR_BUTTON_CLASS}
+                  onClick={() => setAllPhasesOpen(false)}
+                >
+                  <ChevronsUp className="size-3.5" />
+                  Collapse all
+                </button>
+                <span className="mx-1 h-4 w-px bg-zinc-200" />
+                <button
+                  type="button"
+                  onClick={() => setShowTaskList((s) => !s)}
+                  aria-pressed={showTaskList}
+                  className={
+                    showTaskList ? TOOLBAR_BUTTON_ACTIVE_CLASS : TOOLBAR_BUTTON_CLASS
+                  }
+                >
+                  {showTaskList ? "Hide" : "Show"} Task List
+                </button>
+              </div>,
+              toolbarSlot
+            )}
 
+          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
           <div
             ref={chartWrapRef}
             className="gantt-task-react-root h-220 overflow-auto"
@@ -1576,25 +1619,30 @@ export function GanttChartView({
                   />,
                 ];
               })}
-              {/* gantt-task-react's own Milestone component renders no
-                  label at all (see BarPosition's own doc comment) — this
-                  fills that in, always shown (not hover-gated like the
-                  connector handles above, since there's no bar for the
-                  name to sit inside of otherwise). Same zinc-800 every
-                  other task/phase name in the task list uses, not the
-                  library's own white bar-label color, since this sits
-                  next to the diamond rather than on top of it. */}
-              {barPositions
-                .filter((pos) => pos.isMilestone)
-                .map((pos) => (
-                  <span
-                    key={`${pos.taskId}-label`}
-                    className="pointer-events-none absolute z-30 -translate-y-1/2 truncate text-xs font-medium text-zinc-800"
-                    style={{ left: pos.right + 6, top: pos.centerY }}
-                  >
-                    {pos.name}
-                  </span>
-                ))}
+              {/* gantt-task-react's own per-row <text> is unreliable for
+                  a milestone specifically (see BarPosition's own doc
+                  comment) — hidden unconditionally now via the :has()
+                  rule in globals.css, and replaced with this instead.
+                  Always shown (not hover-gated like the connector
+                  handles above, since there's no bar for the name to
+                  sit inside of otherwise). Same zinc-800 every other
+                  task/phase name in the task list uses. Hidden for the
+                  length of any native bar drag — see isBarDragging's own
+                  doc comment for why a label left showing here would lag
+                  behind a dragged diamond, the same root cause the
+                  connector handles above already guard against. */}
+              {!isBarDragging &&
+                barPositions
+                  .filter((pos) => pos.isMilestone)
+                  .map((pos) => (
+                    <span
+                      key={`${pos.taskId}-label`}
+                      className="pointer-events-none absolute z-30 -translate-y-1/2 truncate text-xs font-medium text-zinc-800"
+                      style={{ left: pos.right + 6, top: pos.centerY }}
+                    >
+                      {pos.name}
+                    </span>
+                  ))}
               {connectorDragState && (
                 <svg className="pointer-events-none absolute inset-0 z-50 h-full w-full overflow-visible">
                   {/* x2/y2/cx/cy start at the mousedown position (this
@@ -1630,7 +1678,8 @@ export function GanttChartView({
               )}
             </div>
           </div>
-        </div>
+          </div>
+        </>
       )}
 
       <Modal

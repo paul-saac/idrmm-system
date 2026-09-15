@@ -84,7 +84,10 @@ type MainTab = (typeof MAIN_TABS)[number]["value"];
 const SUB_TABS = [
   { value: "overview", label: "Project Overview" },
   { value: "cost-estimate", label: "Cost Estimate" },
-  { value: "schedule", label: "Schedule" },
+  // Value stays "schedule" (used in the ?subtab= URL param and this
+  // tab's own state) — only the visible label changes, to match what
+  // this tab actually shows: a Gantt chart, not a plain schedule list.
+  { value: "schedule", label: "Gantt Chart" },
 ] as const;
 type SubTab = (typeof SUB_TABS)[number]["value"];
 
@@ -597,6 +600,7 @@ export function ProjectDetailView({
                 categories={costEstimate.categories}
                 progress={progress}
                 projectStartDate={project.startDate}
+                toolbarSlot={toolbarSlotEl}
               />
             ) : (
               <div className="flex flex-col gap-4">
