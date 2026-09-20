@@ -140,6 +140,7 @@ export interface Database {
           predecessor_task_id: number | null;
           is_milestone: boolean;
           priority: string;
+          percent_complete: number;
         };
         Insert: {
           // See estimate_categories.Insert's own comment on `id` above —
@@ -161,6 +162,7 @@ export interface Database {
           predecessor_task_id?: number | null;
           is_milestone?: boolean;
           priority?: string;
+          percent_complete?: number;
         };
         Update: {
           category_id?: number;
@@ -178,6 +180,7 @@ export interface Database {
           predecessor_task_id?: number | null;
           is_milestone?: boolean;
           priority?: string;
+          percent_complete?: number;
         };
         Relationships: [];
       };
@@ -271,6 +274,49 @@ export interface Database {
           project_id: number;
           snapshot: unknown;
           created_by?: string | null;
+        };
+        Update: never;
+        Relationships: [];
+      };
+      workers: {
+        // The Gantt Chart's own "Manpower" roster (its own toolbar
+        // button, next to Undo/Redo) — real named people currently or
+        // soon working on one project, for task-level accountability.
+        // Deliberately separate from estimate_task_labor_assignments'
+        // role+headcount tally (a cost-estimation input, not this).
+        Row: {
+          id: number;
+          project_id: number;
+          full_name: string;
+          trade: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          project_id: number;
+          full_name: string;
+          trade?: string | null;
+          created_by?: string | null;
+        };
+        Update: {
+          full_name?: string;
+          trade?: string | null;
+        };
+        Relationships: [];
+      };
+      task_worker_assignments: {
+        // Many-to-many: a task can have several workers, a worker can
+        // appear on several tasks. Powers the Gantt task list's own
+        // "Assigned" column.
+        Row: {
+          id: number;
+          task_id: number;
+          worker_id: number;
+          created_at: string;
+        };
+        Insert: {
+          task_id: number;
+          worker_id: number;
         };
         Update: never;
         Relationships: [];

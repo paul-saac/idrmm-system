@@ -831,6 +831,89 @@ export async function updateTaskSchedule(
 }
 
 /**
+ * The Gantt Chart's own inline Priority cell — a dropdown, not a form,
+ * so this is called directly (same pattern as updateTaskSchedule above)
+ * rather than through useActionState. `priority` comes from a <select>
+ * already limited to VALID_PRIORITIES client-side, but re-checked here
+ * regardless since the submitted value still ultimately comes from the
+ * client.
+ */
+export async function updateTaskPriority(
+  taskId: number,
+  projectId: number,
+  priority: string
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    if (!(VALID_PRIORITIES as readonly string[]).includes(priority)) {
+      return { error: "Invalid priority." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({ priority })
+      .eq("id", taskId);
+
+    if (error) {
+      logSupabaseError("[updateTaskPriority] Supabase update failed", error);
+      return { error: "Could not save the new priority. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * The Gantt Chart's own inline Percent Complete cell — same direct-call
+ * pattern as updateTaskPriority above. Deliberately independent of
+ * lib/progress/data.ts's own ProjectProgress (still derived from
+ * approved Daily Log work items, for the separate Progress Overview
+ * tab) — this is estimate_tasks.percent_complete, a plain directly-
+ * editable field the Gantt Chart owns entirely on its own, per an
+ * explicit request to keep the two systems unconnected.
+ */
+export async function updateTaskPercentComplete(
+  taskId: number,
+  projectId: number,
+  percentComplete: number
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    if (
+      !Number.isFinite(percentComplete) ||
+      percentComplete < 0 ||
+      percentComplete > 100
+    ) {
+      return { error: "Percent complete must be between 0 and 100." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({ percent_complete: Math.round(percentComplete) })
+      .eq("id", taskId);
+
+    if (error) {
+      logSupabaseError("[updateTaskPercentComplete] Supabase update failed", error);
+      return { error: "Could not save the new percent complete. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
  * The actual validate-and-write behind setPredecessor below, split out so
  * updateSubtask (further down) can reuse it directly instead of calling
  * the exported setPredecessor action — which would otherwise record its

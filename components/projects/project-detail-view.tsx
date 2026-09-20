@@ -72,6 +72,7 @@ import type { CostEstimate } from "@/lib/cost-estimate/data";
 import type { ProjectProgress } from "@/lib/progress/data";
 import type { DelayRiskAssessment } from "@/lib/forecasting/data";
 import type { DailyLogSummary, SurveyQuestion } from "@/lib/daily-logs/data";
+import type { Worker, TaskWorkerAssignments } from "@/lib/workers/data";
 
 const MAIN_TABS = [
   { value: "overview", label: "Overview" },
@@ -266,6 +267,8 @@ export function ProjectDetailView({
   projectEquipmentAssignments,
   ganttCanUndo,
   ganttCanRedo,
+  workers,
+  taskWorkerAssignments,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
@@ -301,6 +304,11 @@ export function ProjectDetailView({
    * fetched alongside costEstimate/progress in page.tsx. */
   ganttCanUndo: boolean;
   ganttCanRedo: boolean;
+  /** The project's own Manpower roster + each task's current
+   * assignments from it — see lib/workers/data.ts, fetched alongside
+   * costEstimate/progress in page.tsx. */
+  workers: Worker[];
+  taskWorkerAssignments: TaskWorkerAssignments;
 }) {
   // Reading the initial tab/sub-tab from the URL lets a link *into* this
   // page (e.g. a Daily Log detail page's back button) land on the exact
@@ -693,11 +701,12 @@ export function ProjectDetailView({
             <GanttChartView
               projectId={project.id}
               categories={costEstimate.categories}
-              progress={progress}
               projectStartDate={project.startDate}
               projectTargetEndDate={project.targetEndDate}
               canUndo={ganttCanUndo}
               canRedo={ganttCanRedo}
+              workers={workers}
+              taskWorkerAssignments={taskWorkerAssignments}
             />
           </div>
         )}

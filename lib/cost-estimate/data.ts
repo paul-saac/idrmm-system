@@ -67,6 +67,15 @@ export type CostTask = {
    * is a cost-distribution % used throughout the EVM/progress
    * calculations, not a priority level. */
   priority: TaskPriority;
+  /** 0-100, directly user-editable from the Gantt Chart's own task list
+   * (see 0039_estimate_task_percent_complete.sql) — deliberately
+   * independent of lib/progress/data.ts's own ProjectProgress (still
+   * derived from approved Daily Log work items, for the separate
+   * Progress Overview tab), per an explicit request to keep the Gantt
+   * Chart's own progress tracking self-contained. A phase's own percent
+   * complete is never stored — always a plain average of its tasks'
+   * own percentComplete, computed in gantt-chart-view.tsx itself. */
+  percentComplete: number;
   materialAssignments: TaskMaterialAssignment[];
   laborAssignments: TaskLaborAssignment[];
 };
@@ -242,6 +251,7 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       predecessorTaskId: row.predecessor_task_id,
       isMilestone: row.is_milestone ?? false,
       priority: toTaskPriority(row.priority),
+      percentComplete: Math.min(100, Math.max(0, row.percent_complete ?? 0)),
       materialAssignments: materialAssignmentsByTask.get(row.id) ?? [],
       laborAssignments: laborAssignmentsByTask.get(row.id) ?? [],
     };

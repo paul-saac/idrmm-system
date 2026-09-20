@@ -273,7 +273,8 @@ input[type="date"][data-empty="true"] {
 .gantt-task-react-root input[type="date"][data-cell-active="true"]::-webkit-calendar-picker-indicator {
   opacity: 1;
 }
-.gantt-task-react-root input[type="date"][data-cell-active="true"] {
+.gantt-task-react-root input[type="date"][data-cell-active="true"],
+.gantt-task-react-root select[data-cell-active="true"] {
   background-color: #fff;
   outline: 1px solid var(--color-zinc-400);
   outline-offset: -2px;

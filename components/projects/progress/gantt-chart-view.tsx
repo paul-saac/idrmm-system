@@ -5,16 +5,23 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
-import { ChevronDown, ChevronRight, Plus, Redo2, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronRight, HardHat, Plus, Redo2, Undo2 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { AddPhaseForm } from "@/components/projects/progress/add-phase-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
-import { updateTaskSchedule, setPredecessor } from "@/lib/cost-estimate/actions";
+import { ManpowerModalContent } from "@/components/projects/progress/manpower-modal-content";
+import { AssignWorkersModalContent } from "@/components/projects/progress/assign-workers-modal-content";
+import {
+  updateTaskSchedule,
+  updateTaskPriority,
+  updateTaskPercentComplete,
+  setPredecessor,
+} from "@/lib/cost-estimate/actions";
 import { undoGanttAction, redoGanttAction } from "@/lib/cost-estimate/undo-redo-actions";
 import type { CostCategory, CostTask } from "@/lib/cost-estimate/data";
-import type { ProjectProgress } from "@/lib/progress/data";
+import type { Worker, TaskWorkerAssignments } from "@/lib/workers/data";
 
 function toDate(iso: string) {
   return new Date(`${iso}T00:00:00`);
@@ -142,7 +149,15 @@ function estimateColumnCount(view: TimelineView, min: Date, max: Date) {
 // state change is just a normal React re-render of our own lightweight
 // table, not something that forces the whole chart to re-init. No
 // guide-line-then-snap-on-release needed — every column resizes live.
-const RESIZABLE_COLUMN_IDS = ["text", "start", "end", "duration", "priority"] as const;
+const RESIZABLE_COLUMN_IDS = [
+  "text",
+  "start",
+  "end",
+  "duration",
+  "priority",
+  "assigned",
+  "percentComplete",
+] as const;
 type ResizableColumnId = (typeof RESIZABLE_COLUMN_IDS)[number];
 
 // Start/end are wider than a plain date label needs — the native
@@ -151,22 +166,44 @@ type ResizableColumnId = (typeof RESIZABLE_COLUMN_IDS)[number];
 // plus the calendar-icon affordance than static text like "Jan 5" did.
 // text is wider than a name alone needs, too — its own add/edit buttons
 // (moved into this cell, see CustomTaskListTable) now share the space
-// with the name, not a separate Actions column.
+// with the name, not a separate Actions column. assigned is wider than
+// priority/duration since it holds one or more worker names, not a
+// single short word.
+// duration/priority/assigned/percentComplete measured directly (canvas
+// measureText, this app's own real font/cell padding) against their
+// own widest realistic content — Days' own 3-digit values, "Medium"
+// (Priority's widest option), the Assign button's own placeholder text,
+// and the "Percent Complete" header label itself (longer than any
+// value it'll ever hold) — each with a little padding on top, not
+// shaved to the exact pixel, so text never touches the column's own
+// border.
 const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   text: 220,
   start: 108,
   end: 108,
-  duration: 60,
-  priority: 84,
+  duration: 46,
+  priority: 80,
+  assigned: 78,
+  percentComplete: 122,
 };
 
 const MIN_COLUMN_WIDTH: Record<ResizableColumnId, number> = {
   text: 140,
   start: 84,
   end: 84,
-  duration: 40,
-  priority: 64,
+  duration: 38,
+  priority: 68,
+  assigned: 58,
+  percentComplete: 90,
 };
+
+// How far the whole task-list panel's own outer-edge handle can curtain
+// it down to — see visiblePanelWidth's own doc comment. Deliberately
+// much smaller than any single MIN_COLUMN_WIDTH above: those bound an
+// individual column's own real width, this bounds how much of the
+// panel can be covered/hidden, which is meant to be able to go quite
+// far (just enough left to still see and re-grab the handle itself).
+const MIN_PANEL_WIDTH = 40;
 
 const COLUMN_LABEL: Record<ResizableColumnId, string> = {
   text: "Task",
@@ -174,12 +211,29 @@ const COLUMN_LABEL: Record<ResizableColumnId, string> = {
   end: "End",
   duration: "Days",
   priority: "Priority",
+  assigned: "Assigned",
+  percentComplete: "Percent Complete",
 };
 
 const RIGHT_ALIGNED_COLUMNS = new Set<ResizableColumnId>(["duration"]);
 
 const ROW_HEIGHT = 34;
 const HEADER_HEIGHT = 44;
+// Pixel equivalent of the chart wrapper's own `h-220` Tailwind class
+// below (220 * 0.25rem = 55rem, at this app's own 90%-of-16px root
+// font-size = 55 * 14.4). Used only to compute how many *real* rows
+// (see fillerTasks below) it takes to fill that fixed box — keep these
+// two in sync if `h-220` ever changes.
+const CHART_BOX_HEIGHT_PX = 792;
+// A row id prefix reserved for fillerTasks below — never a real
+// category/task id (those are always plain numbers stringified), so
+// `taskById`/`categoryById` lookups naturally miss for one and every
+// piece of this file that keys off "is this a real row" (the edit
+// button, the date inputs, drag persistence) already falls back to its
+// inert case for free, with no separate "is this a filler" branching
+// needed anywhere except the two spots that render unconditionally
+// regardless of whether a real task was found — see CustomTaskListTable.
+const FILLER_ROW_ID_PREFIX = "filler-";
 // gantt-task-react's own taskHeight = rowHeight * barFill / 100 (barFill
 // defaults to 60, not overridden by this app's own <Gantt> below) —
 // needed to place a milestone's connector handles on its actual
@@ -521,15 +575,19 @@ function usePendingScheduleOverrides(categories: CostCategory[]) {
 export function GanttChartView({
   projectId,
   categories,
-  progress,
   projectStartDate,
   projectTargetEndDate,
   canUndo,
   canRedo,
+  workers,
+  taskWorkerAssignments,
 }: {
   projectId: number;
+  /** Each task's own percentComplete (see CostTask's own doc comment)
+   * is the sole source of progress here — deliberately not fed by
+   * lib/progress/data.ts's own ProjectProgress (still used elsewhere,
+   * e.g. the Progress Overview tab, entirely unrelated to this view). */
   categories: CostCategory[];
-  progress: ProjectProgress;
   projectStartDate: string | null;
   /** Bounds a task's own typed Start/End edits below — a date outside
    * this window reverts instead of saving (see handleTaskDateEdit). */
@@ -540,6 +598,12 @@ export function GanttChartView({
    * mutation already triggers, no separate polling needed. */
   canUndo: boolean;
   canRedo: boolean;
+  /** The project's own Manpower roster and each task's current
+   * assignments from it — see lib/workers/data.ts. Fetched alongside
+   * categories/progress, same revalidatePath-driven refresh as
+   * everything else here. */
+  workers: Worker[];
+  taskWorkerAssignments: TaskWorkerAssignments;
 }) {
   const router = useRouter();
   // Month is the default (and, for now, only — the Day/Week/Month/Year
@@ -559,6 +623,11 @@ export function GanttChartView({
     | { mode: "edit"; task: CostTask }
     | null
   >(null);
+  const [manpowerModalOpen, setManpowerModalOpen] = useState(false);
+  const [assignWorkersModal, setAssignWorkersModal] = useState<{
+    taskId: number;
+    taskName: string;
+  } | null>(null);
   const [collapsedPhaseIds, setCollapsedPhaseIds] = useState<Set<string>>(
     new Set()
   );
@@ -637,29 +706,31 @@ export function GanttChartView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUndo, canRedo, isUndoRedoPending, categoryModal, taskModal]);
 
-  // Which phase row's Start/End cell currently has its "why can't I
-  // edit this" info bubble open — a phase's date input is inert
-  // (pointer-events-none, see CustomTaskListTable), so this is driven
-  // by a click on the *cell* wrapping it instead of the input itself.
-  // top/left are the clicked cell's own getBoundingClientRect(), taken
-  // once at click time — the bubble itself is portaled straight to
-  // <body> and positioned from these instead of living in-flow inside
-  // the task list panel, since that panel's own horizontal scroll
-  // clipping was cutting the bubble off the moment it grew wider than
-  // the panel (confirmed directly: the text was cut off mid-word).
-  const [dateInfoTooltip, setDateInfoTooltip] = useState<{
+  // Which phase row's Start/End/Percent Complete cell currently has its
+  // "why can't I edit this" info bubble open — a phase's date input is
+  // inert (pointer-events-none, see CustomTaskListTable) and its
+  // Percent Complete cell isn't an input at all, just computed text, so
+  // this is driven by a click on the *cell* wrapping it instead of the
+  // input itself. top/left are the clicked cell's own
+  // getBoundingClientRect(), taken once at click time — the bubble
+  // itself is portaled straight to <body> and positioned from these
+  // instead of living in-flow inside the task list panel, since that
+  // panel's own horizontal scroll clipping was cutting the bubble off
+  // the moment it grew wider than the panel (confirmed directly: the
+  // text was cut off mid-word).
+  const [cellInfoTooltip, setCellInfoTooltip] = useState<{
     rowId: string;
-    field: "start" | "end";
+    field: "start" | "end" | "percentComplete";
     top: number;
     left: number;
   } | null>(null);
 
   useEffect(() => {
-    if (!dateInfoTooltip) return;
+    if (!cellInfoTooltip) return;
     function handleOutsideClick(e: MouseEvent) {
       const target = e.target as HTMLElement;
-      if (!target.closest("[data-phase-date-cell]")) {
-        setDateInfoTooltip(null);
+      if (!target.closest("[data-phase-info-cell]")) {
+        setCellInfoTooltip(null);
       }
     }
     // Dismiss rather than drift out of place — a portaled, fixed-
@@ -667,7 +738,7 @@ export function GanttChartView({
     // can't follow the cell live the way an in-flow tooltip would if
     // the chart (or the page) scrolls while it's open.
     function handleScroll() {
-      setDateInfoTooltip(null);
+      setCellInfoTooltip(null);
     }
     document.addEventListener("mousedown", handleOutsideClick);
     window.addEventListener("scroll", handleScroll, true);
@@ -675,7 +746,7 @@ export function GanttChartView({
       document.removeEventListener("mousedown", handleOutsideClick);
       window.removeEventListener("scroll", handleScroll, true);
     };
-  }, [dateInfoTooltip]);
+  }, [cellInfoTooltip]);
   // A task row's own Start/End cell's "focused" look (white background +
   // border, plus the calendar icon itself — see its own opacity rule in
   // globals.css) is driven by a plain `data-cell-active` DOM attribute,
@@ -720,23 +791,26 @@ export function GanttChartView({
   // empty `listCellWidth` hides it entirely (not a boolean prop).
   const showTaskList = true;
 
-  const percentCompleteByTaskId = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const category of progress.categories) {
-      for (const task of category.tasks) {
-        map.set(task.id, task.percentComplete);
-      }
-    }
-    return map;
-  }, [progress]);
-
+  // A phase's own percent complete is never stored — just a plain,
+  // unweighted average of its own tasks' percentComplete (each directly
+  // user-editable, see CostTask's own doc comment). Empty of tasks
+  // (a fresh phase with nothing added yet) reads as 0, same as any
+  // other rollup here with nothing to roll up.
   const percentCompleteByCategoryId = useMemo(() => {
     const map = new Map<number, number>();
-    for (const category of progress.categories) {
-      map.set(category.id, category.percentComplete);
+    for (const category of categories) {
+      if (category.tasks.length === 0) {
+        map.set(category.id, 0);
+        continue;
+      }
+      const sum = category.tasks.reduce(
+        (total, task) => total + task.percentComplete,
+        0
+      );
+      map.set(category.id, Math.round(sum / category.tasks.length));
     }
     return map;
-  }, [progress]);
+  }, [categories]);
 
   const fallbackStart = projectStartDate ? toDate(projectStartDate) : new Date();
   const fallbackEnd = new Date(fallbackStart.getTime() + 7 * 86_400_000);
@@ -770,6 +844,14 @@ export function GanttChartView({
     }
     return map;
   }, [categories]);
+
+  const workerById = useMemo(() => {
+    const map = new Map<number, Worker>();
+    for (const worker of workers) {
+      map.set(worker.id, worker);
+    }
+    return map;
+  }, [workers]);
 
   // Double-click a bar (phase or task) to see/edit its full details —
   // same modal the row's own edit button already opens, just reachable
@@ -823,7 +905,7 @@ export function GanttChartView({
           name: task.name,
           start: task.isMilestone ? milestoneDate : childDates[i].start,
           end: task.isMilestone ? milestoneDate : childDates[i].end,
-          progress: percentCompleteByTaskId.get(task.id) ?? 0,
+          progress: task.percentComplete,
           project: phaseRowId(category.id),
           dependencies: task.predecessorTaskId
             ? [String(task.predecessorTaskId)]
@@ -833,12 +915,7 @@ export function GanttChartView({
     }
     return result;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    categories,
-    percentCompleteByCategoryId,
-    percentCompleteByTaskId,
-    collapsedPhaseIds,
-  ]);
+  }, [categories, percentCompleteByCategoryId, collapsedPhaseIds]);
 
   const [pendingScheduleOverrides, setScheduleOverride, clearScheduleOverride] =
     usePendingScheduleOverrides(categories);
@@ -872,6 +949,27 @@ export function GanttChartView({
   const totalColumnsWidth = RESIZABLE_COLUMN_IDS.reduce(
     (sum, id) => sum + columnWidths[id],
     0
+  );
+
+  // The task-list panel's own *visible* width — separate from
+  // totalColumnsWidth (each column's own natural, individually-resized
+  // width, unchanged by this). null means "fully visible" (the common
+  // case). When set, it's always <= totalColumnsWidth: dragging the
+  // panel's own outer-edge handle (see handlePanelResizeMouseDown)
+  // narrows this without touching any individual column's own width —
+  // the columns keep rendering at their full natural size inside an
+  // outer wrapper clipped to this width (overflow-hidden), so shrinking
+  // it reads as covering the task list like a curtain/blanket and
+  // revealing more of the chart underneath, not reshaping the columns
+  // themselves. Confirmed directly this is what was wanted after a
+  // first version that scaled every column's own width proportionally
+  // instead — that wasn't it.
+  const [panelWidthOverride, setPanelWidthOverride] = useState<number | null>(
+    null
+  );
+  const visiblePanelWidth = Math.min(
+    panelWidthOverride ?? totalColumnsWidth,
+    totalColumnsWidth
   );
 
   // Earliest start / latest end across every rendered row (phase and
@@ -945,7 +1043,7 @@ export function GanttChartView({
     const base = BASE_COLUMN_WIDTH[view];
     if (!timelineExtent || containerWidth === 0) return base;
     const chartAreaWidth =
-      containerWidth - (showTaskList ? totalColumnsWidth : 0);
+      containerWidth - (showTaskList ? visiblePanelWidth : 0);
     if (chartAreaWidth <= 0) return base;
     const unitCount = estimateColumnCount(
       view,
@@ -953,7 +1051,7 @@ export function GanttChartView({
       timelineExtent.max
     );
     return Math.max(base, Math.floor(chartAreaWidth / unitCount));
-  }, [view, containerWidth, timelineExtent, showTaskList, totalColumnsWidth]);
+  }, [view, containerWidth, timelineExtent, showTaskList, visiblePanelWidth]);
 
   // Mirrors gantt-task-react's own removeHiddenTasks: a collapsed
   // phase's own row still counts toward row height/index (it's still
@@ -979,7 +1077,7 @@ export function GanttChartView({
     if (visibleTasks.length === 0) return [];
     const [rangeStart, rangeEnd] = computeChartDateRange(visibleTasks, view);
     const dates = seedGanttDates(rangeStart, rangeEnd, view);
-    const xOffset = showTaskList ? totalColumnsWidth : 0;
+    const xOffset = showTaskList ? visiblePanelWidth : 0;
 
     const positions: BarPosition[] = [];
     visibleTasks.forEach((row, index) => {
@@ -1018,7 +1116,86 @@ export function GanttChartView({
       });
     });
     return positions;
-  }, [visibleTasks, view, effectiveColumnWidth, showTaskList, totalColumnsWidth, taskById]);
+  }, [visibleTasks, view, effectiveColumnWidth, showTaskList, visiblePanelWidth, taskById]);
+
+  // Padding rows so a short project's chart still reads as "full" all
+  // the way to the bottom of the fixed CHART_BOX_HEIGHT_PX box, instead
+  // of just the real rows followed by blank space. Deliberately *real*
+  // gantt-task-react rows (not a CSS overlay simulating them — tried
+  // first, abandoned: faking the library's own zebra striping/gridlines/
+  // scrollbar position with background-image layers and a min-height
+  // hack fought the library instead of using it, and never quite got
+  // the horizontal scrollbar's position right). Each one:
+  //  - is `isDisabled` (gantt-task-react's own flag — confirmed directly
+  //    in the compiled bundle this turns off drag/resize/progress-change
+  //    for that row entirely, so it can never be dragged into persisting
+  //    a bogus schedule), and
+  //  - has `styles` with every color set to transparent, so its native
+  //    bar never actually paints anything, while the row itself (and
+  //    the chart's own real gridlines/zebra shading, drawn against the
+  //    real total row count) still renders normally.
+  // `type: "milestone"` rather than "task" — a milestone's own footprint
+  // is a small fixed-size diamond, not a bar spanning a date range, so
+  // there's less of it for a stray hover to land on even though it's
+  // invisible either way. Its id is never a real category/task id (see
+  // FILLER_ROW_ID_PREFIX's own doc comment), so every lookup keyed off
+  // a real id (taskById, categoryById) already treats it as inert
+  // without any separate "is this a filler row" branching — except the
+  // two spots in CustomTaskListTable that render unconditionally
+  // regardless of whether a real task was found (the Start/End date
+  // inputs, the Duration cell), which do check for it directly.
+  //
+  // Deliberately positioned here, after barPositions rather than right
+  // next to visibleTasks (which it reads from) — the React Compiler
+  // failed to preserve effectiveTasks' own memoization with it placed
+  // any earlier, confirmed directly by bisecting hook position (the
+  // exact same hazard usePendingScheduleOverrides' own doc comment
+  // describes for the same reason).
+  const fillerTaskCount = Math.max(
+    0,
+    Math.ceil((CHART_BOX_HEIGHT_PX - HEADER_HEIGHT) / ROW_HEIGHT) -
+      visibleTasks.length
+  );
+  // A fresh local date, deliberately *not* reusing fallbackStart (the
+  // same "projectStartDate, else new Date()" fallback the tasks/
+  // effectiveTasks memos above already use) — confirmed directly that
+  // referencing that shared variable again here, even read-only, was
+  // what broke the React Compiler's ability to preserve
+  // effectiveTasks' own memoization a few lines up (bisected down to
+  // this exact line): a second downstream consumer of a value an
+  // earlier memo already depends on (with its own deliberate
+  // exhaustive-deps omission) is apparently more than its static
+  // analysis can reconcile, even though nothing here writes to it.
+  // Must still fall within the project's real date span (not an
+  // arbitrary fixed date) — gantt-task-react computes its own visible
+  // date range from every task it's given, filler rows included, so a
+  // wildly different date would stretch the chart's own axis out to
+  // include it.
+  const fillerDate = projectStartDate ? toDate(projectStartDate) : new Date();
+  const fillerTasks: GanttTask[] = Array.from(
+    { length: fillerTaskCount },
+    (_, i) => ({
+      id: `${FILLER_ROW_ID_PREFIX}${i}`,
+      type: "milestone",
+      name: "",
+      start: fillerDate,
+      end: fillerDate,
+      progress: 0,
+      isDisabled: true,
+      styles: {
+        backgroundColor: "transparent",
+        backgroundSelectedColor: "transparent",
+        progressColor: "transparent",
+        progressSelectedColor: "transparent",
+      },
+    })
+  );
+  // What actually gets handed to <Gantt> — real rows first, so filler
+  // rows always sort after every real one. Kept separate from
+  // effectiveTasks/visibleTasks (used everywhere else: barPositions,
+  // connector hit-testing, the chart's own date-range calculation) so
+  // none of that ever has to know filler rows exist.
+  const chartTasks = [...effectiveTasks, ...fillerTasks];
 
   // Only the bar currently under the cursor shows its handles — see
   // handleChartMouseMove below. A plain hit-test against the same
@@ -1277,6 +1454,39 @@ export function GanttChartView({
     };
   }
 
+  // Hand-built drag-to-resize for the whole task-list panel's own outer
+  // right edge — separate from handleResizeMouseDown above (that one
+  // resizes a single column's own real width). Dragging this only ever
+  // changes visiblePanelWidth — every column keeps its own real,
+  // individually-set width the whole time, so narrowing this handle
+  // reads as covering the task list like a curtain sliding over it
+  // (the outer overflow-hidden wrapper clips whatever no longer fits)
+  // rather than reshaping the columns to fit a narrower panel — a first
+  // version scaled every column's own width proportionally instead,
+  // confirmed directly that wasn't what was wanted. Same global
+  // mousemove/mouseup pattern as every other drag in this file.
+  function handlePanelResizeMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startWidth = visiblePanelWidth;
+
+    function onMove(ev: MouseEvent) {
+      const delta = ev.clientX - startX;
+      const next = Math.min(
+        totalColumnsWidth,
+        Math.max(MIN_PANEL_WIDTH, startWidth + delta)
+      );
+      setPanelWidthOverride(next);
+    }
+    function onUp() {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
   // Shared by both the drag-to-move/resize handler below and the
   // inline Start/End date inputs in the task list — same server action,
   // same error surfacing, same post-success refresh.
@@ -1305,6 +1515,12 @@ export function GanttChartView({
 
   async function persistDrag(task: GanttTask): Promise<boolean> {
     if (task.type === "project") return false; // cheap insurance — see doc comment; project rows never reach here in practice
+    // fillerTasks are isDisabled (gantt-task-react itself already
+    // refuses to drag one, confirmed directly in the compiled bundle),
+    // so this is defense in depth, not something expected to ever
+    // actually trigger — taskById only has real task ids, so it misses
+    // for a filler row's own id.
+    if (!taskById.has(task.id)) return false;
     // A milestone only moves (no resize handles on a zero-duration
     // diamond), so task.start/task.end are still equal after a drag —
     // both get persisted as the same planned_start_date/planned_end_date.
@@ -1357,6 +1573,56 @@ export function GanttChartView({
     persistTaskDates(Number(row.id), startIso, endIso);
   }
 
+  // Same direct-call pattern as persistTaskDates above — the Priority
+  // cell is a plain <select>, not a form, so there's no useActionState
+  // to hang this off of. No optimistic override needed the way a drag
+  // needs one (see usePendingScheduleOverrides' own doc comment): a
+  // <select> already shows the newly-picked option immediately on its
+  // own, well before this round trip even starts, so there's nothing
+  // to visually paper over while it's in flight.
+  async function handleTaskPriorityEdit(taskId: number, priority: string) {
+    setScheduleError(null);
+    const result = await updateTaskPriority(taskId, projectId, priority);
+    if (result.error) {
+      setScheduleError(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
+  // Unlike the Priority <select> (whose onChange already fires once per
+  // discrete pick), a plain number input fires onChange on every
+  // keystroke — saving after every digit typed would mean a server
+  // round trip mid-type. Committed on blur instead (see its own
+  // onBlur below), same "snap back on rejection" pattern
+  // handleTaskDateEdit already uses for an out-of-range date:
+  // inputEl.value is set back to previousValue directly, since the
+  // input is uncontrolled.
+  async function handleTaskPercentCompleteEdit(
+    taskId: number,
+    value: string,
+    inputEl: HTMLInputElement,
+    previousValue: number
+  ) {
+    const parsed = Number(value);
+    if (value.trim() === "" || !Number.isFinite(parsed)) {
+      inputEl.value = String(previousValue);
+      return;
+    }
+    const clamped = Math.min(100, Math.max(0, Math.round(parsed)));
+    inputEl.value = String(clamped);
+    if (clamped === previousValue) return;
+
+    setScheduleError(null);
+    const result = await updateTaskPercentComplete(taskId, projectId, clamped);
+    if (result.error) {
+      setScheduleError(result.error);
+      inputEl.value = String(previousValue);
+      return;
+    }
+    router.refresh();
+  }
+
   // A resizable column header cell + its drag handle at the right edge.
   function HeaderCell({ id }: { id: ResizableColumnId }) {
     return (
@@ -1385,38 +1651,48 @@ export function GanttChartView({
 
   function CustomTaskListHeader() {
     return (
+      // Outer wrapper is the *visible* (possibly curtain-narrowed)
+      // width, overflow-hidden — see visiblePanelWidth's own doc
+      // comment above. The inner div underneath keeps every column at
+      // its own real, individually-resized width regardless; narrowing
+      // the outer one just clips it, it never reshapes the columns.
       <div
-        style={{ height: HEADER_HEIGHT, width: totalColumnsWidth }}
-        className="flex items-center border-r border-b border-zinc-200 bg-zinc-50"
+        style={{ height: HEADER_HEIGHT, width: visiblePanelWidth }}
+        className="overflow-hidden border-r border-b border-zinc-200 bg-zinc-50"
       >
-        {RESIZABLE_COLUMN_IDS.map((id) =>
-          id === "text" ? (
-            <div
-              key={id}
-              className="relative flex h-full shrink-0 items-center justify-between gap-1 px-2 text-xs font-medium text-zinc-700"
-              style={{ width: columnWidths[id] }}
-            >
-              <span>{COLUMN_LABEL[id]}</span>
-              <button
-                type="button"
-                onClick={() => setCategoryModal({ mode: "add" })}
-                aria-label="Add task"
-                title="Add task"
-                className="shrink-0 cursor-pointer rounded p-0.5 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
-              >
-                <Plus className="size-3.5" />
-              </button>
+        <div
+          style={{ width: totalColumnsWidth }}
+          className="flex h-full items-center"
+        >
+          {RESIZABLE_COLUMN_IDS.map((id) =>
+            id === "text" ? (
               <div
-                onMouseDown={handleResizeMouseDown(id)}
-                className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize"
+                key={id}
+                className="relative flex h-full shrink-0 items-center justify-between gap-1 px-2 text-xs font-medium text-zinc-700"
+                style={{ width: columnWidths[id] }}
               >
-                <div className="ml-auto h-full w-px bg-zinc-200" />
+                <span>{COLUMN_LABEL[id]}</span>
+                <button
+                  type="button"
+                  onClick={() => setCategoryModal({ mode: "add" })}
+                  aria-label="Add task"
+                  title="Add task"
+                  className="shrink-0 cursor-pointer rounded p-0.5 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+                <div
+                  onMouseDown={handleResizeMouseDown(id)}
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize"
+                >
+                  <div className="ml-auto h-full w-px bg-zinc-200" />
+                </div>
               </div>
-            </div>
-          ) : (
-            <HeaderCell key={id} id={id} />
-          )
-        )}
+            ) : (
+              <HeaderCell key={id} id={id} />
+            )
+          )}
+        </div>
       </div>
     );
   }
@@ -1432,9 +1708,39 @@ export function GanttChartView({
     onExpanderClick: (task: GanttTask) => void;
   }) {
     return (
-      <div style={{ width: totalColumnsWidth }} className="border-r border-zinc-200">
+      // Same outer-clip / inner-natural-width split as
+      // CustomTaskListHeader above — see visiblePanelWidth's own doc
+      // comment.
+      <div
+        style={{ width: visiblePanelWidth }}
+        className="overflow-hidden border-r border-zinc-200"
+        // gantt-task-react's own outermost wrapper (an ancestor of
+        // everything TaskListTable renders, confirmed directly by
+        // reading the compiled bundle) has its own onKeyDown that
+        // calls event.preventDefault() unconditionally, for every key,
+        // to drive its own arrow-key grid-scrolling — including a
+        // plain digit typed into one of this table's own inputs, since
+        // React's synthetic events still bubble up to it regardless of
+        // real DOM nesting. That blocks the browser's own default
+        // "insert this character" action, so typing into a focused
+        // input here silently does nothing. Confirmed directly this
+        // isn't new to the Percent Complete input either — the
+        // existing Start/End date inputs have the exact same problem,
+        // just never noticed before now since picking a date via the
+        // native calendar popup (a separate, page-JS-independent UI
+        // layer) was always how those got used in practice, not typing
+        // digits into their segments directly.
+        // stopPropagation here, once, on every keydown from anywhere
+        // in this table, is the actual fix — it never reaches gantt-
+        // task-react's own listener at all, for this input or any
+        // future one added here, rather than requiring every
+        // individual input to remember its own workaround.
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+      <div style={{ width: totalColumnsWidth }}>
         {rows.map((row) => {
           const isProject = row.type === "project";
+          const isFiller = row.id.startsWith(FILLER_ROW_ID_PREFIX);
           const category = isProject ? categoryById.get(row.id) : undefined;
           const task = !isProject ? taskById.get(row.id) : undefined;
           const days = daysBetween(row.start, row.end);
@@ -1453,7 +1759,7 @@ export function GanttChartView({
               }`}
             >
               <div
-                className="flex h-full shrink-0 items-center gap-1 px-2 text-zinc-800"
+                className="flex h-full shrink-0 items-center gap-1 border-r border-zinc-200 px-2 text-zinc-800"
                 style={{ width: columnWidths.text }}
               >
                 {isProject && (
@@ -1543,14 +1849,14 @@ export function GanttChartView({
                 )}
               </div>
               <div
-                className="relative flex h-full shrink-0 items-center"
+                className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
                 style={{ width: columnWidths.start }}
-                data-phase-date-cell={isProject ? true : undefined}
+                data-phase-info-cell={isProject ? true : undefined}
                 onClick={
                   isProject
                     ? (e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
-                        setDateInfoTooltip((current) =>
+                        setCellInfoTooltip((current) =>
                           current?.rowId === row.id && current.field === "start"
                             ? null
                             : {
@@ -1584,7 +1890,7 @@ export function GanttChartView({
                     aria-label={`${row.name} start date`}
                     className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
                   />
-                ) : (
+                ) : isFiller ? null : (
                   <input
                     // Forces a remount (and so a freshly-evaluated
                     // defaultValue) whenever the underlying date actually
@@ -1611,14 +1917,14 @@ export function GanttChartView({
                     className="h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light hover:bg-zinc-100"
                   />
                 )}
-                {dateInfoTooltip?.rowId === row.id &&
-                  dateInfoTooltip.field === "start" &&
+                {cellInfoTooltip?.rowId === row.id &&
+                  cellInfoTooltip.field === "start" &&
                   createPortal(
                     <div
                       role="tooltip"
                       style={{
-                        top: dateInfoTooltip.top + 8,
-                        left: dateInfoTooltip.left,
+                        top: cellInfoTooltip.top + 8,
+                        left: cellInfoTooltip.left,
                       }}
                       className="fixed z-50 rounded bg-zinc-900 px-4 py-2 text-[11px] font-medium whitespace-nowrap text-white uppercase shadow-lg"
                     >
@@ -1636,14 +1942,14 @@ export function GanttChartView({
                   )}
               </div>
               <div
-                className="relative flex h-full shrink-0 items-center"
+                className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
                 style={{ width: columnWidths.end }}
-                data-phase-date-cell={isProject ? true : undefined}
+                data-phase-info-cell={isProject ? true : undefined}
                 onClick={
                   isProject
                     ? (e) => {
                         const rect = e.currentTarget.getBoundingClientRect();
-                        setDateInfoTooltip((current) =>
+                        setCellInfoTooltip((current) =>
                           current?.rowId === row.id && current.field === "end"
                             ? null
                             : {
@@ -1668,7 +1974,7 @@ export function GanttChartView({
                     aria-label={`${row.name} end date`}
                     className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
                   />
-                ) : (
+                ) : isFiller ? null : (
                   <input
                     // See the matching comment on the Start input above.
                     key={toIsoDate(row.end)}
@@ -1687,14 +1993,14 @@ export function GanttChartView({
                     className="h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light hover:bg-zinc-100"
                   />
                 )}
-                {dateInfoTooltip?.rowId === row.id &&
-                  dateInfoTooltip.field === "end" &&
+                {cellInfoTooltip?.rowId === row.id &&
+                  cellInfoTooltip.field === "end" &&
                   createPortal(
                     <div
                       role="tooltip"
                       style={{
-                        top: dateInfoTooltip.top + 8,
-                        left: dateInfoTooltip.left,
+                        top: cellInfoTooltip.top + 8,
+                        left: cellInfoTooltip.left,
                       }}
                       className="fixed z-50 rounded bg-zinc-900 px-4 py-2 text-[11px] font-medium whitespace-nowrap text-white uppercase shadow-lg"
                     >
@@ -1708,44 +2014,227 @@ export function GanttChartView({
                   )}
               </div>
               <div
-                className="flex h-full shrink-0 items-center justify-end px-2"
+                className="flex h-full shrink-0 items-center justify-end border-r border-zinc-200 px-2"
                 style={{ width: columnWidths.duration }}
               >
-                {row.type === "milestone" ? "—" : days}
+                {isFiller ? null : row.type === "milestone" ? "—" : days}
               </div>
               <div
-                className="flex h-full shrink-0 items-center px-2"
+                className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
                 style={{ width: columnWidths.priority }}
               >
                 {/* Phase rows have no priority of their own (task ===
                     undefined here) — a phase's priority, if it needs
                     one, is a rollup question for later, not something
-                    stored directly on the category. Replaces the old
-                    dot-in-the-name-cell indicator (only shown for
-                    non-Medium) with its own column instead, now that
-                    there's room for the actual word rather than just a
-                    color cue. */}
+                    stored directly on the category. A plain <select>,
+                    same "blend in until interacted with" look as the
+                    Start/End date inputs (border-none/bg-transparent,
+                    hover highlight, and the same data-cell-active
+                    onFocus/onBlur -> white background + outline
+                    treatment, see globals.css) rather than a custom
+                    dropdown — native <select> already gives keyboard/
+                    screen-reader support for free. key={...} remounts
+                    it (so its defaultValue re-evaluates) the same way
+                    the date inputs already do whenever the underlying
+                    value actually changes from elsewhere (e.g. an
+                    Undo).
+                    appearance-none strips the browser's own native
+                    control chrome (its own padding/min-size/rounded
+                    background, confirmed directly this is what was
+                    making the hover highlight look like a small pill
+                    instead of filling the cell) — padding/hover/height
+                    are this app's own utility classes instead, same as
+                    every other cell here, with a hand-drawn chevron
+                    replacing the native one appearance-none removes. */}
                 {task && (
-                  <span
-                    className={
-                      task.priority === "high"
-                        ? "font-medium text-red-600"
-                        : task.priority === "low"
-                          ? "text-zinc-400"
-                          : "text-zinc-600"
-                    }
-                  >
-                    {task.priority === "high"
-                      ? "High"
-                      : task.priority === "low"
-                        ? "Low"
-                        : "Medium"}
-                  </span>
+                  <>
+                    <select
+                      key={task.priority}
+                      defaultValue={task.priority}
+                      onChange={(e) =>
+                        handleTaskPriorityEdit(task.id, e.target.value)
+                      }
+                      onFocus={(e) => {
+                        e.currentTarget.dataset.cellActive = "true";
+                      }}
+                      onBlur={(e) => {
+                        delete e.currentTarget.dataset.cellActive;
+                      }}
+                      aria-label={`${row.name} priority`}
+                      className={`h-full w-full cursor-pointer appearance-none border-none bg-transparent px-2 pr-6 text-xs hover:bg-zinc-100 ${
+                        task.priority === "high"
+                          ? "font-medium text-red-600"
+                          : task.priority === "low"
+                            ? "text-zinc-400"
+                            : "text-zinc-600"
+                      }`}
+                    >
+                      {/* text-zinc-900 on every option, not just a
+                          neutral default — an <option> otherwise
+                          inherits the <select>'s own text color
+                          (confirmed directly: with High selected, the
+                          whole open dropdown list rendered in that same
+                          red), so this overrides that inheritance
+                          explicitly rather than leaving it to fall back
+                          on its own. Only the closed cell's own text
+                          should read as color-coded, not the option
+                          list. */}
+                      <option value="high" className="text-zinc-900">
+                        High
+                      </option>
+                      <option value="medium" className="text-zinc-900">
+                        Medium
+                      </option>
+                      <option value="low" className="text-zinc-900">
+                        Low
+                      </option>
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2 size-3.5 text-zinc-400" />
+                  </>
                 )}
+              </div>
+              <div
+                className="flex h-full shrink-0 items-center border-r border-zinc-200"
+                style={{ width: columnWidths.assigned }}
+              >
+                {/* Same reasoning as Priority above — phase rows have no
+                    assignment of their own, only their tasks do. */}
+                {task &&
+                  (() => {
+                    const assignedIds = taskWorkerAssignments[task.id] ?? [];
+                    const names = assignedIds
+                      .map((id) => workerById.get(id)?.fullName)
+                      .filter((name): name is string => Boolean(name));
+                    return (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAssignWorkersModal({
+                            taskId: task.id,
+                            taskName: task.name,
+                          })
+                        }
+                        title="Assign workers"
+                        className={`h-full w-full cursor-pointer truncate px-2 text-left transition hover:bg-zinc-100 ${
+                          names.length > 0 ? "text-zinc-700" : "text-zinc-400"
+                        }`}
+                      >
+                        {names.length > 0 ? names.join(", ") : "Assign"}
+                      </button>
+                    );
+                  })()}
+              </div>
+              <div
+                className="relative flex h-full shrink-0 items-center"
+                style={{ width: columnWidths.percentComplete }}
+                data-phase-info-cell={isProject ? true : undefined}
+                onClick={
+                  isProject
+                    ? (e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setCellInfoTooltip((current) =>
+                          current?.rowId === row.id &&
+                          current.field === "percentComplete"
+                            ? null
+                            : {
+                                rowId: row.id,
+                                field: "percentComplete",
+                                top: rect.bottom,
+                                left: rect.left,
+                              }
+                        );
+                      }
+                    : undefined
+                }
+              >
+                {isProject ? (
+                  // Never stored, never editable here — a plain average
+                  // of this phase's own tasks (see
+                  // percentCompleteByCategoryId's own doc comment).
+                  // row.progress already *is* that same computed value
+                  // (set from it directly in the tasks memo above), so
+                  // this reads it back rather than re-deriving it.
+                  <span className="w-full cursor-pointer truncate px-2 text-xs text-zinc-600">
+                    {row.progress}%
+                  </span>
+                ) : isFiller ? null : (
+                  task && (
+                    // focus-within (not the data-cell-active mechanism
+                    // Start/End use) — that mechanism exists specifically
+                    // to work around Chromium's :focus not reliably
+                    // matching a date input around its own native
+                    // calendar popup (see its own doc comment); a plain
+                    // number input has no such popup, so ordinary :focus
+                    // (via focus-within on this wrapper, so the "%"
+                    // suffix picks up the same white background/outline
+                    // as the input itself, not just the input alone)
+                    // works with no special-casing needed.
+                    // Not flex-1 (stretched the input across the whole
+                    // column, pushing the "%" suffix to the cell's own
+                    // right edge) and not a fixed width either (right-
+                    // aligning text inside one, tried first to close
+                    // that same gap, pushed the number itself off to
+                    // the right — misaligned against every other cell
+                    // here, including the phase row's own rollup right
+                    // above it, all flush against the cell's own left
+                    // edge). field-sizing: content sizes the input to
+                    // its own value directly, so it's exactly as wide
+                    // as "0" or "100" actually is, no fixed box for
+                    // left-aligned text to go missing inside of — the
+                    // "%" ends up sitting right against the number
+                    // *and* the number stays flush left, matching every
+                    // other column's own alignment, both at once.
+                    <div className="flex h-full w-full items-center pl-2 hover:bg-zinc-100 focus-within:bg-white focus-within:outline-1 focus-within:-outline-offset-2 focus-within:outline-zinc-400">
+                      <input
+                        key={task.percentComplete}
+                        type="number"
+                        min={0}
+                        max={100}
+                        defaultValue={task.percentComplete}
+                        onBlur={(e) =>
+                          handleTaskPercentCompleteEdit(
+                            task.id,
+                            e.target.value,
+                            e.target,
+                            task.percentComplete
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
+                        aria-label={`${row.name} percent complete`}
+                        className="h-full shrink-0 cursor-pointer border-none bg-transparent text-xs text-zinc-600 outline-none [appearance:textfield] field-sizing-content"
+                      />
+                      <span className="shrink-0 text-xs text-zinc-400">
+                        %
+                      </span>
+                    </div>
+                  )
+                )}
+                {cellInfoTooltip?.rowId === row.id &&
+                  cellInfoTooltip.field === "percentComplete" &&
+                  createPortal(
+                    <div
+                      role="tooltip"
+                      style={{
+                        top: cellInfoTooltip.top + 8,
+                        left: cellInfoTooltip.left,
+                      }}
+                      className="fixed z-50 rounded bg-zinc-900 px-4 py-2 text-[11px] font-medium whitespace-nowrap text-white uppercase shadow-lg"
+                    >
+                      {/* See the matching comment on the Start tooltip
+                          above. */}
+                      <div className="absolute -top-1.5 left-4 size-3 rotate-45 bg-zinc-900" />
+                      This is calculated automatically and shows the
+                      cumulative percent complete of all subtasks.
+                    </div>,
+                    document.body
+                  )}
               </div>
             </div>
           );
         })}
+      </div>
       </div>
     );
   }
@@ -1773,12 +2262,12 @@ export function GanttChartView({
           border, same as adjacent bordered rows elsewhere in this
           chart. */}
       <div className="flex flex-col">
-        {/* Deliberately just Undo/Redo — a reference toolbar image with
-            ~25 icons (text color, cut/copy/paste, zoom, print, share,
-            lock, settings, ...) was the original ask, but none of those
-            other actions have a real feature behind them in this app, so
-            they're not here as decoration. */}
-        <div className="flex items-center gap-1 border border-zinc-200 bg-zinc-50 px-2 py-1.5">
+        {/* Deliberately just Undo/Redo/Manpower — a reference toolbar
+            image with ~25 icons (text color, cut/copy/paste, zoom,
+            print, share, lock, settings, ...) was the original ask, but
+            none of those other actions have a real feature behind them
+            in this app, so they're not here as decoration. */}
+        <div className="flex items-center gap-1 border border-t-2 border-zinc-200 border-t-zinc-900 bg-zinc-50 px-2 py-1.5">
           <button
             type="button"
             onClick={handleUndo}
@@ -1798,6 +2287,16 @@ export function GanttChartView({
             className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
           >
             <Redo2 className="size-4" />
+          </button>
+          <div className="mx-1 h-5 w-px bg-zinc-200" />
+          <button
+            type="button"
+            onClick={() => setManpowerModalOpen(true)}
+            aria-label="Manpower"
+            title="Manage the project's manpower roster"
+            className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900"
+          >
+            <HardHat className="size-4" />
           </button>
         </div>
 
@@ -1828,7 +2327,23 @@ export function GanttChartView({
 
             <div
               ref={chartOuterRef}
-              className="overflow-hidden border border-zinc-200 bg-white"
+              // isolate: gives everything inside this box its own
+              // stacking context, so none of its internal z-index
+              // values (the panel-resize handle, connector handles,
+              // milestone labels, the connector-drag svg — z-10 through
+              // z-50) can ever compete with page-level elements outside
+              // this box, like project-detail-view.tsx's own sticky
+              // tabs bar (z-20). Confirmed directly this was a real bug
+              // without it: the panel-resize handle's own z-20 tied
+              // with the tabs bar's z-20, and being later in the DOM,
+              // won that tie and painted over the tabs once scrolled
+              // far enough for the two to visually overlap — and now
+              // that the handle's own height regularly reaches the full
+              // CHART_BOX_HEIGHT_PX box (fillerTasks padding a short
+              // project out to it), that scroll position is reachable
+              // on every project, not just a long one, so this isn't
+              // optional anymore.
+              className="isolate overflow-hidden border border-zinc-200 bg-white"
             >
             <div
               ref={chartWrapRef}
@@ -1842,11 +2357,11 @@ export function GanttChartView({
                 onMouseLeave={handleChartMouseLeave}
               >
                 <Gantt
-                  tasks={effectiveTasks}
+                  tasks={chartTasks}
                   viewMode={VIEW_MODE[view]}
                   rowHeight={ROW_HEIGHT}
                   headerHeight={HEADER_HEIGHT}
-                  listCellWidth={showTaskList ? `${totalColumnsWidth}px` : ""}
+                  listCellWidth={showTaskList ? `${visiblePanelWidth}px` : ""}
                   columnWidth={effectiveColumnWidth}
                   todayColor="rgba(252, 211, 77, 0.15)"
                   TooltipContent={GanttTooltipContent}
@@ -1863,6 +2378,32 @@ export function GanttChartView({
                     });
                   }}
                 />
+                {/* The whole task-list panel's own resize handle — see
+                    handlePanelResizeMouseDown's own doc comment. Height
+                    computed directly (header + one row per currently
+                    visible row) rather than a percentage, since this
+                    element's own containing block (ganttRootRef) is
+                    auto-height, and percentage heights don't resolve
+                    against an auto-height ancestor. */}
+                <div
+                  onMouseDown={handlePanelResizeMouseDown}
+                  title="Drag to resize the task list"
+                  className="absolute top-0 z-20 w-3 cursor-col-resize"
+                  style={{
+                    left: visiblePanelWidth - 6,
+                    height:
+                      HEADER_HEIGHT +
+                      (visibleTasks.length + fillerTaskCount) * ROW_HEIGHT,
+                  }}
+                >
+                  <div className="mx-auto h-full w-1 bg-zinc-300" />
+                  {/* Grip indicator — a short, slightly darker pill
+                      centered in the middle of the track, the common
+                      "this is draggable" affordance for a thin resize
+                      handle that could otherwise read as a plain
+                      divider line. */}
+                  <div className="pointer-events-none absolute top-1/2 left-1/2 h-8 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-zinc-400" />
+                </div>
                 {/* position: absolute (not fixed) — a normal-flow sibling
                     of <Gantt>'s own output inside this `relative`
                     wrapper, so native scrolling of chartWrapRef carries
@@ -2013,6 +2554,35 @@ export function GanttChartView({
               onSuccess={() => setTaskModal(null)}
             />
           )
+        )}
+      </Modal>
+
+      <Modal
+        open={manpowerModalOpen}
+        onClose={() => setManpowerModalOpen(false)}
+        title="Manpower"
+      >
+        <ManpowerModalContent
+          projectId={projectId}
+          workers={workers}
+          onClose={() => setManpowerModalOpen(false)}
+        />
+      </Modal>
+
+      <Modal
+        open={assignWorkersModal !== null}
+        onClose={() => setAssignWorkersModal(null)}
+        title="Assign Workers"
+      >
+        {assignWorkersModal && (
+          <AssignWorkersModalContent
+            projectId={projectId}
+            taskId={assignWorkersModal.taskId}
+            taskName={assignWorkersModal.taskName}
+            workers={workers}
+            assignedWorkerIds={taskWorkerAssignments[assignWorkersModal.taskId] ?? []}
+            onClose={() => setAssignWorkersModal(null)}
+          />
         )}
       </Modal>
     </div>
