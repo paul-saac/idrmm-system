@@ -10,6 +10,10 @@ export type ProjectRow = {
   targetEndDate: string | null;
   actualEndDate: string | null;
   allocatedBudget: number | null;
+  /** Rule-of-thumb ratio (0-100) the Cost Estimate Breakdown's Task Form
+   * uses to auto-fill a new task's Labor Estimate as this % of (Material
+   * + Equipment + Other) — see task-form.tsx. Null means no auto-fill. */
+  defaultLaborCostPercent: number | null;
   projectManagerId: string;
   projectManagerName: string | null;
   foremanId: string;
@@ -59,6 +63,7 @@ function toProjectRow(
     target_end_date: string | null;
     actual_end_date: string | null;
     allocated_budget: number | null;
+    default_labor_cost_percent: number | null;
     project_manager_id: string;
     foreman_id: string;
   },
@@ -73,6 +78,7 @@ function toProjectRow(
     targetEndDate: row.target_end_date,
     actualEndDate: row.actual_end_date,
     allocatedBudget: row.allocated_budget,
+    defaultLaborCostPercent: row.default_labor_cost_percent,
     projectManagerId: row.project_manager_id,
     projectManagerName: formatName(namesById.get(row.project_manager_id)),
     foremanId: row.foreman_id,

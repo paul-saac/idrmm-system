@@ -8,8 +8,16 @@ import {
 
 const initialState: CostEstimateActionState = {};
 
+// Toggles data-empty so globals.css can gray out an empty date input's
+// own "mm/dd/yyyy" hint like a real placeholder — same technique (and
+// same reason :placeholder-shown couldn't be used instead) as the Add/
+// Edit Project forms' own date inputs.
+function handleDateEmptyChange(e: React.ChangeEvent<HTMLInputElement>) {
+  e.currentTarget.dataset.empty = e.currentTarget.value ? "false" : "true";
+}
+
 /**
- * The Gantt Chart Schedule's own "Add Phase" form — creates a new phase
+ * The Gantt Chart Schedule's own "Add Task" form — creates a new phase
  * together with a first, schedulable task in one step (see
  * createPhaseWithFirstTask's own doc comment for why, and why there's
  * no separate task-name field here). This is deliberately a separate
@@ -18,6 +26,11 @@ const initialState: CostEstimateActionState = {};
  * different moments — Cost Estimate Breakdown is building out cost
  * structure and doesn't need dates yet, the Gantt is a scheduling tool
  * where an undated phase is a placeholder, not a useful row.
+ *
+ * Labeled "Add Task"/"Task Name" (not "Add Phase"/"Phase Name") per an
+ * explicit user request — this still creates a phase (category) under
+ * the hood, `categoryName` field included; only the user-facing copy
+ * changed, not what's actually persisted.
  */
 export function AddPhaseForm({
   projectId,
@@ -44,18 +57,12 @@ export function AddPhaseForm({
 
   return (
     <form action={formAction} className="grid gap-4 sm:grid-cols-2" noValidate>
-      <p className="text-sm text-zinc-500 sm:col-span-2">
-        Creates a new phase on the schedule, ready to place on the
-        timeline. Cost details can be filled in later from its own Edit
-        form.
-      </p>
-
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor={`${formId}-categoryName`}
           className="text-sm font-medium text-zinc-800"
         >
-          Phase Name
+          Task Name
         </label>
         <input
           id={`${formId}-categoryName`}
@@ -78,6 +85,8 @@ export function AddPhaseForm({
           name="plannedStartDate"
           type="date"
           required
+          data-empty="true"
+          onChange={handleDateEmptyChange}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -94,6 +103,8 @@ export function AddPhaseForm({
           name="plannedEndDate"
           type="date"
           required
+          data-empty="true"
+          onChange={handleDateEmptyChange}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -111,9 +122,6 @@ export function AddPhaseForm({
         >
           Milestone
         </label>
-        <span className="text-xs text-zinc-400">
-          — a point-in-time event, shown as a diamond instead of a bar.
-        </span>
       </div>
 
       <div className="flex items-center justify-end gap-3 sm:col-span-2">
@@ -129,7 +137,7 @@ export function AddPhaseForm({
           disabled={pending}
           className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {pending ? "Saving..." : "Add Phase"}
+          {pending ? "Saving..." : "Add Task"}
         </button>
       </div>
 

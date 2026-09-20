@@ -1,7 +1,8 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { Pencil, Trash2, Undo2 } from "lucide-react";
+import { Trash2, Undo2 } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { EquipmentAssignmentForm } from "@/components/projects/equipment/equipment-assignment-form";
 import {
@@ -222,7 +223,7 @@ export function ProjectEquipmentView({
                         aria-label="Edit assignment"
                         className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
                       >
-                        <Pencil className="size-3.5" />
+                        <EditIcon className="size-3.5" />
                       </button>
                       <DeleteAssignmentButton
                         assignmentId={assignment.id}

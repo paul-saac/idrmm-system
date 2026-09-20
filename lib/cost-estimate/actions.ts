@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
+import { recordGanttCheckpoint } from "@/lib/cost-estimate/undo-redo";
 
 export type CostEstimateActionState = {
   error?: string;
@@ -65,6 +66,16 @@ function parseOptionalId(value: FormDataEntryValue | null) {
   if (!str) return null;
   const num = Number(str);
   return Number.isFinite(num) ? num : null;
+}
+
+const VALID_PRIORITIES = ["low", "medium", "high"] as const;
+type TaskPriorityValue = (typeof VALID_PRIORITIES)[number];
+
+function parsePriority(value: FormDataEntryValue | null): TaskPriorityValue {
+  const str = String(value ?? "").trim();
+  return (VALID_PRIORITIES as readonly string[]).includes(str)
+    ? (str as TaskPriorityValue)
+    : "medium";
 }
 
 /**
@@ -186,6 +197,7 @@ export async function createCategory(
       return { error: "Could not create category. Please try again." };
     }
 
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
@@ -219,6 +231,7 @@ export async function updateCategory(
       return { error: "Could not save changes. Please try again." };
     }
 
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
@@ -262,6 +275,7 @@ export async function deleteCategory(
       return { error: "Could not delete category. Please try again." };
     }
 
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
@@ -355,13 +369,17 @@ export async function createPhaseWithFirstTask(
       );
       // The phase itself was already created successfully at this point
       // — say so, rather than implying nothing happened and inviting a
-      // resubmit that would create a duplicate phase.
+      // resubmit that would create a duplicate phase. Checkpoint that
+      // real DB change too, not just the full-success path below, so
+      // Undo can still get back out of this partial state.
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
       return {
         error:
           'Phase created, but its schedule could not be saved. Add it from the phase\'s own "+" instead.',
       };
     }
 
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
@@ -392,6 +410,58 @@ function buildOtherCostItems(formData: FormData) {
   return items;
 }
 
+/**
+ * Same repeated-field convention as buildOtherCostItems, for the Gantt
+ * Chart Schedule task form's "Materials Needed" rows — materials
+ * planned for this task ahead of time, not what was actually used (see
+ * 0035_estimate_task_priority_and_assignments.sql). A row with a blank
+ * material name is dropped.
+ */
+function buildMaterialAssignmentDrafts(formData: FormData) {
+  const names = formData.getAll("materialAssignmentName").map((v) => String(v).trim());
+  const specs = formData.getAll("materialAssignmentSpec");
+  const quantities = formData.getAll("materialAssignmentQuantity");
+  const units = formData.getAll("materialAssignmentUnit");
+
+  const drafts: {
+    materialName: string;
+    specification: string;
+    plannedQuantity: number;
+    unit: string;
+  }[] = [];
+  for (let i = 0; i < names.length; i++) {
+    const materialName = names[i];
+    if (!materialName) continue;
+    drafts.push({
+      materialName,
+      specification: String(specs[i] ?? "").trim(),
+      plannedQuantity: parseNumber(quantities[i] ?? null),
+      unit: String(units[i] ?? "").trim(),
+    });
+  }
+  return drafts;
+}
+
+/**
+ * Same convention, for the "Manpower Needed" rows. A row with a blank
+ * worker role is dropped.
+ */
+function buildLaborAssignmentDrafts(formData: FormData) {
+  const roles = formData.getAll("laborAssignmentRole").map((v) => String(v).trim());
+  const counts = formData.getAll("laborAssignmentCount");
+
+  const drafts: { workerRole: string; plannedWorkerCount: number }[] = [];
+  for (let i = 0; i < roles.length; i++) {
+    const workerRole = roles[i];
+    if (!workerRole) continue;
+    drafts.push({
+      workerRole,
+      plannedWorkerCount: parseNumber(counts[i] ?? null),
+    });
+  }
+  return drafts;
+}
+
 function buildTaskFields(formData: FormData) {
   const taskName = String(formData.get("taskName") ?? "").trim();
   const categoryId = Number(formData.get("categoryId"));
@@ -404,6 +474,7 @@ function buildTaskFields(formData: FormData) {
   const plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
   const predecessorTaskId = parseOptionalId(formData.get("predecessorTaskId"));
   const isMilestone = formData.get("isMilestone") === "on";
+  const priority = parsePriority(formData.get("priority"));
 
   const otherCostItems = buildOtherCostItems(formData);
   const otherCostEstimate = otherCostItems.reduce(
@@ -413,6 +484,9 @@ function buildTaskFields(formData: FormData) {
 
   const totalEstimateCost =
     laborEstimate + materialEstimate + equipmentEstimate + otherCostEstimate;
+
+  const materialAssignments = buildMaterialAssignmentDrafts(formData);
+  const laborAssignments = buildLaborAssignmentDrafts(formData);
 
   return {
     taskName,
@@ -429,6 +503,9 @@ function buildTaskFields(formData: FormData) {
     plannedEndDate,
     predecessorTaskId,
     isMilestone,
+    priority,
+    materialAssignments,
+    laborAssignments,
   };
 }
 
@@ -487,6 +564,7 @@ export async function createTask(
         planned_end_date: fields.plannedEndDate,
         predecessor_task_id: fields.predecessorTaskId,
         is_milestone: fields.isMilestone,
+        priority: fields.priority,
       })
       .select("id")
       .single();
@@ -501,6 +579,56 @@ export async function createTask(
         console.error("[createTask] Insert returned no row (RLS?).");
       }
       return { error: "Could not create task item. Please try again." };
+    }
+
+    if (fields.materialAssignments.length > 0) {
+      const { error: materialError } = await supabase
+        .from("estimate_task_material_assignments")
+        .insert(
+          fields.materialAssignments.map((item) => ({
+            task_id: task.id,
+            material_name: item.materialName,
+            specification: item.specification || null,
+            planned_quantity: item.plannedQuantity,
+            unit: item.unit || null,
+          }))
+        );
+
+      if (materialError) {
+        logSupabaseError(
+          "[createTask] Supabase material-assignment insert failed",
+          materialError
+        );
+        await recordGanttCheckpoint(supabase, projectId, profile.id);
+        return {
+          error:
+            "Task item saved, but its planned materials could not be saved. Please edit the task and try again.",
+        };
+      }
+    }
+
+    if (fields.laborAssignments.length > 0) {
+      const { error: laborError } = await supabase
+        .from("estimate_task_labor_assignments")
+        .insert(
+          fields.laborAssignments.map((item) => ({
+            task_id: task.id,
+            worker_role: item.workerRole,
+            planned_worker_count: item.plannedWorkerCount,
+          }))
+        );
+
+      if (laborError) {
+        logSupabaseError(
+          "[createTask] Supabase labor-assignment insert failed",
+          laborError
+        );
+        await recordGanttCheckpoint(supabase, projectId, profile.id);
+        return {
+          error:
+            "Task item saved, but its planned manpower could not be saved. Please edit the task and try again.",
+        };
+      }
     }
 
     if (fields.otherCostItems.length > 0) {
@@ -519,6 +647,7 @@ export async function createTask(
           "[createTask] Supabase other-cost insert failed",
           otherCostError
         );
+        await recordGanttCheckpoint(supabase, projectId, profile.id);
         return {
           error:
             "Task item saved, but its other costs could not be saved. Please edit the task and try again.",
@@ -528,6 +657,7 @@ export async function createTask(
 
     await recomputeWeights(supabase, projectId);
 
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
@@ -589,6 +719,7 @@ export async function updateTask(
         planned_end_date: fields.plannedEndDate,
         predecessor_task_id: fields.predecessorTaskId,
         is_milestone: fields.isMilestone,
+        priority: fields.priority,
       })
       .eq("id", taskId);
 
@@ -596,6 +727,15 @@ export async function updateTask(
       logSupabaseError("[updateTask] Supabase update failed", error);
       return { error: "Could not save changes. Please try again." };
     }
+
+    // Deliberately does NOT touch estimate_task_material_assignments /
+    // estimate_task_labor_assignments — those are only ever edited from
+    // the Gantt Chart Schedule's own task form (updateSubtask below).
+    // This form doesn't render those fields, so writing them here from
+    // an (always-empty) fields.materialAssignments/laborAssignments
+    // would silently wipe out whatever was set on the Gantt Chart —
+    // same trap already fixed once for Milestone/Predecessor on this
+    // exact form.
 
     // Replace this task's other-cost items wholesale rather than diffing
     // individual edits/adds/removes — simpler, and nothing else
@@ -611,6 +751,7 @@ export async function updateTask(
         "[updateTask] Supabase other-cost delete failed",
         deleteError
       );
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
       return {
         error: "Could not save the other cost items. Please try again.",
       };
@@ -632,6 +773,7 @@ export async function updateTask(
           "[updateTask] Supabase other-cost insert failed",
           insertError
         );
+        await recordGanttCheckpoint(supabase, projectId, profile.id);
         return {
           error: "Could not save the other cost items. Please try again.",
         };
@@ -640,6 +782,7 @@ export async function updateTask(
 
     await recomputeWeights(supabase, projectId);
 
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
@@ -681,9 +824,62 @@ export async function updateTaskSchedule(
       return { error: "Could not save the new schedule. Please try again." };
     }
 
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
+}
+
+/**
+ * The actual validate-and-write behind setPredecessor below, split out so
+ * updateSubtask (further down) can reuse it directly instead of calling
+ * the exported setPredecessor action — which would otherwise record its
+ * own recordGanttCheckpoint mid-way through updateSubtask's own larger
+ * write, splitting one "Edit Task" submission into two separate undo
+ * steps. Each caller records its own single checkpoint once, at the end
+ * of everything *it* changed.
+ */
+async function applyPredecessor(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  taskId: number,
+  predecessorTaskId: number,
+  projectId: number
+): Promise<CostEstimateActionState> {
+  const predecessorError = await validatePredecessor(
+    supabase,
+    predecessorTaskId,
+    projectId,
+    taskId
+  );
+  if (predecessorError) {
+    return { error: predecessorError };
+  }
+
+  const { data: rows } = await supabase
+    .from("estimate_tasks")
+    .select("id, category_id")
+    .in("id", [taskId, predecessorTaskId])
+    .eq("project_id", projectId);
+
+  if (
+    !rows ||
+    rows.length !== 2 ||
+    rows[0].category_id !== rows[1].category_id
+  ) {
+    return { error: "Both tasks must be in the same phase." };
+  }
+
+  const { error } = await supabase
+    .from("estimate_tasks")
+    .update({ predecessor_task_id: predecessorTaskId })
+    .eq("id", taskId);
+
+  if (error) {
+    logSupabaseError("[applyPredecessor] Supabase update failed", error);
+    return { error: "Could not link the tasks. Please try again." };
+  }
+
+  return { success: true };
 }
 
 /**
@@ -710,40 +906,17 @@ export async function setPredecessor(
 
     const supabase = await createClient();
 
-    const predecessorError = await validatePredecessor(
+    const result = await applyPredecessor(
       supabase,
+      taskId,
       predecessorTaskId,
-      projectId,
-      taskId
+      projectId
     );
-    if (predecessorError) {
-      return { error: predecessorError };
+    if (result.error) {
+      return result;
     }
 
-    const { data: rows } = await supabase
-      .from("estimate_tasks")
-      .select("id, category_id")
-      .in("id", [taskId, predecessorTaskId])
-      .eq("project_id", projectId);
-
-    if (
-      !rows ||
-      rows.length !== 2 ||
-      rows[0].category_id !== rows[1].category_id
-    ) {
-      return { error: "Both tasks must be in the same phase." };
-    }
-
-    const { error } = await supabase
-      .from("estimate_tasks")
-      .update({ predecessor_task_id: predecessorTaskId })
-      .eq("id", taskId);
-
-    if (error) {
-      logSupabaseError("[setPredecessor] Supabase update failed", error);
-      return { error: "Could not link the tasks. Please try again." };
-    }
-
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
@@ -786,6 +959,9 @@ export async function updateSubtask(
     const plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
     const isMilestone = formData.get("isMilestone") === "on";
     const successorTaskId = parseOptionalId(formData.get("successorTaskId"));
+    const priority = parsePriority(formData.get("priority"));
+    const materialAssignments = buildMaterialAssignmentDrafts(formData);
+    const laborAssignments = buildLaborAssignmentDrafts(formData);
 
     if (!taskName) {
       return { error: "Task name is required." };
@@ -830,7 +1006,15 @@ export async function updateSubtask(
       (row) => row.id === successorTaskId
     );
     if (successorTaskId !== null && !alreadyLinked) {
-      const linkResult = await setPredecessor(successorTaskId, taskId, projectId);
+      // applyPredecessor, not setPredecessor — this whole action records
+      // its own single checkpoint at the end (see applyPredecessor's own
+      // doc comment above for why).
+      const linkResult = await applyPredecessor(
+        supabase,
+        successorTaskId,
+        taskId,
+        projectId
+      );
       if (linkResult.error) {
         return linkResult;
       }
@@ -843,15 +1027,89 @@ export async function updateSubtask(
         planned_start_date: plannedStartDate,
         planned_end_date: plannedEndDate,
         is_milestone: isMilestone,
+        priority,
       })
       .eq("id", taskId)
       .eq("project_id", projectId);
 
     if (error) {
       logSupabaseError("[updateSubtask] Supabase update failed", error);
+      // A successor clear/link above may have already committed — real
+      // DB-state change even though this particular write failed.
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
       return { error: "Could not update task. Please try again." };
     }
 
+    // Replace this task's planned materials/manpower wholesale, same
+    // "delete then reinsert" convention updateTask uses for Other Cost
+    // Items — nothing else references these rows by id.
+    const { error: materialDeleteError } = await supabase
+      .from("estimate_task_material_assignments")
+      .delete()
+      .eq("task_id", taskId);
+    if (materialDeleteError) {
+      logSupabaseError(
+        "[updateSubtask] Supabase material-assignment delete failed",
+        materialDeleteError
+      );
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
+      return { error: "Could not save planned materials. Please try again." };
+    }
+    if (materialAssignments.length > 0) {
+      const { error: materialInsertError } = await supabase
+        .from("estimate_task_material_assignments")
+        .insert(
+          materialAssignments.map((item) => ({
+            task_id: taskId,
+            material_name: item.materialName,
+            specification: item.specification || null,
+            planned_quantity: item.plannedQuantity,
+            unit: item.unit || null,
+          }))
+        );
+      if (materialInsertError) {
+        logSupabaseError(
+          "[updateSubtask] Supabase material-assignment insert failed",
+          materialInsertError
+        );
+        await recordGanttCheckpoint(supabase, projectId, profile.id);
+        return { error: "Could not save planned materials. Please try again." };
+      }
+    }
+
+    const { error: laborDeleteError } = await supabase
+      .from("estimate_task_labor_assignments")
+      .delete()
+      .eq("task_id", taskId);
+    if (laborDeleteError) {
+      logSupabaseError(
+        "[updateSubtask] Supabase labor-assignment delete failed",
+        laborDeleteError
+      );
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
+      return { error: "Could not save planned manpower. Please try again." };
+    }
+    if (laborAssignments.length > 0) {
+      const { error: laborInsertError } = await supabase
+        .from("estimate_task_labor_assignments")
+        .insert(
+          laborAssignments.map((item) => ({
+            task_id: taskId,
+            worker_role: item.workerRole,
+            planned_worker_count: item.plannedWorkerCount,
+          }))
+        );
+      if (laborInsertError) {
+        logSupabaseError(
+          "[updateSubtask] Supabase labor-assignment insert failed",
+          laborInsertError
+        );
+        await recordGanttCheckpoint(supabase, projectId, profile.id);
+        return { error: "Could not save planned manpower. Please try again." };
+      }
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });
@@ -882,6 +1140,7 @@ export async function deleteTask(
 
     await recomputeWeights(supabase, projectId);
 
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
     return { success: true };
   });

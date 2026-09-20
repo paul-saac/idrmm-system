@@ -23,12 +23,17 @@ export function TaskForm({
   categories,
   task,
   defaultCategoryId,
+  defaultLaborCostPercent,
   onSuccess,
 }: {
   projectId: number;
   categories: Pick<CostCategory, "id" | "name">[];
   task?: CostTask;
   defaultCategoryId?: number;
+  /** Project-level rule-of-thumb ratio (see lib/projects/data.ts) used
+   * below to suggest this task's Labor Estimate as a % of (Material +
+   * Equipment + Other) until the admin types into Labor directly. */
+  defaultLaborCostPercent: number | null;
   onSuccess?: () => void;
 }) {
   const boundAction = task
@@ -65,6 +70,40 @@ export function TaskForm({
       amount: item.amount,
     }))
   );
+
+  // Material/Equipment/each Other Cost Item's amount are controlled (not
+  // just defaultValue) so Labor Estimate below can live-recompute as
+  // they're typed. laborTouched starts true only when this task already
+  // has a real saved Labor Estimate (> 0) — a fresh task created from the
+  // Gantt Chart's own Add Task flow (which has no cost fields at all)
+  // still has laborEstimate === 0 the first time it's opened here, and
+  // that's exactly the case this auto-fill is for, not one to skip.
+  const [materialEstimate, setMaterialEstimate] = useState(
+    task ? String(task.materialEstimate) : ""
+  );
+  const [equipmentEstimate, setEquipmentEstimate] = useState(
+    task ? String(task.equipmentEstimate) : ""
+  );
+  const [laborTouched, setLaborTouched] = useState(
+    () => !!task && task.laborEstimate > 0
+  );
+  const [laborOverride, setLaborOverride] = useState(
+    task ? String(task.laborEstimate) : ""
+  );
+
+  const otherSum = otherCostRows.reduce((sum, row) => sum + (row.amount ?? 0), 0);
+  const autoLaborValue =
+    defaultLaborCostPercent != null
+      ? (defaultLaborCostPercent / 100) *
+        ((Number(materialEstimate) || 0) +
+          (Number(equipmentEstimate) || 0) +
+          otherSum)
+      : null;
+  const laborValue = laborTouched
+    ? laborOverride
+    : autoLaborValue && autoLaborValue > 0
+      ? autoLaborValue.toFixed(2)
+      : "";
 
   useEffect(() => {
     if (state.success) {
@@ -191,10 +230,20 @@ export function TaskForm({
           type="number"
           min="0"
           step="0.01"
-          defaultValue={task?.laborEstimate ?? ""}
+          value={laborValue}
+          onChange={(e) => {
+            setLaborTouched(true);
+            setLaborOverride(e.target.value);
+          }}
           placeholder="00.0"
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
+        {!laborTouched && defaultLaborCostPercent != null && (
+          <p className="text-xs text-zinc-400">
+            Auto-calculated from this project&apos;s Default Labor Cost %
+            ({defaultLaborCostPercent}%) — edit to override.
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -210,7 +259,8 @@ export function TaskForm({
           type="number"
           min="0"
           step="0.01"
-          defaultValue={task?.materialEstimate ?? ""}
+          value={materialEstimate}
+          onChange={(e) => setMaterialEstimate(e.target.value)}
           placeholder="00.0"
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
@@ -229,7 +279,8 @@ export function TaskForm({
           type="number"
           min="0"
           step="0.01"
-          defaultValue={task?.equipmentEstimate ?? ""}
+          value={equipmentEstimate}
+          onChange={(e) => setEquipmentEstimate(e.target.value)}
           placeholder="00.0"
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
@@ -280,6 +331,17 @@ export function TaskForm({
       {task?.isMilestone && (
         <input type="hidden" name="isMilestone" value="on" />
       )}
+      {/* Same reasoning — Priority and the planned Materials/Manpower
+          rows (see the Gantt Chart Schedule's own task form) also aren't
+          shown here; carry the current priority through so saving a
+          plain cost/quantity edit here can't reset it back to Medium.
+          Materials/Manpower need no such hidden field — this form never
+          touches those tables at all (see updateTask's own comment). */}
+      <input
+        type="hidden"
+        name="priority"
+        defaultValue={task?.priority ?? "medium"}
+      />
 
       <div className="flex flex-col gap-3 border-t border-zinc-200 pt-4 sm:col-span-2">
         <div className="flex items-center justify-between">
@@ -325,7 +387,16 @@ export function TaskForm({
                 type="number"
                 min="0"
                 step="0.01"
-                defaultValue={row.amount ?? ""}
+                value={row.amount ?? ""}
+                onChange={(e) => {
+                  const amount =
+                    e.target.value === "" ? undefined : Number(e.target.value);
+                  setOtherCostRows((rows) =>
+                    rows.map((r) =>
+                      r.key === row.key ? { ...r, amount } : r
+                    )
+                  );
+                }}
                 placeholder="00.0"
                 className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
               />

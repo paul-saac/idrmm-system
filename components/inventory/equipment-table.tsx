@@ -5,11 +5,11 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
-  Pencil,
   Send,
   Trash2,
   Undo2,
 } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import {
   deleteEquipment,
   returnEquipment,
@@ -289,7 +289,7 @@ export function EquipmentTable({
                           aria-label="Edit equipment"
                           className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
                         >
-                          <Pencil className="size-3.5" />
+                          <EditIcon className="size-3.5" />
                         </button>
                         <DeleteEquipmentButton
                           equipmentId={item.id}

@@ -6,6 +6,32 @@ export type OtherCostItem = {
   amount: number;
 };
 
+export type TaskPriority = "low" | "medium" | "high";
+
+/** Materials planned for a task ahead of time, from the Gantt Chart
+ * Schedule's own task form (see 0035_estimate_task_priority_and_
+ * assignments.sql) — distinct from daily_log_material_usage_items /
+ * daily_log_material_procurement_items, which record what was actually
+ * used/procured after the fact. Free-text material name/spec, same
+ * reasoning as daily_log_material_procurement_items: the material may
+ * not exist in the project's material catalog yet at planning time. */
+export type TaskMaterialAssignment = {
+  id: number;
+  materialName: string;
+  specification: string | null;
+  plannedQuantity: number;
+  unit: string | null;
+};
+
+/** Manpower planned for a task ahead of time — same relationship to
+ * daily_log_labor_items as TaskMaterialAssignment has to the material
+ * tables above. */
+export type TaskLaborAssignment = {
+  id: number;
+  workerRole: string;
+  plannedWorkerCount: number;
+};
+
 export type CostTask = {
   id: number;
   categoryId: number;
@@ -36,6 +62,13 @@ export type CostTask = {
    * still an ordinary task otherwise (its own cost/category/
    * predecessor), not a separate concept. */
   isMilestone: boolean;
+  /** Scheduling priority (see 0035_estimate_task_priority_and_
+   * assignments.sql) — deliberately separate from `weight` above, which
+   * is a cost-distribution % used throughout the EVM/progress
+   * calculations, not a priority level. */
+  priority: TaskPriority;
+  materialAssignments: TaskMaterialAssignment[];
+  laborAssignments: TaskLaborAssignment[];
 };
 
 export type CostCategory = {
@@ -87,14 +120,33 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
   ]);
 
   const taskIds = (taskRows ?? []).map((row) => row.id);
-  const { data: otherCostRows, error: otherCostError } =
+  const [
+    { data: otherCostRows, error: otherCostError },
+    { data: materialAssignmentRows },
+    { data: laborAssignmentRows },
+  ] = await Promise.all([
     taskIds.length > 0
-      ? await supabase
+      ? supabase
           .from("estimate_task_other_costs")
           .select("id, task_id, cost_name, amount")
           .in("task_id", taskIds)
           .order("id", { ascending: true })
-      : { data: [] as never[], error: null };
+      : Promise.resolve({ data: [] as never[], error: null }),
+    taskIds.length > 0
+      ? supabase
+          .from("estimate_task_material_assignments")
+          .select("id, task_id, material_name, specification, planned_quantity, unit")
+          .in("task_id", taskIds)
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
+    taskIds.length > 0
+      ? supabase
+          .from("estimate_task_labor_assignments")
+          .select("id, task_id, worker_role, planned_worker_count")
+          .in("task_id", taskIds)
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
+  ]);
 
   if (otherCostError) {
     // Was previously swallowed — every task would silently render as
@@ -128,6 +180,39 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     otherCostsByTask.set(row.task_id, existing);
   }
 
+  const materialAssignmentsByTask = new Map<number, TaskMaterialAssignment[]>();
+  for (const row of materialAssignmentRows ?? []) {
+    const item: TaskMaterialAssignment = {
+      id: row.id,
+      materialName: row.material_name,
+      specification: row.specification,
+      plannedQuantity: row.planned_quantity ?? 0,
+      unit: row.unit,
+    };
+    const existing = materialAssignmentsByTask.get(row.task_id) ?? [];
+    existing.push(item);
+    materialAssignmentsByTask.set(row.task_id, existing);
+  }
+
+  const laborAssignmentsByTask = new Map<number, TaskLaborAssignment[]>();
+  for (const row of laborAssignmentRows ?? []) {
+    const item: TaskLaborAssignment = {
+      id: row.id,
+      workerRole: row.worker_role,
+      plannedWorkerCount: row.planned_worker_count ?? 0,
+    };
+    const existing = laborAssignmentsByTask.get(row.task_id) ?? [];
+    existing.push(item);
+    laborAssignmentsByTask.set(row.task_id, existing);
+  }
+
+  const VALID_PRIORITIES: TaskPriority[] = ["low", "medium", "high"];
+  function toTaskPriority(value: string | null): TaskPriority {
+    return VALID_PRIORITIES.includes(value as TaskPriority)
+      ? (value as TaskPriority)
+      : "medium";
+  }
+
   const tasksByCategory = new Map<number, CostTask[]>();
   const totalsByColumn = { labor: 0, material: 0, equipment: 0, other: 0 };
 
@@ -156,6 +241,9 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       plannedEndDate: row.planned_end_date,
       predecessorTaskId: row.predecessor_task_id,
       isMilestone: row.is_milestone ?? false,
+      priority: toTaskPriority(row.priority),
+      materialAssignments: materialAssignmentsByTask.get(row.id) ?? [],
+      laborAssignments: laborAssignmentsByTask.get(row.id) ?? [],
     };
     const existing = tasksByCategory.get(row.category_id) ?? [];
     existing.push(task);

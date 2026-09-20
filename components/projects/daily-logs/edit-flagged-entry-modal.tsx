@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
-import { Pencil } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { updateFlaggedEntry, type FlagActionState } from "@/lib/daily-logs/actions";
 import type {
@@ -140,7 +140,7 @@ export function EditFlaggedEntryButton(
         title="Edit this entry"
         className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
       >
-        <Pencil className="size-3" />
+        <EditIcon className="size-3" />
       </button>
       <EditFlaggedEntryModal {...props} open={open} onClose={() => setOpen(false)} />
     </>

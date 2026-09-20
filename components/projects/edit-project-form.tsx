@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useEffect } from "react";
+import { ChevronDown } from "lucide-react";
 import { updateProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
@@ -9,6 +10,13 @@ const initialState: ProjectActionState = {};
 
 function personLabel(account: AccountRow) {
   return `${account.firstName} ${account.lastName}`.trim() || account.email;
+}
+
+// Toggles data-empty so globals.css can gray out an empty date input's
+// own "mm/dd/yyyy" hint like a real placeholder — see that rule's own
+// comment for why this couldn't just be a CSS pseudo-class instead.
+function handleDateEmptyChange(e: React.ChangeEvent<HTMLInputElement>) {
+  e.currentTarget.dataset.empty = e.currentTarget.value ? "false" : "true";
 }
 
 export function EditProjectForm({
@@ -51,6 +59,7 @@ export function EditProjectForm({
           name="projectName"
           required
           defaultValue={project.name}
+          autoComplete="off"
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -66,6 +75,7 @@ export function EditProjectForm({
           id="edit-location"
           name="location"
           defaultValue={project.location ?? ""}
+          autoComplete="off"
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -82,6 +92,8 @@ export function EditProjectForm({
           name="startDate"
           type="date"
           defaultValue={project.startDate ?? ""}
+          data-empty={project.startDate ? "false" : "true"}
+          onChange={handleDateEmptyChange}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -98,6 +110,8 @@ export function EditProjectForm({
           name="targetEndDate"
           type="date"
           defaultValue={project.targetEndDate ?? ""}
+          data-empty={project.targetEndDate ? "false" : "true"}
+          onChange={handleDateEmptyChange}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -114,6 +128,8 @@ export function EditProjectForm({
           name="actualEndDate"
           type="date"
           defaultValue={project.actualEndDate ?? ""}
+          data-empty={project.actualEndDate ? "false" : "true"}
+          onChange={handleDateEmptyChange}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -132,6 +148,27 @@ export function EditProjectForm({
           min="0"
           step="0.01"
           defaultValue={project.allocatedBudget ?? ""}
+          autoComplete="off"
+          className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+        />
+      </div>
+
+      <div className="flex flex-col gap-1.5 sm:col-span-2">
+        <label
+          htmlFor="edit-defaultLaborCostPercent"
+          className="text-sm font-medium text-zinc-800"
+        >
+          Default labor cost %
+        </label>
+        <input
+          id="edit-defaultLaborCostPercent"
+          name="defaultLaborCostPercent"
+          type="number"
+          min="0"
+          max="100"
+          step="0.01"
+          defaultValue={project.defaultLaborCostPercent ?? ""}
+          autoComplete="off"
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -143,19 +180,22 @@ export function EditProjectForm({
         >
           Project Manager
         </label>
-        <select
-          id="edit-projectManagerId"
-          name="projectManagerId"
-          required
-          defaultValue={project.projectManagerId}
-          className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        >
-          {projectManagers.map((pm) => (
-            <option key={pm.id} value={pm.id}>
-              {personLabel(pm)}
-            </option>
-          ))}
-        </select>
+        <div className="relative">
+          <select
+            id="edit-projectManagerId"
+            name="projectManagerId"
+            required
+            defaultValue={project.projectManagerId}
+            className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+          >
+            {projectManagers.map((pm) => (
+              <option key={pm.id} value={pm.id}>
+                {personLabel(pm)}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -165,19 +205,22 @@ export function EditProjectForm({
         >
           Foreman
         </label>
-        <select
-          id="edit-foremanId"
-          name="foremanId"
-          required
-          defaultValue={project.foremanId}
-          className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        >
-          {foremen.map((f) => (
-            <option key={f.id} value={f.id}>
-              {personLabel(f)}
-            </option>
-          ))}
-        </select>
+        <div className="relative">
+          <select
+            id="edit-foremanId"
+            name="foremanId"
+            required
+            defaultValue={project.foremanId}
+            className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+          >
+            {foremen.map((f) => (
+              <option key={f.id} value={f.id}>
+                {personLabel(f)}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
+        </div>
       </div>
 
       <div className="flex items-center gap-3 sm:col-span-2">

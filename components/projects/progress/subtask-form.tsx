@@ -1,16 +1,41 @@
 "use client";
 
-import { useActionState, useEffect, useId } from "react";
+import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import {
   createTask,
   deleteTask,
   updateSubtask,
   type CostEstimateActionState,
 } from "@/lib/cost-estimate/actions";
+import type {
+  TaskLaborAssignment,
+  TaskMaterialAssignment,
+  TaskPriority,
+} from "@/lib/cost-estimate/data";
 
 const initialState: CostEstimateActionState = {};
+
+const PRIORITY_OPTIONS: { value: TaskPriority; label: string }[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
+
+type MaterialAssignmentRow = {
+  key: number;
+  materialName?: string;
+  specification?: string;
+  plannedQuantity?: number;
+  unit?: string;
+};
+
+type LaborAssignmentRow = {
+  key: number;
+  workerRole?: string;
+  plannedWorkerCount?: number;
+};
 
 /**
  * The Gantt Chart Schedule's own "Add/Edit Task" form — a lightweight,
@@ -47,10 +72,12 @@ const initialState: CostEstimateActionState = {};
  *
  * Deleting an existing task lives here too (a Delete button, edit mode
  * only) rather than as its own standalone control in the task list's
- * Actions column — the Gantt's own Actions column now only ever shows
- * a Pencil, matching how the task list read at a glance: one button per
- * row that opens "the task's own controls," not two competing ones a
- * misclick could trigger. The delete button submits its own separate
+ * own Task name cell — that cell's own edit button (see
+ * gantt-chart-view.tsx's CustomTaskListTable) is the only per-row
+ * control there, matching how the task list reads at a glance: one
+ * button per row that opens "the task's own controls," not two
+ * competing ones a misclick could trigger. The delete button submits
+ * its own separate
  * <form> (a <form> can't nest inside another), positioned in the same
  * row as Cancel/Save via the outer wrapper below.
  */
@@ -69,6 +96,9 @@ export function SubtaskForm({
     plannedStartDate: string | null;
     plannedEndDate: string | null;
     isMilestone: boolean;
+    priority: TaskPriority;
+    materialAssignments: TaskMaterialAssignment[];
+    laborAssignments: TaskLaborAssignment[];
   };
   siblingTasks: { id: number; name: string; predecessorTaskId: number | null }[];
   onSuccess?: () => void;
@@ -83,6 +113,29 @@ export function SubtaskForm({
   );
   const formId = useId();
   const router = useRouter();
+
+  // Same stable-key convention as the Cost Estimate Task form's own
+  // Other Cost Items rows — existing rows reuse their real (positive) DB
+  // id, newly-added rows count down from -1 so they can never collide.
+  const nextNewMaterialKeyRef = useRef(-1);
+  const nextNewLaborKeyRef = useRef(-1);
+
+  const [materialRows, setMaterialRows] = useState<MaterialAssignmentRow[]>(() =>
+    (task?.materialAssignments ?? []).map((item) => ({
+      key: item.id,
+      materialName: item.materialName,
+      specification: item.specification ?? undefined,
+      plannedQuantity: item.plannedQuantity,
+      unit: item.unit ?? undefined,
+    }))
+  );
+  const [laborRows, setLaborRows] = useState<LaborAssignmentRow[]>(() =>
+    (task?.laborAssignments ?? []).map((item) => ({
+      key: item.id,
+      workerRole: item.workerRole,
+      plannedWorkerCount: item.plannedWorkerCount,
+    }))
+  );
 
   useEffect(() => {
     if (state.success) {
@@ -189,6 +242,27 @@ export function SubtaskForm({
           />
         </div>
 
+        <div className="flex flex-col gap-1.5">
+          <label
+            htmlFor={`${formId}-priority`}
+            className="text-sm font-medium text-zinc-800"
+          >
+            Priority
+          </label>
+          <select
+            id={`${formId}-priority`}
+            name="priority"
+            defaultValue={task?.priority ?? "medium"}
+            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+          >
+            {PRIORITY_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex items-center gap-2 sm:col-span-2">
           <input
             id={`${formId}-isMilestone`}
@@ -237,6 +311,150 @@ export function SubtaskForm({
               : "This task starts after its predecessor finishes — shown as a dependency arrow on the Gantt Chart Schedule."}{" "}
             Only tasks already in this same phase can be picked.
           </p>
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-zinc-200 pt-4 sm:col-span-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-zinc-800">
+              Materials Needed
+            </h3>
+            <button
+              type="button"
+              onClick={() =>
+                setMaterialRows((rows) => [
+                  ...rows,
+                  { key: nextNewMaterialKeyRef.current-- },
+                ])
+              }
+              className="flex cursor-pointer items-center gap-1 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+            >
+              <Plus className="size-3.5" />
+              Add Material
+            </button>
+          </div>
+
+          {materialRows.length === 0 && (
+            <p className="text-xs text-zinc-400">
+              No materials planned for this task yet.
+            </p>
+          )}
+
+          {materialRows.map((row) => (
+            <div key={row.key} className="flex items-end gap-2">
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label className="text-xs text-zinc-500">Material</label>
+                <input
+                  name="materialAssignmentName"
+                  defaultValue={row.materialName}
+                  placeholder="e.g., Hollow Blocks"
+                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+                />
+              </div>
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label className="text-xs text-zinc-500">Specification</label>
+                <input
+                  name="materialAssignmentSpec"
+                  defaultValue={row.specification}
+                  placeholder="e.g., 4 inch"
+                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+                />
+              </div>
+              <div className="flex w-24 flex-shrink-0 flex-col gap-1.5">
+                <label className="text-xs text-zinc-500">Qty</label>
+                <input
+                  name="materialAssignmentQuantity"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  defaultValue={row.plannedQuantity ?? ""}
+                  placeholder="00.0"
+                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+                />
+              </div>
+              <div className="flex w-20 flex-shrink-0 flex-col gap-1.5">
+                <label className="text-xs text-zinc-500">Unit</label>
+                <input
+                  name="materialAssignmentUnit"
+                  defaultValue={row.unit}
+                  placeholder="pcs"
+                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setMaterialRows((rows) => rows.filter((r) => r.key !== row.key))
+                }
+                aria-label="Remove material"
+                className="cursor-pointer rounded border border-zinc-200 p-2 text-zinc-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-zinc-200 pt-4 sm:col-span-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-zinc-800">
+              Manpower Needed
+            </h3>
+            <button
+              type="button"
+              onClick={() =>
+                setLaborRows((rows) => [
+                  ...rows,
+                  { key: nextNewLaborKeyRef.current-- },
+                ])
+              }
+              className="flex cursor-pointer items-center gap-1 rounded border border-zinc-200 px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
+            >
+              <Plus className="size-3.5" />
+              Add Manpower
+            </button>
+          </div>
+
+          {laborRows.length === 0 && (
+            <p className="text-xs text-zinc-400">
+              No manpower planned for this task yet.
+            </p>
+          )}
+
+          {laborRows.map((row) => (
+            <div key={row.key} className="flex items-end gap-2">
+              <div className="flex flex-1 flex-col gap-1.5">
+                <label className="text-xs text-zinc-500">Worker Role</label>
+                <input
+                  name="laborAssignmentRole"
+                  defaultValue={row.workerRole}
+                  placeholder="e.g., Mason"
+                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+                />
+              </div>
+              <div className="flex w-28 flex-shrink-0 flex-col gap-1.5">
+                <label className="text-xs text-zinc-500">No. of Workers</label>
+                <input
+                  name="laborAssignmentCount"
+                  type="number"
+                  min="0"
+                  step="1"
+                  defaultValue={row.plannedWorkerCount ?? ""}
+                  placeholder="00"
+                  className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setLaborRows((rows) => rows.filter((r) => r.key !== row.key))
+                }
+                aria-label="Remove manpower"
+                className="cursor-pointer rounded border border-zinc-200 p-2 text-zinc-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          ))}
         </div>
       </form>
 

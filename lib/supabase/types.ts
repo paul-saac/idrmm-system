@@ -44,6 +44,7 @@ export interface Database {
           project_name: string;
           location: string | null;
           allocated_budget: number | null;
+          default_labor_cost_percent: number | null;
           start_date: string | null;
           target_end_date: string | null;
           actual_end_date: string | null;
@@ -53,11 +54,17 @@ export interface Database {
           created_by: string;
           created_at: string | null;
           updated_at: string | null;
+          /** The gantt_snapshots row the project's own schedule/cost data
+           * currently matches — see lib/cost-estimate/undo-redo.ts. Null
+           * means no undo/redo history has been recorded for this project
+           * yet (never been through a tracked mutating action). */
+          gantt_undo_cursor_id: number | null;
         };
         Insert: {
           project_name: string;
           location?: string | null;
           allocated_budget?: number | null;
+          default_labor_cost_percent?: number | null;
           start_date?: string | null;
           target_end_date?: string | null;
           actual_end_date?: string | null;
@@ -70,12 +77,14 @@ export interface Database {
           project_name?: string;
           location?: string | null;
           allocated_budget?: number | null;
+          default_labor_cost_percent?: number | null;
           start_date?: string | null;
           target_end_date?: string | null;
           actual_end_date?: string | null;
           status?: ProjectStatus;
           project_manager_id?: string;
           foreman_id?: string;
+          gantt_undo_cursor_id?: number | null;
         };
         Relationships: [];
       };
@@ -92,6 +101,14 @@ export interface Database {
           weight: number | null;
         };
         Insert: {
+          // Only ever set explicitly by the undo/redo restore path (see
+          // lib/cost-estimate/undo-redo.ts), to re-create a row with its
+          // original id rather than a fresh one from the identity
+          // sequence — see 0037_gantt_undo_redo.sql's own comment for why
+          // that matters (predecessor_task_id and other references would
+          // otherwise silently break across an undo/redo round trip).
+          // Every other insert call in the app omits this, same as before.
+          id?: number;
           project_id: number;
           category_name: string;
           weight?: number;
@@ -122,8 +139,12 @@ export interface Database {
           planned_end_date: string | null;
           predecessor_task_id: number | null;
           is_milestone: boolean;
+          priority: string;
         };
         Insert: {
+          // See estimate_categories.Insert's own comment on `id` above —
+          // same reasoning, same restore-only caller.
+          id?: number;
           project_id: number;
           category_id: number;
           task_name: string;
@@ -139,6 +160,7 @@ export interface Database {
           planned_end_date?: string | null;
           predecessor_task_id?: number | null;
           is_milestone?: boolean;
+          priority?: string;
         };
         Update: {
           category_id?: number;
@@ -155,6 +177,55 @@ export interface Database {
           planned_end_date?: string | null;
           predecessor_task_id?: number | null;
           is_milestone?: boolean;
+          priority?: string;
+        };
+        Relationships: [];
+      };
+      estimate_task_material_assignments: {
+        Row: {
+          id: number;
+          task_id: number;
+          material_name: string;
+          specification: string | null;
+          planned_quantity: number;
+          unit: string | null;
+          created_at: string;
+        };
+        Insert: {
+          // See estimate_categories.Insert's own comment on `id` above.
+          id?: number;
+          task_id: number;
+          material_name: string;
+          specification?: string | null;
+          planned_quantity?: number;
+          unit?: string | null;
+        };
+        Update: {
+          material_name?: string;
+          specification?: string | null;
+          planned_quantity?: number;
+          unit?: string | null;
+        };
+        Relationships: [];
+      };
+      estimate_task_labor_assignments: {
+        Row: {
+          id: number;
+          task_id: number;
+          worker_role: string;
+          planned_worker_count: number;
+          created_at: string;
+        };
+        Insert: {
+          // See estimate_categories.Insert's own comment on `id` above.
+          id?: number;
+          task_id: number;
+          worker_role: string;
+          planned_worker_count?: number;
+        };
+        Update: {
+          worker_role?: string;
+          planned_worker_count?: number;
         };
         Relationships: [];
       };
@@ -170,6 +241,8 @@ export interface Database {
           amount: number | null;
         };
         Insert: {
+          // See estimate_categories.Insert's own comment on `id` above.
+          id?: number;
           task_id: number;
           cost_name: string;
           amount?: number;
@@ -178,6 +251,28 @@ export interface Database {
           cost_name?: string;
           amount?: number;
         };
+        Relationships: [];
+      };
+      gantt_snapshots: {
+        // See lib/cost-estimate/undo-redo.ts — an append-only per-project
+        // history log powering the Gantt Chart's Undo/Redo. `snapshot` is
+        // a full raw-row capture of the project's estimate_categories/
+        // estimate_tasks (+ their 3 child tables) at that point in time;
+        // typed loosely (unknown) since its shape is this app's own
+        // GanttSnapshot type, not something Postgres itself constrains.
+        Row: {
+          id: number;
+          project_id: number;
+          snapshot: unknown;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          project_id: number;
+          snapshot: unknown;
+          created_by?: string | null;
+        };
+        Update: never;
         Relationships: [];
       };
       // The tables below (progress tracking, materials, equipment,

@@ -2,7 +2,8 @@
 
 import { useActionState, useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Pencil, Trash2 } from "lucide-react";
+import { ChevronLeft, Trash2 } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import { LogoutButton } from "@/components/auth/logout-button";
 import {
   AddDailyLogModal,
@@ -921,7 +922,7 @@ export function DailyLogDetailView({
                         : "flex cursor-not-allowed items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-zinc-300"
                     }
                   >
-                    <Pencil className="size-4" />
+                    <EditIcon className="size-4" />
                     Edit
                   </button>
                 </div>

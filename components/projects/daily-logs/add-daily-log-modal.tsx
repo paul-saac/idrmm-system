@@ -19,7 +19,6 @@ import {
   ClipboardList,
   CloudUpload,
   Hammer,
-  Pencil,
   Plus,
   Receipt,
   Truck,
@@ -27,6 +26,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import {
   createDailyLog,
@@ -1588,7 +1588,7 @@ function DraftRow({
           aria-label="Edit entry"
           className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
         >
-          <Pencil className="size-3.5" />
+          <EditIcon className="size-3.5" />
         </button>
         <button
           type="button"

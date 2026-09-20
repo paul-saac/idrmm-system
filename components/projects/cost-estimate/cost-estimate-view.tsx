@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useActionState, useState } from "react";
-import { ChevronDown, ChevronRight, Pencil, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { TaskForm } from "@/components/projects/cost-estimate/task-form";
@@ -124,13 +125,15 @@ export function TaskDeleteButton({
 export function CostEstimateView({
   projectId,
   estimate,
+  defaultLaborCostPercent,
 }: {
   projectId: number;
   estimate: CostEstimate;
+  defaultLaborCostPercent: number | null;
 }) {
   const [manageMode, setManageMode] = useState(false);
   // Editing only — adding a category or task item now happens from the
-  // Gantt Chart tab instead (see gantt-chart-view.tsx's own Add Phase/
+  // Gantt Chart below instead (see gantt-chart-view.tsx's own Add Phase/
   // Add Task, which write to this same cost estimate data), so there's
   // no "add" mode to track here anymore, just which existing row (if
   // any) is open for editing.
@@ -203,72 +206,48 @@ export function CostEstimateView({
   const columnCount = 9 + (manageMode ? 1 : 0);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {/* A plain fill bar, not a border-b — see StatCard's own comment
-            in project-detail-view.tsx for why a border-b here mitered a
-            visible diagonal notch into the corner instead of a straight
-            edge. */}
-        <div className="relative rounded-t-lg border border-zinc-200 bg-white p-5">
-          <p className="text-sm text-zinc-500">Total Estimated Cost</p>
-          <p className="mt-2 text-xl font-semibold text-zinc-900">
-            {formatCurrency(summary.totalEstimatedCost)}
-          </p>
-          <div className="absolute inset-x-0 bottom-0 h-1 bg-zinc-900" />
-        </div>
-        <div className="relative rounded-t-lg border border-zinc-200 bg-white p-5">
-          <p className="text-sm text-zinc-500">Total Phase</p>
-          <p className="mt-2 text-xl font-semibold text-zinc-900">
-            {String(summary.categoryCount).padStart(2, "0")}
-          </p>
-          <div className="absolute inset-x-0 bottom-0 h-1 bg-zinc-900" />
-        </div>
-        <div className="relative rounded-t-lg border border-zinc-200 bg-white p-5">
-          <p className="text-sm text-zinc-500">Total Task Items</p>
-          <p className="mt-2 text-xl font-semibold text-zinc-900">
-            {String(summary.taskCount).padStart(2, "0")}
-          </p>
-          <div className="absolute inset-x-0 bottom-0 h-1 bg-zinc-900" />
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <button
-          type="button"
-          onClick={() => setManageMode((m) => !m)}
-          aria-label="Toggle edit mode"
-          aria-pressed={manageMode}
-          className={`cursor-pointer rounded border p-2 transition ${
-            manageMode
-              ? "border-zinc-900 bg-zinc-900 text-white"
-              : "border-zinc-200 text-zinc-500 hover:bg-zinc-50"
-          }`}
-        >
-          <Pencil className="size-4" />
-        </button>
-      </div>
-
+    // No border/rounded chrome of its own — this renders as a direct
+    // extension of whatever dropdown/card it's embedded in (currently
+    // the Cost Overview section in project-detail-view.tsx), not a
+    // nested card of its own. bg-white is still its own, though — that
+    // section's own background is a light gray fill, and this table
+    // reads as white against it rather than picking up the same tint.
+    <div className="border-t border-zinc-200 bg-white">
       {categories.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-white py-16 text-center">
+        <div className="mx-5 mb-5 flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-white py-16 text-center">
           <p className="text-sm font-medium text-zinc-700">
             No cost estimate yet
           </p>
           <p className="mt-1 text-sm text-zinc-400">
-            Add a phase and task items from the Gantt Chart tab to start
-            building the cost breakdown structure.
+            Add a phase and task items from the Gantt Chart below to
+            start building the cost breakdown structure.
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-          <div className="overflow-x-auto">
-            <table className="w-full table-fixed text-left text-sm">
-              <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
+        <div className="overflow-x-auto">
+          <table className="w-full table-fixed text-left text-sm">
+              <thead className="bg-white text-xs font-medium text-zinc-500">
                 <tr>
                   <th
                     style={{ width: categoriesWidth }}
                     className="relative border-r border-zinc-200 px-4 py-2.5"
                   >
-                    Categories
+                    <span className="flex items-center justify-between gap-2 pr-3">
+                      Categories
+                      <button
+                        type="button"
+                        onClick={() => setManageMode((m) => !m)}
+                        aria-label="Toggle edit mode"
+                        aria-pressed={manageMode}
+                        className={`cursor-pointer rounded border p-1 transition ${
+                          manageMode
+                            ? "border-zinc-900 bg-zinc-900 text-white"
+                            : "border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                        }`}
+                      >
+                        <EditIcon className="size-3.5" />
+                      </button>
+                    </span>
                     {/* The one resize handle in this table — a wider
                         invisible drag target than the border itself, so
                         it's actually easy to grab. */}
@@ -328,7 +307,7 @@ export function CostEstimateView({
                   const isOpen = !collapsedCategoryIds.has(category.id);
                   return (
                     <Fragment key={category.id}>
-                      <tr className="border-y border-zinc-100 border-l-2 border-l-zinc-900 bg-zinc-50/60">
+                      <tr className="border-y border-zinc-200 bg-white text-xs font-medium text-zinc-500">
                         <td
                           className="border-r border-zinc-200 px-4 py-2.5"
                           colSpan={8}
@@ -337,7 +316,7 @@ export function CostEstimateView({
                             <button
                               type="button"
                               onClick={() => toggleCategory(category.id)}
-                              className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-zinc-800 transition hover:text-zinc-900"
+                              className="flex cursor-pointer items-center gap-2 transition hover:text-zinc-900"
                             >
                               {isOpen ? (
                                 <ChevronDown className="size-3.5 flex-shrink-0 text-zinc-400" />
@@ -359,7 +338,7 @@ export function CostEstimateView({
                                   aria-label="Edit category"
                                   className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
                                 >
-                                  <Pencil className="size-3.5" />
+                                  <EditIcon className="size-3.5" />
                                 </button>
                                 <CategoryDeleteButton
                                   categoryId={category.id}
@@ -371,7 +350,7 @@ export function CostEstimateView({
                           </span>
                         </td>
                         <td
-                          className={`border-r border-zinc-200 px-4 py-2.5 text-right text-sm font-semibold text-zinc-800 ${manageMode ? "" : "border-r-0"}`}
+                          className={`border-r border-zinc-200 px-4 py-2.5 text-right ${manageMode ? "" : "border-r-0"}`}
                         >
                           {formatWeight(category.weight)}
                         </td>
@@ -384,26 +363,26 @@ export function CostEstimateView({
                         const expanded = expandedTaskIds.has(task.id);
                         return (
                           <Fragment key={task.id}>
-                            <tr className="border-b border-zinc-100 transition-colors hover:bg-zinc-50">
-                              <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8 font-medium text-zinc-900">
+                            <tr className="border-b border-zinc-200 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-50">
+                              <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8">
                                 {task.name}
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right text-zinc-600">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                                 {task.estimatedQuantity}
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-zinc-600">
+                              <td className="border-r border-zinc-200 px-4 py-2.5">
                                 {task.unit ?? "—"}
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right text-zinc-600">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                                 {formatCurrency(task.laborEstimate)}
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right text-zinc-600">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                                 {formatCurrency(task.materialEstimate)}
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right text-zinc-600">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                                 {formatCurrency(task.equipmentEstimate)}
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right text-zinc-600">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                                 {hasOtherCosts ? (
                                   <button
                                     type="button"
@@ -414,7 +393,7 @@ export function CostEstimateView({
                                         ? "Collapse other cost breakdown"
                                         : "Expand other cost breakdown"
                                     }
-                                    className="flex cursor-pointer items-center justify-end gap-1 text-zinc-600 transition hover:text-zinc-900"
+                                    className="flex cursor-pointer items-center justify-end gap-1 transition hover:text-zinc-900"
                                   >
                                     {expanded ? (
                                       <ChevronDown className="size-3.5" />
@@ -427,11 +406,11 @@ export function CostEstimateView({
                                   formatCurrency(0)
                                 )}
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right font-medium text-zinc-900">
+                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                                 {formatCurrency(task.totalEstimateCost)}
                               </td>
                               <td
-                                className={`px-4 py-2.5 text-right text-zinc-600 ${manageMode ? "border-r border-zinc-200" : ""}`}
+                                className={`px-4 py-2.5 text-right ${manageMode ? "border-r border-zinc-200" : ""}`}
                               >
                                 {formatWeight(task.weight)}
                               </td>
@@ -444,7 +423,7 @@ export function CostEstimateView({
                                       aria-label="Edit task item"
                                       className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
                                     >
-                                      <Pencil className="size-3.5" />
+                                      <EditIcon className="size-3.5" />
                                     </button>
                                     <TaskDeleteButton
                                       taskId={task.id}
@@ -456,7 +435,7 @@ export function CostEstimateView({
                               )}
                             </tr>
                             {expanded && hasOtherCosts && (
-                              <tr className="border-b border-zinc-100 bg-zinc-50/60">
+                              <tr className="border-b border-zinc-200 bg-zinc-50/60">
                                 <td
                                   className="px-4 py-2"
                                   colSpan={columnCount}
@@ -488,23 +467,23 @@ export function CostEstimateView({
                 })}
               </tbody>
               <tfoot>
-                <tr className="bg-zinc-900 text-sm font-semibold text-white">
-                  <td className="border-r border-zinc-700 px-4 py-3" colSpan={3}>
+                <tr className="bg-zinc-100 text-sm font-semibold text-zinc-800">
+                  <td className="border-r border-zinc-300 px-4 py-3" colSpan={3}>
                     PROJECT TOTAL
                   </td>
-                  <td className="border-r border-zinc-700 px-4 py-3 text-right">
+                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
                     {formatCurrency(summary.totalsByColumn.labor)}
                   </td>
-                  <td className="border-r border-zinc-700 px-4 py-3 text-right">
+                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
                     {formatCurrency(summary.totalsByColumn.material)}
                   </td>
-                  <td className="border-r border-zinc-700 px-4 py-3 text-right">
+                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
                     {formatCurrency(summary.totalsByColumn.equipment)}
                   </td>
-                  <td className="border-r border-zinc-700 px-4 py-3 text-right">
+                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
                     {formatCurrency(summary.totalsByColumn.other)}
                   </td>
-                  <td className="border-r border-zinc-700 px-4 py-3 text-right">
+                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
                     {formatCurrency(summary.totalEstimatedCost)}
                   </td>
                   <td className="px-4 py-3 text-right">100.00%</td>
@@ -512,7 +491,6 @@ export function CostEstimateView({
                 </tr>
               </tfoot>
             </table>
-          </div>
         </div>
       )}
 
@@ -537,6 +515,7 @@ export function CostEstimateView({
           projectId={projectId}
           categories={categoryOptions}
           task={taskModal ?? undefined}
+          defaultLaborCostPercent={defaultLaborCostPercent}
           onSuccess={() => setTaskModal(null)}
         />
       </Modal>

@@ -70,7 +70,21 @@ export function Modal({
           e.clientY <= rect.bottom;
         if (!inside) onClose();
       }}
-      className="m-auto max-h-[calc(100dvh-2rem)] w-full max-w-2xl rounded-lg border border-zinc-200 bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col"
+      // left-auto un-sets the browser's own dialog:modal default of
+      // left:0 (part of its inset:0 shorthand) — with that still active,
+      // having both left:0 and right:0 plus an explicit width is
+      // over-constrained, and the spec has left win over right for LTR
+      // content, which docked this to the left instead. A <dialog>
+      // doesn't stretch to fill top+bottom insets the way an ordinary
+      // fixed-position div would (confirmed directly — with bottom-4
+      // instead of an explicit height, it just sized to its own content
+      // and left a large unintended gap at the bottom), so the height
+      // is computed explicitly instead. max-h-none un-sets the same
+      // default's own max-height (a calc() a few pixels short of 100%,
+      // meant for its old centered/margined look), which would otherwise
+      // still clip the explicit height below. rounded-lg is this app's
+      // own 5px token (see globals.css), not Tailwind's default 8px.
+      className="fixed top-4 right-4 left-auto m-0 h-[calc(100dvh-2rem)] max-h-none w-full max-w-2xl overflow-hidden rounded-lg border border-zinc-200 bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col"
     >
       <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
         <div className="flex items-center gap-1">

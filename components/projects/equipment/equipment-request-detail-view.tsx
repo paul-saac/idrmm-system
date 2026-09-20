@@ -2,7 +2,8 @@
 
 import { useActionState, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Pencil } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { EquipmentRequestEditForm } from "@/components/projects/equipment/equipment-request-edit-form";
 import {
@@ -227,7 +228,7 @@ export function EquipmentRequestDetailView({
                   onClick={() => setEditOpen(true)}
                   className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
                 >
-                  <Pencil className="size-3.5" />
+                  <EditIcon className="size-3.5" />
                   Edit
                 </button>
               </div>

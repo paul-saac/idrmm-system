@@ -5,20 +5,14 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
-import {
-  ChevronsDown,
-  ChevronsUp,
-  ChevronDown,
-  ChevronRight,
-  Diamond,
-  Pencil,
-  Plus,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Redo2, Undo2 } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { AddPhaseForm } from "@/components/projects/progress/add-phase-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
 import { updateTaskSchedule, setPredecessor } from "@/lib/cost-estimate/actions";
+import { undoGanttAction, redoGanttAction } from "@/lib/cost-estimate/undo-redo-actions";
 import type { CostCategory, CostTask } from "@/lib/cost-estimate/data";
 import type { ProjectProgress } from "@/lib/progress/data";
 
@@ -99,13 +93,6 @@ const VIEW_MODE: Record<TimelineView, ViewMode> = {
   year: ViewMode.Year,
 };
 
-const VIEW_LABELS: Record<TimelineView, string> = {
-  day: "Day",
-  week: "Week",
-  month: "Month",
-  year: "Year",
-};
-
 // Baseline column width per zoom level — the actual width used is
 // whichever is wider between this and "however much it takes to fill
 // the chart's available width" (see effectiveColumnWidth below), so a
@@ -155,45 +142,41 @@ function estimateColumnCount(view: TimelineView, min: Date, max: Date) {
 // state change is just a normal React re-render of our own lightweight
 // table, not something that forces the whole chart to re-init. No
 // guide-line-then-snap-on-release needed — every column resizes live.
-const RESIZABLE_COLUMN_IDS = ["text", "start", "end", "duration"] as const;
+const RESIZABLE_COLUMN_IDS = ["text", "start", "end", "duration", "priority"] as const;
 type ResizableColumnId = (typeof RESIZABLE_COLUMN_IDS)[number];
 
 // Start/end are wider than a plain date label needs — the native
 // <input type="date"> that renders in those columns (see
 // CustomTaskListTable) wants more room for its "MM/DD/YYYY" segments
 // plus the calendar-icon affordance than static text like "Jan 5" did.
+// text is wider than a name alone needs, too — its own add/edit buttons
+// (moved into this cell, see CustomTaskListTable) now share the space
+// with the name, not a separate Actions column.
 const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
-  text: 176,
+  text: 220,
   start: 108,
   end: 108,
   duration: 60,
+  priority: 84,
 };
 
 const MIN_COLUMN_WIDTH: Record<ResizableColumnId, number> = {
-  text: 100,
+  text: 140,
   start: 84,
   end: 84,
   duration: 40,
+  priority: 64,
 };
-
-// Wide enough for the busiest case: a phase row's add-task / edit /
-// delete trio. Task rows only ever show two of the three (no add-task),
-// so they sit with a little extra breathing room in the same column.
-const ACTIONS_COLUMN_WIDTH = 88;
 
 const COLUMN_LABEL: Record<ResizableColumnId, string> = {
   text: "Task",
   start: "Start",
   end: "End",
   duration: "Days",
+  priority: "Priority",
 };
 
 const RIGHT_ALIGNED_COLUMNS = new Set<ResizableColumnId>(["duration"]);
-
-const TOOLBAR_BUTTON_CLASS =
-  "flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900";
-const TOOLBAR_BUTTON_ACTIVE_CLASS =
-  "flex cursor-pointer items-center gap-1.5 rounded border border-zinc-800 bg-zinc-800 px-2.5 py-1.5 text-xs font-medium text-white transition";
 
 const ROW_HEIGHT = 34;
 const HEADER_HEIGHT = 44;
@@ -487,11 +470,12 @@ function usePendingScheduleOverrides(categories: CostCategory[]) {
  * after a DHTMLX detour) — chosen this time specifically for its
  * TaskListHeader/TaskListTable props: unlike SVAR's string-based column
  * config or DHTMLX's HTML-string cell templates, these are plain React
- * components we supply outright, so the Task/Start/End/Days/Actions
- * grid below is real JSX — including mounting the actual Pencil-edit
- * buttons directly in a cell, which DHTMLX's HTML-template cells
- * couldn't do at all. Delete itself isn't a separate Actions-column
- * icon here (unlike the Cost Estimate Breakdown's own table) — it's a
+ * components we supply outright, so the Task/Start/End/Days/Priority
+ * grid below is real JSX — including mounting the actual add/edit
+ * buttons directly in the Task cell (no separate Actions column — see
+ * that cell's own comment below for why), which DHTMLX's HTML-template
+ * cells couldn't do at all. Delete itself isn't a button in this table
+ * at all (unlike the Cost Estimate Breakdown's own table) — it's a
  * button inside each row's own Edit modal instead, see SubtaskForm's
  * and CategoryForm's own doc comments.
  *
@@ -539,25 +523,32 @@ export function GanttChartView({
   categories,
   progress,
   projectStartDate,
-  toolbarSlot,
+  projectTargetEndDate,
+  canUndo,
+  canRedo,
 }: {
   projectId: number;
   categories: CostCategory[];
   progress: ProjectProgress;
   projectStartDate: string | null;
-  /** DOM node (rendered by the parent's sub-tabs row) this view's own
-   * Day/Week/Month/Year + Expand all/Collapse all/Hide Task List
-   * toolbar portals into — see SubTabsRow in project-detail-view.tsx. */
-  toolbarSlot: HTMLDivElement | null;
+  /** Bounds a task's own typed Start/End edits below — a date outside
+   * this window reverts instead of saving (see handleTaskDateEdit). */
+  projectTargetEndDate: string | null;
+  /** From lib/cost-estimate/undo-redo.ts's getGanttUndoRedoState, fetched
+   * server-side alongside categories/progress — refreshes for free
+   * through the same revalidatePath/router.refresh() flow every Gantt
+   * mutation already triggers, no separate polling needed. */
+  canUndo: boolean;
+  canRedo: boolean;
 }) {
   const router = useRouter();
-  // Month is the default zoom: unlike Week, its column labels are plain
-  // month names with no "W##" numbering that could read as resetting
-  // each time the visible range crosses a year boundary (an ISO-8601
-  // week-numbering quirk, not a bug, but confusing at a glance for a
-  // non-technical viewer). Week is still one click away for anyone who
-  // wants the finer granularity.
-  const [view, setView] = useState<TimelineView>("month");
+  // Month is the default (and, for now, only — the Day/Week/Month/Year
+  // toolbar was removed pending a later design pass): unlike Week, its
+  // column labels are plain month names with no "W##" numbering that
+  // could read as resetting each time the visible range crosses a year
+  // boundary (an ISO-8601 week-numbering quirk, not a bug, but
+  // confusing at a glance for a non-technical viewer).
+  const view: TimelineView = "month";
   const [categoryModal, setCategoryModal] = useState<
     | { mode: "add" }
     | { mode: "edit"; category: { id: number; name: string } }
@@ -572,14 +563,162 @@ export function GanttChartView({
     new Set()
   );
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  // No existing "disable while a direct server-action call is in
+  // flight" convention in this component to reuse (updateTaskSchedule/
+  // setPredecessor below are called directly, not through
+  // useActionState — only the 3 modal forms get a `pending` flag for
+  // free that way), so this is its own local state, same as those two
+  // already manage their own optimistic/error state by hand.
+  const [isUndoRedoPending, setIsUndoRedoPending] = useState(false);
+
+  async function handleUndo() {
+    if (!canUndo || isUndoRedoPending) return;
+    setIsUndoRedoPending(true);
+    setScheduleError(null);
+    const result = await undoGanttAction(projectId);
+    setIsUndoRedoPending(false);
+    if (result.error) {
+      setScheduleError(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
+  async function handleRedo() {
+    if (!canRedo || isUndoRedoPending) return;
+    setIsUndoRedoPending(true);
+    setScheduleError(null);
+    const result = await redoGanttAction(projectId);
+    setIsUndoRedoPending(false);
+    if (result.error) {
+      setScheduleError(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
+  // Ctrl+Z (undo) / Ctrl+Y or Ctrl+Shift+Z (redo, both — Y is the
+  // Windows convention this was explicitly asked for, Shift+Z the
+  // common Mac/Linux alternative, cheap to also support) — window-level
+  // since there's no single element that "owns" the whole chart's focus.
+  // Never fires while focus is actually inside a text field or a modal
+  // is open: Ctrl+Z typed into a task name field should undo *that*
+  // text edit (the browser's own native behavior), not the whole
+  // project's schedule/cost history out from under whatever the user is
+  // mid-typing.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const modifier = e.ctrlKey || e.metaKey;
+      if (!modifier) return;
+
+      const key = e.key.toLowerCase();
+      if (key !== "z" && key !== "y") return;
+
+      if (categoryModal || taskModal) return;
+
+      const target = e.target as HTMLElement | null;
+      const isEditableTarget =
+        !!target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      if (isEditableTarget) return;
+
+      e.preventDefault();
+      if (key === "y" || (key === "z" && e.shiftKey)) {
+        handleRedo();
+      } else {
+        handleUndo();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUndo, canRedo, isUndoRedoPending, categoryModal, taskModal]);
+
+  // Which phase row's Start/End cell currently has its "why can't I
+  // edit this" info bubble open — a phase's date input is inert
+  // (pointer-events-none, see CustomTaskListTable), so this is driven
+  // by a click on the *cell* wrapping it instead of the input itself.
+  // top/left are the clicked cell's own getBoundingClientRect(), taken
+  // once at click time — the bubble itself is portaled straight to
+  // <body> and positioned from these instead of living in-flow inside
+  // the task list panel, since that panel's own horizontal scroll
+  // clipping was cutting the bubble off the moment it grew wider than
+  // the panel (confirmed directly: the text was cut off mid-word).
+  const [dateInfoTooltip, setDateInfoTooltip] = useState<{
+    rowId: string;
+    field: "start" | "end";
+    top: number;
+    left: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!dateInfoTooltip) return;
+    function handleOutsideClick(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-phase-date-cell]")) {
+        setDateInfoTooltip(null);
+      }
+    }
+    // Dismiss rather than drift out of place — a portaled, fixed-
+    // position bubble positioned from a one-time getBoundingClientRect()
+    // can't follow the cell live the way an in-flow tooltip would if
+    // the chart (or the page) scrolls while it's open.
+    function handleScroll() {
+      setDateInfoTooltip(null);
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [dateInfoTooltip]);
+  // A task row's own Start/End cell's "focused" look (white background +
+  // border, plus the calendar icon itself — see its own opacity rule in
+  // globals.css) is driven by a plain `data-cell-active` DOM attribute,
+  // toggled directly by each input's own onFocus/onBlur (see the inputs
+  // themselves below) — deliberately NOT React state, and this is the
+  // second attempt at that: a first version tracked it as state right
+  // here (`activeDateCell`, since removed) and confirmed directly that
+  // doing so broke the calendar icon entirely (clicking it opened
+  // nothing). Root cause: CustomTaskListTable is declared *inside* this
+  // component (see handleChartMouseDown's own doc comment above for the
+  // same hazard hit once already, there for a different reason) — a
+  // fresh function reference every render — so any state update here
+  // that re-renders this component hands gantt-task-react's <Gantt> a
+  // brand-new TaskListTable prop, which gantt-task-react (ordinary React
+  // reconciliation on a changed element type) responds to by unmounting
+  // and remounting the *entire* task list. setActiveDateCell(...) inside
+  // onFocus was triggering exactly that remount, on every single click —
+  // destroying the real DOM node the browser had just focused a moment
+  // earlier and replacing it with an unfocused twin, right as the
+  // browser would otherwise have opened the native picker from that same
+  // click. A plain DOM attribute mutation never touches React state, so
+  // it never re-renders this component and never triggers that remount.
+  //
+  // :focus itself was ruled out before this (twice — an !important
+  // :focus rule didn't help either): confirmed directly that Chromium
+  // stops matching :focus on a date input the moment its own calendar
+  // popup opens, even though the field never actually blurs — which is
+  // also exactly why plain onFocus/onBlur (real DOM events, not a CSS
+  // pseudo-class) is the right primitive to hang this off of: the field
+  // never actually blurs while its own popup is open, so the attribute
+  // stays set for that whole time with no dependency on :focus at all,
+  // and each input manages only its own attribute — no shared "which
+  // cell is active" bookkeeping (state or otherwise) needed at all,
+  // since a direct field-to-field click always pairs blur (old field)
+  // with focus (new field), no cross-cell coordination required.
+
   const [columnWidths, setColumnWidths] =
     useState<Record<ResizableColumnId, number>>(DEFAULT_COLUMN_WIDTHS);
-  // Collapsing the grid to just the timeline is a documented
-  // gantt-task-react pattern: an empty `listCellWidth` hides it
-  // entirely (not a boolean prop) — useful for a wide project where the
-  // Task/Start/End/etc columns aren't needed and the timeline could use
-  // the room.
-  const [showTaskList, setShowTaskList] = useState(true);
+  // Always shown for now — the toolbar's own Show/Hide Task List toggle
+  // was removed pending a later design pass. Collapsing the grid to
+  // just the timeline is a documented gantt-task-react pattern: an
+  // empty `listCellWidth` hides it entirely (not a boolean prop).
+  const showTaskList = true;
 
   const percentCompleteByTaskId = useMemo(() => {
     const map = new Map<number, number>();
@@ -631,6 +770,22 @@ export function GanttChartView({
     }
     return map;
   }, [categories]);
+
+  // Double-click a bar (phase or task) to see/edit its full details —
+  // same modal the row's own edit button already opens, just reachable
+  // straight from the chart itself too. gantt-task-react's own
+  // onDoubleClick prop already debounces this against a single click
+  // (used elsewhere for drag-start), so no extra timing logic is needed
+  // here.
+  function handleBarDoubleClick(row: GanttTask) {
+    if (row.type === "project") {
+      const category = categoryById.get(row.id);
+      if (category) setCategoryModal({ mode: "edit", category });
+      return;
+    }
+    const task = taskById.get(row.id);
+    if (task) setTaskModal({ mode: "edit", task });
+  }
 
   const tasks: GanttTask[] = useMemo(() => {
     const result: GanttTask[] = [];
@@ -714,9 +869,10 @@ export function GanttChartView({
 
   const hasAnyCategory = categories.length > 0;
 
-  const totalColumnsWidth =
-    RESIZABLE_COLUMN_IDS.reduce((sum, id) => sum + columnWidths[id], 0) +
-    ACTIONS_COLUMN_WIDTH;
+  const totalColumnsWidth = RESIZABLE_COLUMN_IDS.reduce(
+    (sum, id) => sum + columnWidths[id],
+    0
+  );
 
   // Earliest start / latest end across every rendered row (phase and
   // task), used only to estimate how many header columns the current
@@ -1159,78 +1315,46 @@ export function GanttChartView({
   // alternative to dragging the bar. A milestone has no duration — its
   // start and end are always kept equal — so editing either field moves
   // the whole diamond rather than stretching a (non-existent) duration.
-  function handleTaskDateEdit(row: GanttTask, field: "start" | "end", value: string) {
+  //
+  // A typed value outside the project's own Start Date -> Target End
+  // Date window is rejected rather than saved — task-level dates are
+  // meant to fall within the project's overall span, and this is the
+  // one independently-stored "parent" range there actually is (a
+  // phase/category's own start/end is purely a rollup of its tasks, not
+  // a stored value — see handlePhaseDateEdit's own comment, now removed
+  // along with phase date editing entirely). Since the input is
+  // uncontrolled (see its own key comment below), rejecting a value
+  // doesn't visually undo it on its own — inputEl.value is set back to
+  // the field's last known-good date directly so the field snaps back
+  // instead of quietly keeping the rejected value on screen.
+  function handleTaskDateEdit(
+    row: GanttTask,
+    field: "start" | "end",
+    value: string,
+    inputEl: HTMLInputElement
+  ) {
     if (!value) return;
+
+    if (projectStartDate && projectTargetEndDate) {
+      const typedMs = toDate(value).getTime();
+      const minMs = toDate(projectStartDate).getTime();
+      const maxMs = toDate(projectTargetEndDate).getTime();
+      if (typedMs < minMs || typedMs > maxMs) {
+        inputEl.value = toIsoDate(field === "start" ? row.start : row.end);
+        setScheduleError(
+          `Date must be between ${formatDateCell(toDate(projectStartDate))} and ${formatDateCell(toDate(projectTargetEndDate))} (the project's own Start/Target End Date).`
+        );
+        return;
+      }
+    }
+
+    setScheduleError(null);
     const isMilestone = row.type === "milestone";
     const startIso =
       field === "start" ? value : isMilestone ? value : toIsoDate(row.start);
     const endIso =
       field === "end" ? value : isMilestone ? value : toIsoDate(row.end);
     persistTaskDates(Number(row.id), startIso, endIso);
-  }
-
-  // A phase row's own Start/End is a computed rollup (earliest child
-  // start, latest child end) — there's no planned_start_date/
-  // planned_end_date column on a category to write one directly into.
-  // Editing it here instead shifts every task in the phase by the same
-  // number of days, so the whole phase moves earlier/later as one block
-  // while every task keeps its own duration and its spacing relative to
-  // the others — the same thing dragging the phase bar itself would do,
-  // if gantt-task-react's project bars were draggable (they deliberately
-  // aren't; see the class doc comment). Editing Start anchors the shift
-  // on the earliest child's current start; editing End anchors it on the
-  // latest child's current end — either way it's one uniform shift, not
-  // a per-child rescale, so the result is always just the same layout
-  // moved in time, never compressed or stretched.
-  async function handlePhaseDateEdit(
-    categoryId: number,
-    field: "start" | "end",
-    value: string
-  ) {
-    if (!value) return;
-    const category = categories.find((c) => c.id === categoryId);
-    if (!category || category.tasks.length === 0) return;
-
-    const childDates = category.tasks.map(resolvedDates);
-    const anchor =
-      field === "start"
-        ? new Date(Math.min(...childDates.map((d) => d.start.getTime())))
-        : new Date(Math.max(...childDates.map((d) => d.end.getTime())));
-    const deltaMs = toDate(value).getTime() - anchor.getTime();
-    if (deltaMs === 0) return;
-
-    setScheduleError(null);
-    const results = await Promise.all(
-      category.tasks.map((task, i) => {
-        const d = childDates[i];
-        const newStart = new Date(d.start.getTime() + deltaMs);
-        const newEnd = new Date(d.end.getTime() + deltaMs);
-        return updateTaskSchedule(
-          task.id,
-          projectId,
-          toIsoDate(newStart),
-          toIsoDate(newEnd)
-        );
-      })
-    );
-    const failed = results.find((r) => r.error);
-    if (failed) {
-      setScheduleError(failed.error ?? "Could not shift the phase's schedule.");
-      return;
-    }
-    router.refresh();
-  }
-
-  function setAllPhasesOpen(open: boolean) {
-    setCollapsedPhaseIds((prev) => {
-      const next = new Set(prev);
-      for (const category of categories) {
-        if (category.tasks.length === 0) continue;
-        if (open) next.delete(phaseRowId(category.id));
-        else next.add(phaseRowId(category.id));
-      }
-      return next;
-    });
   }
 
   // A resizable column header cell + its drag handle at the right edge.
@@ -1276,8 +1400,8 @@ export function GanttChartView({
               <button
                 type="button"
                 onClick={() => setCategoryModal({ mode: "add" })}
-                aria-label="Add phase"
-                title="Add phase"
+                aria-label="Add task"
+                title="Add task"
                 className="shrink-0 cursor-pointer rounded p-0.5 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
               >
                 <Plus className="size-3.5" />
@@ -1293,12 +1417,6 @@ export function GanttChartView({
             <HeaderCell key={id} id={id} />
           )
         )}
-        <div
-          className="flex h-full shrink-0 items-center justify-end px-2 text-xs font-medium text-zinc-700"
-          style={{ width: ACTIONS_COLUMN_WIDTH }}
-        >
-          Actions
-        </div>
       </div>
     );
   }
@@ -1320,13 +1438,6 @@ export function GanttChartView({
           const category = isProject ? categoryById.get(row.id) : undefined;
           const task = !isProject ? taskById.get(row.id) : undefined;
           const days = daysBetween(row.start, row.end);
-          // A phase's Start/End is only editable once it actually has
-          // tasks to shift — an empty phase's row shows a placeholder
-          // date range with nothing behind it to persist a shift into.
-          const canEditPhaseDates =
-            isProject &&
-            (categories.find((c) => phaseRowId(c.id) === row.id)?.tasks
-              .length ?? 0) > 0;
 
           return (
             <div
@@ -1342,7 +1453,7 @@ export function GanttChartView({
               }`}
             >
               <div
-                className="flex h-full shrink-0 items-center gap-1 truncate px-2 text-zinc-800"
+                className="flex h-full shrink-0 items-center gap-1 px-2 text-zinc-800"
                 style={{ width: columnWidths.text }}
               >
                 {isProject && (
@@ -1359,100 +1470,37 @@ export function GanttChartView({
                     )}
                   </button>
                 )}
-                {row.type === "milestone" && (
-                  // Matches gantt-task-react's own default
-                  // milestoneBackgroundColor (#f1c453) — the chart's own
-                  // diamond can be easy to miss at typical zoom (its
-                  // rendered width is often well under 20px), so this
-                  // gives the task list an unmissable second cue rather
-                  // than relying solely on the Days column's own "—".
-                  <Diamond
-                    aria-label="Milestone"
-                    className="size-3 shrink-0 fill-amber-400 text-amber-500"
-                  />
-                )}
                 <span
                   className={
                     isProject
-                      ? "truncate font-bold"
-                      // pl-4 nudges a sub-task's own name in from the
+                      ? "min-w-0 flex-1 truncate font-bold"
+                      // pl-6 nudges a sub-task's own name in from the
                       // cell's edge — phase names sit flush left of their
                       // own chevron, so an unindented task name read as
                       // the same hierarchy level instead of belonging
                       // *under* its phase. Scoped to just this span (not
                       // the row/cell) so it's only the name text that
-                      // shifts, not the Milestone diamond before it.
-                      : "truncate pl-4 font-medium"
+                      // shifts. A full pl-6 (not pl-4) so it reads as
+                      // clearly nested a level beyond the phase's own
+                      // chevron+name, not just barely offset from it.
+                      // min-w-0 + flex-1 (not just truncate) since this
+                      // cell is no longer just a name — it also holds the
+                      // add/edit buttons below (formerly their own
+                      // Actions column), and a flex item needs an
+                      // explicit min-width of 0 to truncate at all rather
+                      // than pushing those buttons out past the column's
+                      // own width.
+                      : "min-w-0 flex-1 truncate pl-6 font-medium"
                   }
                 >
                   {row.name}
                 </span>
-              </div>
-              <div
-                className="flex h-full shrink-0 items-center"
-                style={{ width: columnWidths.start }}
-              >
-                {isProject && !canEditPhaseDates ? (
-                  <span className="px-2">{formatDateCell(row.start)}</span>
-                ) : (
-                  <input
-                    // Forces a remount (and so a freshly-evaluated
-                    // defaultValue) whenever the underlying date actually
-                    // changes — including live, frame-by-frame, while
-                    // dragging the bar. Without this the input is an
-                    // ordinary uncontrolled field: it mounts once and
-                    // never notices row.start changing on a later
-                    // render, the same reason the Days column (plain
-                    // text, recomputed every render — no such staleness)
-                    // already tracked a drag live and this didn't.
-                    // Typing a date is unaffected: that only changes the
-                    // input's own DOM value, not row.start, so the key
-                    // stays put and nothing remounts mid-edit.
-                    key={toIsoDate(row.start)}
-                    type="date"
-                    defaultValue={toIsoDate(row.start)}
-                    onChange={(e) =>
-                      isProject && category
-                        ? handlePhaseDateEdit(category.id, "start", e.target.value)
-                        : handleTaskDateEdit(row, "start", e.target.value)
-                    }
-                    aria-label={`${row.name} start date`}
-                    className="h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light hover:bg-zinc-100 focus:bg-white focus:outline focus:-outline-offset-2 focus:outline-zinc-400"
-                  />
-                )}
-              </div>
-              <div
-                className="flex h-full shrink-0 items-center"
-                style={{ width: columnWidths.end }}
-              >
-                {isProject && !canEditPhaseDates ? (
-                  <span className="px-2">{formatDateCell(row.end)}</span>
-                ) : (
-                  <input
-                    // See the matching comment on the Start input above.
-                    key={toIsoDate(row.end)}
-                    type="date"
-                    defaultValue={toIsoDate(row.end)}
-                    onChange={(e) =>
-                      isProject && category
-                        ? handlePhaseDateEdit(category.id, "end", e.target.value)
-                        : handleTaskDateEdit(row, "end", e.target.value)
-                    }
-                    aria-label={`${row.name} end date`}
-                    className="h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light hover:bg-zinc-100 focus:bg-white focus:outline focus:-outline-offset-2 focus:outline-zinc-400"
-                  />
-                )}
-              </div>
-              <div
-                className="flex h-full shrink-0 items-center justify-end px-2"
-                style={{ width: columnWidths.duration }}
-              >
-                {row.type === "milestone" ? "—" : days}
-              </div>
-              <div
-                className="flex h-full shrink-0 items-center justify-end gap-1 px-2"
-                style={{ width: ACTIONS_COLUMN_WIDTH }}
-              >
+                {/* Formerly their own Actions column, moved in here per
+                    an explicit user request — a phase row's add-task/
+                    edit pair, or a task row's own single edit button.
+                    Delete lives inside each row's own Edit modal (see
+                    CategoryForm's/SubtaskForm's own showDeleteButton /
+                    built-in Delete button), not a button here. */}
                 {isProject && category ? (
                   <>
                     <button
@@ -1465,38 +1513,234 @@ export function GanttChartView({
                       }
                       aria-label={`Add task to ${category.name}`}
                       title="Add task"
-                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                      className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
                     >
                       <Plus className="size-3.5" />
                     </button>
-                    {/* Delete lives inside this modal now (see
-                        CategoryForm's own showDeleteButton prop), not as
-                        a second Actions-column icon next to Edit. */}
                     <button
                       type="button"
                       onClick={() => setCategoryModal({ mode: "edit", category })}
                       aria-label="Edit category"
                       title="Edit phase"
-                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                      className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
                     >
-                      <Pencil className="size-3.5" />
+                      <EditIcon className="size-3.5" />
                     </button>
                   </>
                 ) : (
                   !isProject &&
                   task && (
-                    // Same idea — see SubtaskForm's own built-in Delete
-                    // button (edit mode only).
                     <button
                       type="button"
                       onClick={() => setTaskModal({ mode: "edit", task })}
                       aria-label="Edit task item"
                       title="Edit task"
-                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                      className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
                     >
-                      <Pencil className="size-3.5" />
+                      <EditIcon className="size-3.5" />
                     </button>
                   )
+                )}
+              </div>
+              <div
+                className="relative flex h-full shrink-0 items-center"
+                style={{ width: columnWidths.start }}
+                data-phase-date-cell={isProject ? true : undefined}
+                onClick={
+                  isProject
+                    ? (e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setDateInfoTooltip((current) =>
+                          current?.rowId === row.id && current.field === "start"
+                            ? null
+                            : {
+                                rowId: row.id,
+                                field: "start",
+                                top: rect.bottom,
+                                left: rect.left,
+                              }
+                        );
+                      }
+                    : undefined
+                }
+              >
+                {isProject ? (
+                  // Same <input type="date"> as a task row below, for the
+                  // exact same native MM/DD/YYYY rendering — just locked
+                  // down (readOnly + pointer-events-none + unfocusable)
+                  // since a phase's own start/end is a rollup of its
+                  // tasks, never something to edit directly here. The
+                  // calendar icon itself is hidden entirely for a
+                  // readonly date input specifically (see globals.css) —
+                  // a plain span would drift from the task rows' own
+                  // date format (locale, separators) since it can't reuse
+                  // the input's own native formatting.
+                  <input
+                    key={toIsoDate(row.start)}
+                    type="date"
+                    readOnly
+                    tabIndex={-1}
+                    defaultValue={toIsoDate(row.start)}
+                    aria-label={`${row.name} start date`}
+                    className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
+                  />
+                ) : (
+                  <input
+                    // Forces a remount (and so a freshly-evaluated
+                    // defaultValue) whenever the underlying date actually
+                    // changes — including live, frame-by-frame, while
+                    // dragging the bar. Without this the input is an
+                    // ordinary uncontrolled field: it mounts once and
+                    // never notices row.start changing on a later
+                    // render, the same reason the Days column (plain
+                    // text, recomputed every render — no such staleness)
+                    // already tracked a drag live and this didn't.
+                    key={toIsoDate(row.start)}
+                    type="date"
+                    defaultValue={toIsoDate(row.start)}
+                    onChange={(e) =>
+                      handleTaskDateEdit(row, "start", e.target.value, e.target)
+                    }
+                    onFocus={(e) => {
+                      e.currentTarget.dataset.cellActive = "true";
+                    }}
+                    onBlur={(e) => {
+                      delete e.currentTarget.dataset.cellActive;
+                    }}
+                    aria-label={`${row.name} start date`}
+                    className="h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light hover:bg-zinc-100"
+                  />
+                )}
+                {dateInfoTooltip?.rowId === row.id &&
+                  dateInfoTooltip.field === "start" &&
+                  createPortal(
+                    <div
+                      role="tooltip"
+                      style={{
+                        top: dateInfoTooltip.top + 8,
+                        left: dateInfoTooltip.left,
+                      }}
+                      className="fixed z-50 rounded bg-zinc-900 px-4 py-2 text-[11px] font-medium whitespace-nowrap text-white uppercase shadow-lg"
+                    >
+                      {/* The pointer — a 45deg-rotated square, half
+                          tucked behind the bubble's own top edge (so
+                          only its top-left/top-right corners peek out
+                          above it) and half above it, reading as a
+                          triangle pointing up at the cell that opened
+                          this tooltip. */}
+                      <div className="absolute -top-1.5 left-4 size-3 rotate-45 bg-zinc-900" />
+                      This is calculated automatically from the earliest
+                      planned start date of its subtasks.
+                    </div>,
+                    document.body
+                  )}
+              </div>
+              <div
+                className="relative flex h-full shrink-0 items-center"
+                style={{ width: columnWidths.end }}
+                data-phase-date-cell={isProject ? true : undefined}
+                onClick={
+                  isProject
+                    ? (e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setDateInfoTooltip((current) =>
+                          current?.rowId === row.id && current.field === "end"
+                            ? null
+                            : {
+                                rowId: row.id,
+                                field: "end",
+                                top: rect.bottom,
+                                left: rect.left,
+                              }
+                        );
+                      }
+                    : undefined
+                }
+              >
+                {isProject ? (
+                  // See the matching comment on the Start input above.
+                  <input
+                    key={toIsoDate(row.end)}
+                    type="date"
+                    readOnly
+                    tabIndex={-1}
+                    defaultValue={toIsoDate(row.end)}
+                    aria-label={`${row.name} end date`}
+                    className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
+                  />
+                ) : (
+                  <input
+                    // See the matching comment on the Start input above.
+                    key={toIsoDate(row.end)}
+                    type="date"
+                    defaultValue={toIsoDate(row.end)}
+                    onChange={(e) =>
+                      handleTaskDateEdit(row, "end", e.target.value, e.target)
+                    }
+                    onFocus={(e) => {
+                      e.currentTarget.dataset.cellActive = "true";
+                    }}
+                    onBlur={(e) => {
+                      delete e.currentTarget.dataset.cellActive;
+                    }}
+                    aria-label={`${row.name} end date`}
+                    className="h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light hover:bg-zinc-100"
+                  />
+                )}
+                {dateInfoTooltip?.rowId === row.id &&
+                  dateInfoTooltip.field === "end" &&
+                  createPortal(
+                    <div
+                      role="tooltip"
+                      style={{
+                        top: dateInfoTooltip.top + 8,
+                        left: dateInfoTooltip.left,
+                      }}
+                      className="fixed z-50 rounded bg-zinc-900 px-4 py-2 text-[11px] font-medium whitespace-nowrap text-white uppercase shadow-lg"
+                    >
+                      {/* See the matching comment on the Start tooltip
+                          above. */}
+                      <div className="absolute -top-1.5 left-4 size-3 rotate-45 bg-zinc-900" />
+                      This is calculated automatically from the latest
+                      planned end date of its subtasks.
+                    </div>,
+                    document.body
+                  )}
+              </div>
+              <div
+                className="flex h-full shrink-0 items-center justify-end px-2"
+                style={{ width: columnWidths.duration }}
+              >
+                {row.type === "milestone" ? "—" : days}
+              </div>
+              <div
+                className="flex h-full shrink-0 items-center px-2"
+                style={{ width: columnWidths.priority }}
+              >
+                {/* Phase rows have no priority of their own (task ===
+                    undefined here) — a phase's priority, if it needs
+                    one, is a rollup question for later, not something
+                    stored directly on the category. Replaces the old
+                    dot-in-the-name-cell indicator (only shown for
+                    non-Medium) with its own column instead, now that
+                    there's room for the actual word rather than just a
+                    color cue. */}
+                {task && (
+                  <span
+                    className={
+                      task.priority === "high"
+                        ? "font-medium text-red-600"
+                        : task.priority === "low"
+                          ? "text-zinc-400"
+                          : "text-zinc-600"
+                    }
+                  >
+                    {task.priority === "high"
+                      ? "High"
+                      : task.priority === "low"
+                        ? "Low"
+                        : "Medium"}
+                  </span>
                 )}
               </div>
             </div>
@@ -1507,229 +1751,223 @@ export function GanttChartView({
   }
 
   return (
-    // -mx-8 breaks out of the tab content wrapper's own px-8 (set in
-    // project-detail-view.tsx, shared by every other tab) so the
-    // toolbar and chart below reach the true left/right edges of the
-    // page instead of sitting inset within it — scoped to just this
-    // component, so every other tab keeps its normal padding.
-    <div className="-mx-8 flex flex-col gap-3">
+    // No -mx-8 of its own — the Overview tab's whole content block
+    // (project-detail-view.tsx) already breaks out to the page's true
+    // left/right edges, this component included, so adding it again
+    // here would double the offset and push this chart's content past
+    // the edge (clipped by its own overflow-hidden wrapper below).
+    <div className="flex flex-col gap-3">
       {scheduleError && (
         <p role="alert" className="text-sm text-red-600">
           {scheduleError}
         </p>
       )}
 
-      {!hasAnyCategory ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-white py-16 text-center">
-          <p className="text-sm font-medium text-zinc-700">
-            No phases to schedule yet
-          </p>
-          <p className="mt-1 text-sm text-zinc-400">
-            Add a phase to start building the schedule.
-          </p>
+      {/* Toolbar + whatever follows (the chart, or the empty-state
+          placeholder) share this one un-gapped flex column so the
+          toolbar sits flush against it, no visible seam — a plain
+          sibling gap (like the rest of this component uses via the
+          outer gap-3) would leave a gap here instead. Their two
+          `border-zinc-200` edges land directly on top of each other
+          this way, reading as one continuous line rather than a double
+          border, same as adjacent bordered rows elsewhere in this
+          chart. */}
+      <div className="flex flex-col">
+        {/* Deliberately just Undo/Redo — a reference toolbar image with
+            ~25 icons (text color, cut/copy/paste, zoom, print, share,
+            lock, settings, ...) was the original ask, but none of those
+            other actions have a real feature behind them in this app, so
+            they're not here as decoration. */}
+        <div className="flex items-center gap-1 border border-zinc-200 bg-zinc-50 px-2 py-1.5">
           <button
             type="button"
-            onClick={() => setCategoryModal({ mode: "add" })}
-            className="mt-3 flex cursor-pointer items-center gap-1.5 rounded border border-zinc-800 bg-zinc-800 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-950"
+            onClick={handleUndo}
+            disabled={!canUndo || isUndoRedoPending}
+            aria-label="Undo"
+            title="Undo (Ctrl+Z)"
+            className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
           >
-            <Plus className="size-3.5" />
-            Add Phase
+            <Undo2 className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={handleRedo}
+            disabled={!canRedo || isUndoRedoPending}
+            aria-label="Redo"
+            title="Redo (Ctrl+Y)"
+            className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
+          >
+            <Redo2 className="size-4" />
           </button>
         </div>
-      ) : (
-        <>
-          {/* Portaled into the sub-tabs row's own right-aligned slot
-              (see SubTabsRow in project-detail-view.tsx) rather than
-              rendered as this panel's own header — right-aligned next
-              to Project Overview/Cost Estimate/Gantt Chart instead of
-              sitting in its own row above the chart. */}
-          {toolbarSlot &&
-            createPortal(
-              <div className="flex flex-wrap items-center gap-1.5">
-                {(Object.keys(VIEW_LABELS) as TimelineView[]).map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    className={
-                      v === view ? TOOLBAR_BUTTON_ACTIVE_CLASS : TOOLBAR_BUTTON_CLASS
-                    }
-                    onClick={() => setView(v)}
-                  >
-                    {VIEW_LABELS[v]}
-                  </button>
-                ))}
-                <span className="mx-1 h-4 w-px bg-zinc-200" />
-                <button
-                  type="button"
-                  className={TOOLBAR_BUTTON_CLASS}
-                  onClick={() => setAllPhasesOpen(true)}
-                >
-                  <ChevronsDown className="size-3.5" />
-                  Expand all
-                </button>
-                <button
-                  type="button"
-                  className={TOOLBAR_BUTTON_CLASS}
-                  onClick={() => setAllPhasesOpen(false)}
-                >
-                  <ChevronsUp className="size-3.5" />
-                  Collapse all
-                </button>
-                <span className="mx-1 h-4 w-px bg-zinc-200" />
-                <button
-                  type="button"
-                  onClick={() => setShowTaskList((s) => !s)}
-                  aria-pressed={showTaskList}
-                  className={
-                    showTaskList ? TOOLBAR_BUTTON_ACTIVE_CLASS : TOOLBAR_BUTTON_CLASS
-                  }
-                >
-                  {showTaskList ? "Hide" : "Show"} Task List
-                </button>
-              </div>,
-              toolbarSlot
-            )}
 
-          <div
-            ref={chartOuterRef}
-            className="overflow-hidden rounded-lg border border-zinc-200 bg-white"
-          >
-          <div
-            ref={chartWrapRef}
-            className="gantt-task-react-root h-220 overflow-auto"
-          >
-            <div
-              ref={ganttRootRef}
-              className="relative"
-              onMouseDown={handleChartMouseDown}
-              onMouseMove={handleChartMouseMove}
-              onMouseLeave={handleChartMouseLeave}
+        {!hasAnyCategory ? (
+          <div className="flex flex-col items-center justify-center border border-dashed border-zinc-300 bg-white py-16 text-center">
+            <p className="text-sm font-medium text-zinc-700">
+              No phases to schedule yet
+            </p>
+            <p className="mt-1 text-sm text-zinc-400">
+              Add a phase to start building the schedule.
+            </p>
+            <button
+              type="button"
+              onClick={() => setCategoryModal({ mode: "add" })}
+              className="mt-3 flex cursor-pointer items-center gap-1.5 rounded border border-zinc-800 bg-zinc-800 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-950"
             >
-              <Gantt
-                tasks={effectiveTasks}
-                viewMode={VIEW_MODE[view]}
-                rowHeight={ROW_HEIGHT}
-                headerHeight={HEADER_HEIGHT}
-                listCellWidth={showTaskList ? `${totalColumnsWidth}px` : ""}
-                columnWidth={effectiveColumnWidth}
-                todayColor="rgba(252, 211, 77, 0.15)"
-                TooltipContent={GanttTooltipContent}
-                TaskListHeader={CustomTaskListHeader}
-                TaskListTable={CustomTaskListTable}
-                onDateChange={(task) => persistDrag(task)}
-                onExpanderClick={(task) => {
-                  setCollapsedPhaseIds((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(task.id)) next.delete(task.id);
-                    else next.add(task.id);
-                    return next;
-                  });
-                }}
-              />
-              {/* position: absolute (not fixed) — a normal-flow sibling
-                  of <Gantt>'s own output inside this `relative`
-                  wrapper, so native scrolling of chartWrapRef carries
-                  every handle along for free, with no scroll listener
-                  and no re-measurement. Left mounted at all times and
-                  toggled by opacity/pointer-events rather than
-                  conditionally rendered, so showing/hiding a handle on
-                  hover is a plain className swap, not a mount/unmount. */}
-              {barPositions.flatMap((pos) => {
-                const isHovered = pos.taskId === hoveredTaskId;
-                const handleClass = `absolute z-40 size-2.5 -translate-y-1/2 cursor-crosshair rounded-full border border-white bg-zinc-400 shadow transition hover:scale-125 hover:bg-zinc-600 ${
-                  isHovered ? "opacity-100" : "pointer-events-none opacity-0"
-                }`;
-                return [
-                  <button
-                    key={`${pos.taskId}-start`}
-                    type="button"
-                    onMouseDown={handleConnectorDragStart(pos, "left")}
-                    aria-label="Drag to link a predecessor task"
-                    title="Drag to another task in this phase to set it as the successor"
-                    className={handleClass}
-                    style={{
-                      left: pos.left - CONNECTOR_HANDLE_GAP - CONNECTOR_HANDLE_SIZE,
-                      top: pos.centerY,
-                    }}
-                  />,
-                  <button
-                    key={`${pos.taskId}-end`}
-                    type="button"
-                    onMouseDown={handleConnectorDragStart(pos, "right")}
-                    aria-label="Drag to link a successor task"
-                    title="Drag to another task in this phase to set it as the successor"
-                    className={handleClass}
-                    style={{ left: pos.right + CONNECTOR_HANDLE_GAP, top: pos.centerY }}
-                  />,
-                ];
-              })}
-              {/* gantt-task-react's own per-row <text> is unreliable for
-                  a milestone specifically (see BarPosition's own doc
-                  comment) — hidden unconditionally now via the :has()
-                  rule in globals.css, and replaced with this instead.
-                  Always shown (not hover-gated like the connector
-                  handles above, since there's no bar for the name to
-                  sit inside of otherwise). Same zinc-800 every other
-                  task/phase name in the task list uses. Hidden for the
-                  length of any native bar drag — see isBarDragging's own
-                  doc comment for why a label left showing here would lag
-                  behind a dragged diamond, the same root cause the
-                  connector handles above already guard against. */}
-              {!isBarDragging &&
-                barPositions
-                  .filter((pos) => pos.isMilestone)
-                  .map((pos) => (
-                    <span
-                      key={`${pos.taskId}-label`}
-                      className="pointer-events-none absolute z-30 -translate-y-1/2 truncate text-xs font-medium text-zinc-800"
-                      style={{ left: pos.right + 6, top: pos.centerY }}
-                    >
-                      {pos.name}
-                    </span>
-                  ))}
-              {connectorDragState && (
-                <svg className="pointer-events-none absolute inset-0 z-50 h-full w-full overflow-visible">
-                  {/* x2/y2/cx/cy start at the mousedown position (this
-                      render's own connectorDragState.pointer*) and are
-                      then driven entirely by direct attribute writes in
-                      handleConnectorDragStart's onMove — never by a
-                      further React render — for as long as the drag
-                      lasts. */}
-                  <line
-                    ref={connectorLineRef}
-                    x1={connectorDragState.originX}
-                    y1={connectorDragState.originY}
-                    x2={connectorDragState.pointerX}
-                    y2={connectorDragState.pointerY}
-                    stroke="#2563eb"
-                    strokeWidth={2}
-                    strokeDasharray="5 4"
-                  />
-                  <circle
-                    cx={connectorDragState.originX}
-                    cy={connectorDragState.originY}
-                    r={4}
-                    fill="#2563eb"
-                  />
-                  <circle
-                    ref={connectorPointerRef}
-                    cx={connectorDragState.pointerX}
-                    cy={connectorDragState.pointerY}
-                    r={4}
-                    fill="#2563eb"
-                  />
-                </svg>
-              )}
+              <Plus className="size-3.5" />
+              Add Phase
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Toolbar (Day/Week/Month/Year, Expand/Collapse all, Show/
+                Hide Task List) removed for now — the Gantt chart and its
+                tooling get their own design pass later. view/showTaskList
+                stay at their defaults ("month"/true) with no UI to change
+                them until then. */}
+
+            <div
+              ref={chartOuterRef}
+              className="overflow-hidden border border-zinc-200 bg-white"
+            >
+            <div
+              ref={chartWrapRef}
+              className="gantt-task-react-root h-220 overflow-auto"
+            >
+              <div
+                ref={ganttRootRef}
+                className="relative"
+                onMouseDown={handleChartMouseDown}
+                onMouseMove={handleChartMouseMove}
+                onMouseLeave={handleChartMouseLeave}
+              >
+                <Gantt
+                  tasks={effectiveTasks}
+                  viewMode={VIEW_MODE[view]}
+                  rowHeight={ROW_HEIGHT}
+                  headerHeight={HEADER_HEIGHT}
+                  listCellWidth={showTaskList ? `${totalColumnsWidth}px` : ""}
+                  columnWidth={effectiveColumnWidth}
+                  todayColor="rgba(252, 211, 77, 0.15)"
+                  TooltipContent={GanttTooltipContent}
+                  TaskListHeader={CustomTaskListHeader}
+                  TaskListTable={CustomTaskListTable}
+                  onDateChange={(task) => persistDrag(task)}
+                  onDoubleClick={handleBarDoubleClick}
+                  onExpanderClick={(task) => {
+                    setCollapsedPhaseIds((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(task.id)) next.delete(task.id);
+                      else next.add(task.id);
+                      return next;
+                    });
+                  }}
+                />
+                {/* position: absolute (not fixed) — a normal-flow sibling
+                    of <Gantt>'s own output inside this `relative`
+                    wrapper, so native scrolling of chartWrapRef carries
+                    every handle along for free, with no scroll listener
+                    and no re-measurement. Left mounted at all times and
+                    toggled by opacity/pointer-events rather than
+                    conditionally rendered, so showing/hiding a handle on
+                    hover is a plain className swap, not a mount/unmount. */}
+                {barPositions.flatMap((pos) => {
+                  const isHovered = pos.taskId === hoveredTaskId;
+                  const handleClass = `absolute z-40 size-2.5 -translate-y-1/2 cursor-crosshair rounded-full border border-white bg-zinc-400 shadow transition hover:scale-125 hover:bg-zinc-600 ${
+                    isHovered ? "opacity-100" : "pointer-events-none opacity-0"
+                  }`;
+                  return [
+                    <button
+                      key={`${pos.taskId}-start`}
+                      type="button"
+                      onMouseDown={handleConnectorDragStart(pos, "left")}
+                      aria-label="Drag to link a predecessor task"
+                      title="Drag to another task in this phase to set it as the successor"
+                      className={handleClass}
+                      style={{
+                        left: pos.left - CONNECTOR_HANDLE_GAP - CONNECTOR_HANDLE_SIZE,
+                        top: pos.centerY,
+                      }}
+                    />,
+                    <button
+                      key={`${pos.taskId}-end`}
+                      type="button"
+                      onMouseDown={handleConnectorDragStart(pos, "right")}
+                      aria-label="Drag to link a successor task"
+                      title="Drag to another task in this phase to set it as the successor"
+                      className={handleClass}
+                      style={{ left: pos.right + CONNECTOR_HANDLE_GAP, top: pos.centerY }}
+                    />,
+                  ];
+                })}
+                {/* gantt-task-react's own per-row <text> is unreliable for
+                    a milestone specifically (see BarPosition's own doc
+                    comment) — hidden unconditionally now via the :has()
+                    rule in globals.css, and replaced with this instead.
+                    Always shown (not hover-gated like the connector
+                    handles above, since there's no bar for the name to
+                    sit inside of otherwise). Same zinc-800 every other
+                    task/phase name in the task list uses. Hidden for the
+                    length of any native bar drag — see isBarDragging's own
+                    doc comment for why a label left showing here would lag
+                    behind a dragged diamond, the same root cause the
+                    connector handles above already guard against. */}
+                {!isBarDragging &&
+                  barPositions
+                    .filter((pos) => pos.isMilestone)
+                    .map((pos) => (
+                      <span
+                        key={`${pos.taskId}-label`}
+                        className="pointer-events-none absolute z-30 -translate-y-1/2 truncate text-xs font-medium text-zinc-800"
+                        style={{ left: pos.right + 6, top: pos.centerY }}
+                      >
+                        {pos.name}
+                      </span>
+                    ))}
+                {connectorDragState && (
+                  <svg className="pointer-events-none absolute inset-0 z-50 h-full w-full overflow-visible">
+                    {/* x2/y2/cx/cy start at the mousedown position (this
+                        render's own connectorDragState.pointer*) and are
+                        then driven entirely by direct attribute writes in
+                        handleConnectorDragStart's onMove — never by a
+                        further React render — for as long as the drag
+                        lasts. */}
+                    <line
+                      ref={connectorLineRef}
+                      x1={connectorDragState.originX}
+                      y1={connectorDragState.originY}
+                      x2={connectorDragState.pointerX}
+                      y2={connectorDragState.pointerY}
+                      stroke="#2563eb"
+                      strokeWidth={2}
+                      strokeDasharray="5 4"
+                    />
+                    <circle
+                      cx={connectorDragState.originX}
+                      cy={connectorDragState.originY}
+                      r={4}
+                      fill="#2563eb"
+                    />
+                    <circle
+                      ref={connectorPointerRef}
+                      cx={connectorDragState.pointerX}
+                      cy={connectorDragState.pointerY}
+                      r={4}
+                      fill="#2563eb"
+                    />
+                  </svg>
+                )}
+              </div>
             </div>
-          </div>
-          </div>
-        </>
-      )}
+            </div>
+          </>
+        )}
+      </div>
 
       <Modal
         open={categoryModal !== null}
         onClose={() => setCategoryModal(null)}
-        title={categoryModal?.mode === "edit" ? "Edit Phase" : "Add Phase"}
+        title={categoryModal?.mode === "edit" ? "Edit Phase" : "Add Task"}
       >
         {categoryModal?.mode === "edit" ? (
           <CategoryForm

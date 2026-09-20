@@ -64,7 +64,7 @@ export function ProjectsBrowser({
               key={tab.value}
               type="button"
               onClick={() => setStatusFilter(tab.value)}
-              className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${
+              className={`cursor-pointer rounded border px-4 py-2 text-sm font-medium transition ${
                 statusFilter === tab.value
                   ? "border-zinc-900 bg-zinc-900 text-white"
                   : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"

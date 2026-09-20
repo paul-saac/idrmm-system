@@ -25,7 +25,7 @@ export default async function LoginPage({
         <h1 className="font-serif text-2xl text-zinc-900">IDR M&amp;M</h1>
 
         <div className="mt-8 mb-6 text-center">
-          <h2 className="text-xl font-semibold text-zinc-900">Welcome hehe</h2>
+          <h2 className="text-xl font-semibold text-zinc-900">Welcome Po heeheh</h2>
           <p className="mt-1 text-sm text-zinc-500">
             Enter your details to login
           </p>

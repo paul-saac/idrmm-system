@@ -58,6 +58,9 @@ export async function createProject(
       start_date: parseOptionalDate(formData.get("startDate")),
       target_end_date: parseOptionalDate(formData.get("targetEndDate")),
       allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
+      default_labor_cost_percent: parseOptionalNumber(
+        formData.get("defaultLaborCostPercent")
+      ),
       project_manager_id: projectManagerId,
       foreman_id: foremanId,
       created_by: profile.id,
@@ -124,6 +127,9 @@ export async function updateProject(
       target_end_date: parseOptionalDate(formData.get("targetEndDate")),
       actual_end_date: parseOptionalDate(formData.get("actualEndDate")),
       allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
+      default_labor_cost_percent: parseOptionalNumber(
+        formData.get("defaultLaborCostPercent")
+      ),
       project_manager_id: projectManagerId,
       foreman_id: foremanId,
     })

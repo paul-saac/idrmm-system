@@ -10,8 +10,23 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter);
   --font-mono: var(--font-geist-mono);
+}
+
+/*
+ * Every Tailwind utility that takes a size (text-*, p-*, gap-*, size-*,
+ * rounded-*, ...) is defined in `rem`, relative to the root element's
+ * own font-size — the browser's default is 16px. Shrinking that one
+ * root value to 90% scales every one of those utilities down with it,
+ * app-wide, so the whole UI reads at the same density a real 90%
+ * browser zoom would give it — denser than the 100% default, without
+ * an actual `zoom`/`transform: scale()` hack (both of which blur text
+ * and throw off scrollbar/hit-target math in ways a root font-size
+ * change doesn't).
+ */
+html {
+  font-size: 90%;
 }
 
 /*
@@ -51,10 +66,48 @@
  * values so that can't happen again in future forms.
  */
 
+/*
+ * A leftover from the original create-next-app template: this plain
+ * `body` rule's own font-family wins the cascade over the font-sans
+ * utility class on <body> in layout.tsx (confirmed directly — a
+ * heading's computed font-family stayed "Arial, Helvetica, sans-serif"
+ * with font-sans applied, until this line was removed), so it silently
+ * overrode both Geist Sans before and Inter now. No font-family here at
+ * all — body already inherits Inter from its own font-sans class.
+ */
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+}
+
+/*
+ * Removes the native up/down spinner buttons on every number input
+ * app-wide (Allocated Budget, Default Labor Cost %, the Cost Estimate
+ * Breakdown's Labor/Material/Equipment/Quantity fields, ...) — visual
+ * clutter on fields people type into directly, not click to increment.
+ */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/*
+ * An empty <input type="date">'s own "mm/dd/yyyy" hint renders in the
+ * input's normal (dark) text color by default — unlike a real
+ * placeholder, WebKit's date-field pseudo-elements don't pick up
+ * ::placeholder styling on their own, and :placeholder-shown doesn't
+ * reliably match an empty date input either (confirmed directly — it
+ * stayed false even with no value entered). data-empty is instead set
+ * directly by each date input's own onChange (see create-project-form/
+ * edit-project-form), a plain data attribute rather than relying on any
+ * pseudo-class quirks.
+ */
+input[type="date"][data-empty="true"] {
+  color: var(--color-zinc-400);
 }
 
 /*
@@ -182,4 +235,56 @@ body {
  */
 .gantt-task-react-root g:has(> g._RRr13) > text {
   display: none !important;
+}
+
+/*
+ * The Start/End columns' own <input type="date"> (gantt-chart-view.tsx's
+ * CustomTaskListTable, task rows only — a phase row's own start/end is
+ * a read-only rollup, see its own comment there) keep their native
+ * calendar-picker icon hidden until the cell is actually clicked/
+ * focused — a calendar icon sitting in every row of a dense table read
+ * as clutter at a glance.
+ *
+ * opacity only, deliberately no pointer-events: none — confirmed
+ * directly (see git history on this rule) that pointer-events: none on
+ * a hidden picker-indicator dead-zones that whole area of the input
+ * instead of letting the click fall through to focus it normally;
+ * Chromium doesn't pass a click through an inert picker-indicator the
+ * way it would for an ordinary ::before/::after, since it's a real
+ * replaced-element sub-part, not a normal pseudo-element.
+ *
+ * Gated on data-cell-active — set directly by each input's own onFocus/
+ * onBlur in gantt-chart-view.tsx (a plain DOM attribute mutation, not
+ * React state; see that code's own doc comment for why — a state-driven
+ * version caused gantt-task-react to unmount/remount the whole task
+ * list on every click, since it forced this component to re-render) —
+ * not :focus. Confirmed directly, twice, that Chromium's :focus stops
+ * reliably matching a date input around its own native popup, so a
+ * :focus-based rule here (even !important) can leave the icon looking
+ * hidden despite the field genuinely being the active one — a plain
+ * data-attribute selector has no such dependency on :focus at all.
+ *
+ * The same attribute also drives the cell's own active background/
+ * border, right below — one attribute, one source of truth, for both.
+ */
+.gantt-task-react-root input[type="date"]:not([readonly])::-webkit-calendar-picker-indicator {
+  opacity: 0;
+}
+.gantt-task-react-root input[type="date"][data-cell-active="true"]::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+.gantt-task-react-root input[type="date"][data-cell-active="true"] {
+  background-color: #fff;
+  outline: 1px solid var(--color-zinc-400);
+  outline-offset: -2px;
+}
+/*
+ * A phase row's own date input is `readonly` (see gantt-chart-view.tsx)
+ * — its calendar icon is hidden outright rather than just faint, since
+ * there's genuinely nothing for it to open. More specific than the
+ * opacity rule above ([type="date"][readonly] beats [type="date"]), so
+ * this wins regardless of source order.
+ */
+.gantt-task-react-root input[type="date"][readonly]::-webkit-calendar-picker-indicator {
+  display: none;
 }
