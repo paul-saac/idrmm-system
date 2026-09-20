@@ -11,7 +11,7 @@ import { Modal } from "@/components/ui/modal";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { AddPhaseForm } from "@/components/projects/progress/add-phase-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
-import { ManpowerModalContent } from "@/components/projects/progress/manpower-modal-content";
+import { MembersModalContent } from "@/components/projects/progress/members-modal-content";
 import { AssignWorkersModalContent } from "@/components/projects/progress/assign-workers-modal-content";
 import {
   updateTaskSchedule,
@@ -92,6 +92,13 @@ function GanttTooltipContent({
 // capability gap versus the previous SVAR build, not something this
 // component can work around.
 type TimelineView = "day" | "week" | "month" | "year";
+
+// The toolbar's own zoom buttons — deliberately excludes "week" (see
+// the `view` state's own doc comment in GanttChartView for why), even
+// though TimelineView itself still includes it (every date-range/
+// column-width calculation in this file already handles it, this is
+// just not offering it as a pickable option).
+const TIMELINE_VIEW_OPTIONS: readonly TimelineView[] = ["day", "month", "year"];
 
 const VIEW_MODE: Record<TimelineView, ViewMode> = {
   day: ViewMode.Day,
@@ -219,12 +226,13 @@ const RIGHT_ALIGNED_COLUMNS = new Set<ResizableColumnId>(["duration"]);
 
 const ROW_HEIGHT = 34;
 const HEADER_HEIGHT = 44;
-// Pixel equivalent of the chart wrapper's own `h-220` Tailwind class
-// below (220 * 0.25rem = 55rem, at this app's own 90%-of-16px root
-// font-size = 55 * 14.4). Used only to compute how many *real* rows
-// (see fillerTasks below) it takes to fill that fixed box — keep these
-// two in sync if `h-220` ever changes.
-const CHART_BOX_HEIGHT_PX = 792;
+// A *minimum* total row count to pad a short project's task list out
+// to (see fillerTasks below) — not tied to any fixed-height CSS box
+// anymore (there isn't one; the chart grows to fit however many real
+// rows it has, filler or not, and the page scrolls through it). Just a
+// plain target height, chosen to roughly match how tall the chart used
+// to always look back when it *did* have a fixed box.
+const MIN_CHART_FILL_HEIGHT_PX = 792;
 // A row id prefix reserved for fillerTasks below — never a real
 // category/task id (those are always plain numbers stringified), so
 // `taskById`/`categoryById` lookups naturally miss for one and every
@@ -598,7 +606,7 @@ export function GanttChartView({
    * mutation already triggers, no separate polling needed. */
   canUndo: boolean;
   canRedo: boolean;
-  /** The project's own Manpower roster and each task's current
+  /** The project's own Members roster and each task's current
    * assignments from it — see lib/workers/data.ts. Fetched alongside
    * categories/progress, same revalidatePath-driven refresh as
    * everything else here. */
@@ -606,13 +614,17 @@ export function GanttChartView({
   taskWorkerAssignments: TaskWorkerAssignments;
 }) {
   const router = useRouter();
-  // Month is the default (and, for now, only — the Day/Week/Month/Year
-  // toolbar was removed pending a later design pass): unlike Week, its
-  // column labels are plain month names with no "W##" numbering that
-  // could read as resetting each time the visible range crosses a year
-  // boundary (an ISO-8601 week-numbering quirk, not a bug, but
-  // confusing at a glance for a non-technical viewer).
-  const view: TimelineView = "month";
+  // Month is the default — unlike Week, its column labels are plain
+  // month names with no "W##" numbering that could read as resetting
+  // each time the visible range crosses a year boundary (an ISO-8601
+  // week-numbering quirk, not a bug, but confusing at a glance for a
+  // non-technical viewer). Week itself is deliberately not offered as
+  // a toolbar option for that same reason — Day/Month/Year are, all
+  // three already fully supported by every date-range/column-width
+  // calculation in this file (computeChartDateRange/seedGanttDates/
+  // estimateColumnCount all switch on TimelineView already), so
+  // exposing them is just this one piece of UI, nothing else to wire.
+  const [view, setView] = useState<TimelineView>("month");
   const [categoryModal, setCategoryModal] = useState<
     | { mode: "add" }
     | { mode: "edit"; category: { id: number; name: string } }
@@ -623,7 +635,7 @@ export function GanttChartView({
     | { mode: "edit"; task: CostTask }
     | null
   >(null);
-  const [manpowerModalOpen, setManpowerModalOpen] = useState(false);
+  const [membersModalOpen, setMembersModalOpen] = useState(false);
   const [assignWorkersModal, setAssignWorkersModal] = useState<{
     taskId: number;
     taskName: string;
@@ -791,27 +803,6 @@ export function GanttChartView({
   // empty `listCellWidth` hides it entirely (not a boolean prop).
   const showTaskList = true;
 
-  // A phase's own percent complete is never stored — just a plain,
-  // unweighted average of its own tasks' percentComplete (each directly
-  // user-editable, see CostTask's own doc comment). Empty of tasks
-  // (a fresh phase with nothing added yet) reads as 0, same as any
-  // other rollup here with nothing to roll up.
-  const percentCompleteByCategoryId = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const category of categories) {
-      if (category.tasks.length === 0) {
-        map.set(category.id, 0);
-        continue;
-      }
-      const sum = category.tasks.reduce(
-        (total, task) => total + task.percentComplete,
-        0
-      );
-      map.set(category.id, Math.round(sum / category.tasks.length));
-    }
-    return map;
-  }, [categories]);
-
   const fallbackStart = projectStartDate ? toDate(projectStartDate) : new Date();
   const fallbackEnd = new Date(fallbackStart.getTime() + 7 * 86_400_000);
 
@@ -821,6 +812,45 @@ export function GanttChartView({
       end: task.plannedEndDate ? toDate(task.plannedEndDate) : fallbackEnd,
     };
   }
+
+  // A phase's own percent complete is never stored — a *duration-
+  // weighted* average of its own tasks' percentComplete (each directly
+  // user-editable, see CostTask's own doc comment), not a plain
+  // per-task average. Confirmed directly against a reference tool
+  // (same 3 subtasks, same percentages, only one subtask's own end
+  // date shortened) that this is the expected behavior: the phase's
+  // own rollup shifted even though no percentage changed, because a
+  // shorter subtask now counts for less of the total. Each task's own
+  // weight is its planned duration in days (same daysBetween() the
+  // Days column itself already shows), so a short 100%-done task pulls
+  // the phase's own percent up less than a long one would. Empty of
+  // tasks (a fresh phase with nothing added yet), or every task
+  // resolving to 0 total duration (shouldn't happen in practice —
+  // daysBetween always returns at least 1 — but guarded rather than
+  // dividing by zero), reads as 0.
+  const percentCompleteByCategoryId = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const category of categories) {
+      let weightedSum = 0;
+      let totalDuration = 0;
+      for (const task of category.tasks) {
+        const { start, end } = resolvedDates(task);
+        const duration = daysBetween(start, end);
+        weightedSum += duration * task.percentComplete;
+        totalDuration += duration;
+      }
+      map.set(
+        category.id,
+        totalDuration > 0 ? Math.round(weightedSum / totalDuration) : 0
+      );
+    }
+    return map;
+    // fallbackStart/fallbackEnd (read indirectly through resolvedDates)
+    // deliberately omitted — see the identical omission (and its own
+    // doc comment) on the `tasks` useMemo elsewhere in this file; same
+    // reasoning applies here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categories]);
 
   // Keyed by the same string ids used in the `tasks` array below, so the
   // custom TaskListTable can hand a clicked row's full record to the
@@ -993,29 +1023,28 @@ export function GanttChartView({
   // by inspecting a short-range render: the chart's own SVG came out
   // hundreds of pixels narrower than the wrapper around it).
   //
-  // Deliberately a *separate* ref from chartWrapRef below, both pointing
-  // at nested elements (this one the outer overflow-hidden box,
-  // chartWrapRef the inner overflow-auto one) that normally report the
-  // same width — except right at the edge where effectiveColumnWidth's
-  // own output causes chartWrapRef's content to just barely need (or
-  // just barely stop needing) a scrollbar. A scrollbar's own width
-  // shrinks chartWrapRef's *content-box* width, which is exactly what
-  // ResizeObserver reports — so observing chartWrapRef itself closes a
-  // feedback loop: containerWidth -> effectiveColumnWidth -> content
+  // Deliberately a *separate* ref from chartWrapRef below, both
+  // normally reporting the same width. Originally this split existed
+  // to dodge a ResizeObserver feedback loop: chartWrapRef used to be a
+  // fixed-height, internally vertically-scrolling box of its own, and
+  // right at the edge where effectiveColumnWidth's own output caused
+  // its content to just barely need (or stop needing) a vertical
+  // scrollbar, that scrollbar's own width would shrink chartWrapRef's
+  // *content-box* width — exactly what ResizeObserver reports —
+  // closing a loop: containerWidth -> effectiveColumnWidth -> content
   // width -> scrollbar toggles -> containerWidth changes again,
-  // indefinitely, tripping React's "Maximum update depth exceeded"
-  // (confirmed directly: reproducible whenever a project's real column
-  // count sits within a few pixels of that threshold, since
-  // estimateColumnCount above is only an estimate — its own "+3" fudge
-  // factor doesn't always land on gantt-task-react's actual rendered
-  // count). This outer box has overflow-hidden, not overflow-auto — it
-  // never grows a scrollbar of its own no matter what its content does,
-  // so its width is stable and immune to this loop, while still
-  // matching the same visible area chartWrapRef fills.
+  // indefinitely, tripping React's "Maximum update depth exceeded".
+  // chartWrapRef no longer has any vertical scroll of its own at all
+  // (see its own doc comment below — the chart now grows to fit its
+  // real rows and scrolls as part of the page), so that specific loop
+  // can't happen anymore either way — this ref is kept mainly so the
+  // ResizeObserver stays scoped to a stable, purely width-driven
+  // element (this outer box's own border, not anything inside it that
+  // could still shift for unrelated reasons).
   const chartOuterRef = useRef<HTMLDivElement>(null);
-  // The inner, actually-scrolling element (overflow-auto) — unrelated to
-  // the ResizeObserver above; see its own doc comment for why that
-  // observes chartOuterRef instead of this one.
+  // No longer a scrolling element at all — see its own doc comment
+  // below (on the actual rendered div) for why. Still a separate ref
+  // from chartOuterRef purely for the ResizeObserver reasoning above.
   const chartWrapRef = useRef<HTMLDivElement>(null);
   // Wraps *only* <Gantt>'s own rendered output. The connector-handle/
   // line overlay below renders as a `position: absolute` sibling
@@ -1118,14 +1147,12 @@ export function GanttChartView({
     return positions;
   }, [visibleTasks, view, effectiveColumnWidth, showTaskList, visiblePanelWidth, taskById]);
 
-  // Padding rows so a short project's chart still reads as "full" all
-  // the way to the bottom of the fixed CHART_BOX_HEIGHT_PX box, instead
-  // of just the real rows followed by blank space. Deliberately *real*
-  // gantt-task-react rows (not a CSS overlay simulating them — tried
-  // first, abandoned: faking the library's own zebra striping/gridlines/
-  // scrollbar position with background-image layers and a min-height
-  // hack fought the library instead of using it, and never quite got
-  // the horizontal scrollbar's position right). Each one:
+  // Padding rows so a short project's chart still reads as "full"
+  // instead of just a couple of real rows followed by nothing —
+  // deliberately *real* gantt-task-react rows (not a CSS overlay
+  // simulating them — tried first, abandoned: faking the library's own
+  // zebra striping/gridlines/scrollbar position with background-image
+  // layers fought the library instead of using it). Each one:
   //  - is `isDisabled` (gantt-task-react's own flag — confirmed directly
   //    in the compiled bundle this turns off drag/resize/progress-change
   //    for that row entirely, so it can never be dragged into persisting
@@ -1145,6 +1172,13 @@ export function GanttChartView({
   // regardless of whether a real task was found (the Start/End date
   // inputs, the Duration cell), which do check for it directly.
   //
+  // This only ever tops the row count *up* to MIN_CHART_FILL_HEIGHT_PX
+  // worth of rows — a project with more real rows than that already
+  // gets zero filler rows, growing past it exactly the way it always
+  // has. Nothing here caps the chart's own real height anymore (that
+  // was the actual bug — a *separate*, now-removed fixed-height box on
+  // chartWrapRef, not this row-count padding itself).
+  //
   // Deliberately positioned here, after barPositions rather than right
   // next to visibleTasks (which it reads from) — the React Compiler
   // failed to preserve effectiveTasks' own memoization with it placed
@@ -1153,7 +1187,7 @@ export function GanttChartView({
   // describes for the same reason).
   const fillerTaskCount = Math.max(
     0,
-    Math.ceil((CHART_BOX_HEIGHT_PX - HEADER_HEIGHT) / ROW_HEIGHT) -
+    Math.ceil((MIN_CHART_FILL_HEIGHT_PX - HEADER_HEIGHT) / ROW_HEIGHT) -
       visibleTasks.length
   );
   // A fresh local date, deliberately *not* reusing fallbackStart (the
@@ -1515,12 +1549,7 @@ export function GanttChartView({
 
   async function persistDrag(task: GanttTask): Promise<boolean> {
     if (task.type === "project") return false; // cheap insurance — see doc comment; project rows never reach here in practice
-    // fillerTasks are isDisabled (gantt-task-react itself already
-    // refuses to drag one, confirmed directly in the compiled bundle),
-    // so this is defense in depth, not something expected to ever
-    // actually trigger — taskById only has real task ids, so it misses
-    // for a filler row's own id.
-    if (!taskById.has(task.id)) return false;
+    if (!taskById.has(task.id)) return false; // defensive — every real dragged row should already be in taskById
     // A milestone only moves (no resize handles on a zero-duration
     // diamond), so task.start/task.end are still equal after a drag —
     // both get persisted as the same planned_start_date/planned_end_date.
@@ -2262,7 +2291,7 @@ export function GanttChartView({
           border, same as adjacent bordered rows elsewhere in this
           chart. */}
       <div className="flex flex-col">
-        {/* Deliberately just Undo/Redo/Manpower — a reference toolbar
+        {/* Deliberately just Undo/Redo/Members — a reference toolbar
             image with ~25 icons (text color, cut/copy/paste, zoom,
             print, share, lock, settings, ...) was the original ask, but
             none of those other actions have a real feature behind them
@@ -2291,13 +2320,32 @@ export function GanttChartView({
           <div className="mx-1 h-5 w-px bg-zinc-200" />
           <button
             type="button"
-            onClick={() => setManpowerModalOpen(true)}
-            aria-label="Manpower"
-            title="Manage the project's manpower roster"
+            onClick={() => setMembersModalOpen(true)}
+            aria-label="Members"
+            title="Manage the project's members"
             className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900"
           >
             <HardHat className="size-4" />
           </button>
+          <div className="mx-1 h-5 w-px bg-zinc-200" />
+          {/* Week isn't offered here — see the `view` state's own doc
+              comment above for why. */}
+          {TIMELINE_VIEW_OPTIONS.map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setView(option)}
+              aria-pressed={view === option}
+              title={`Zoom to ${option}`}
+              className={`cursor-pointer rounded px-2 py-1 text-xs font-medium capitalize transition ${
+                view === option
+                  ? "bg-zinc-900 text-white"
+                  : "text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
+              }`}
+            >
+              {option}
+            </button>
+          ))}
         </div>
 
         {!hasAnyCategory ? (
@@ -2319,11 +2367,11 @@ export function GanttChartView({
           </div>
         ) : (
           <>
-            {/* Toolbar (Day/Week/Month/Year, Expand/Collapse all, Show/
-                Hide Task List) removed for now — the Gantt chart and its
-                tooling get their own design pass later. view/showTaskList
-                stay at their defaults ("month"/true) with no UI to change
-                them until then. */}
+            {/* Expand/Collapse-all and Show/Hide Task List are still
+                removed for now — the Gantt chart's own toolbar gets a
+                fuller design pass later. Day/Month/Year zoom is live
+                (see the toolbar row above); showTaskList itself stays
+                at its own default (true) with no UI to change it yet. */}
 
             <div
               ref={chartOuterRef}
@@ -2337,17 +2385,57 @@ export function GanttChartView({
               // without it: the panel-resize handle's own z-20 tied
               // with the tabs bar's z-20, and being later in the DOM,
               // won that tie and painted over the tabs once scrolled
-              // far enough for the two to visually overlap — and now
-              // that the handle's own height regularly reaches the full
-              // CHART_BOX_HEIGHT_PX box (fillerTasks padding a short
-              // project out to it), that scroll position is reachable
-              // on every project, not just a long one, so this isn't
-              // optional anymore.
-              className="isolate overflow-hidden border border-zinc-200 bg-white"
+              // far enough for the two to visually overlap.
+              //
+              // No overflow-hidden anymore, on either axis — used to be
+              // here (both axes) to keep this box's own *width* stable
+              // for the ResizeObserver above (see its own doc comment),
+              // but confirmed directly that even just overflow-x-hidden
+              // alone was the real problem for something else: per the
+              // CSS overflow spec, setting *either* axis to a non-
+              // visible value forces the *other* axis's computed value
+              // off of "visible" too (here, silently becoming
+              // "overflow-y: auto" even though only overflow-x was ever
+              // set — confirmed directly via getComputedStyle, not
+              // assumed) — making this box a vertical scroll container
+              // by accident, which caps how far up the DOM tree _2k9Ys'
+              // own `position: sticky; bottom: 0` (see globals.css) can
+              // resolve its own containing block. With no overflow
+              // control at all here (or on chartWrapRef, right below),
+              // that search continues past both of them, all the way up
+              // to project-detail-view.tsx's own `flex-1 overflow-y-
+              // auto` — the actual page scroll container — letting the
+              // horizontal scrollbar stick to the bottom of the
+              // *visible browser viewport* while scrolling through a
+              // long task list, not just the bottom of this one box.
+              className="isolate border border-zinc-200 bg-white"
             >
             <div
               ref={chartWrapRef}
-              className="gantt-task-react-root h-220 overflow-auto"
+              // No height/overflow classes at all anymore — this used
+              // to be a fixed-height (h-220), internally-scrolling
+              // (overflow-y-auto) box of its own. Confirmed directly
+              // that box (not the filler rows padding a short project's
+              // row *count* — that part's still here, see fillerTasks
+              // above) was what broke the one thing that actually
+              // mattered more: it made this element itself the nearest
+              // scrolling ancestor for _2k9Ys' own `position: sticky;
+              // bottom: 0`, capping the horizontal scrollbar to
+              // sticking within *this fixed box's* own bottom edge —
+              // reachable only once that edge was itself scrolled into
+              // view, not truly "fixed" the way a page's own sticky
+              // footer would be. Now this is a plain block, its own
+              // height simply following its content's (real rows plus
+              // however many filler ones top it up to a minimum) — a
+              // short project still reads as "full," a long one just
+              // keeps growing past that minimum exactly as before, and
+              // either way the page scrolls through it with a properly
+              // fixed scrollbar. The className is kept only because
+              // several CSS rules in globals.css are scoped to it (the
+              // visible-scrollbar-on-_2k9Ys styling, the sticky rule
+              // itself, milestone-label hiding, the date-input
+              // calendar-icon/active-state rules).
+              className="gantt-task-react-root"
             >
               <div
                 ref={ganttRootRef}
@@ -2381,7 +2469,9 @@ export function GanttChartView({
                 {/* The whole task-list panel's own resize handle — see
                     handlePanelResizeMouseDown's own doc comment. Height
                     computed directly (header + one row per currently
-                    visible row) rather than a percentage, since this
+                    visible row, filler rows included so it reaches the
+                    same padded-out minimum height those give the rest
+                    of the chart) rather than a percentage, since this
                     element's own containing block (ganttRootRef) is
                     auto-height, and percentage heights don't resolve
                     against an auto-height ancestor. */}
@@ -2558,14 +2648,14 @@ export function GanttChartView({
       </Modal>
 
       <Modal
-        open={manpowerModalOpen}
-        onClose={() => setManpowerModalOpen(false)}
-        title="Manpower"
+        open={membersModalOpen}
+        onClose={() => setMembersModalOpen(false)}
+        title="Members"
       >
-        <ManpowerModalContent
+        <MembersModalContent
           projectId={projectId}
           workers={workers}
-          onClose={() => setManpowerModalOpen(false)}
+          onClose={() => setMembersModalOpen(false)}
         />
       </Modal>
 

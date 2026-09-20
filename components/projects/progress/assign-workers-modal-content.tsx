@@ -6,8 +6,8 @@ import type { Worker } from "@/lib/workers/data";
 
 /**
  * Opened from one task row's own "Assigned" cell (see gantt-chart-view.tsx)
- * — a checkbox picker over the project's own Manpower roster (see
- * manpower-modal-content.tsx), scoped to that one task. Called directly
+ * — a checkbox picker over the project's own Members roster (see
+ * members-modal-content.tsx), scoped to that one task. Called directly
  * as a plain async function (not useActionState — setTaskWorkers takes
  * a plain workerIds array, not FormData), same convention this file's
  * own updateTaskSchedule/setPredecessor already use for a direct
@@ -68,7 +68,7 @@ export function AssignWorkersModalContent({
       <div className="flex max-h-80 flex-col gap-1 overflow-y-auto">
         {workers.length === 0 ? (
           <p className="py-4 text-center text-sm text-zinc-400">
-            No workers in the roster yet — add some from the Manpower
+            No workers in the roster yet — add some from the Members
             button first.
           </p>
         ) : (

@@ -140,7 +140,7 @@ function WorkerRow({ projectId, worker }: { projectId: number; worker: Worker })
 }
 
 /**
- * The Gantt Chart Schedule's own "Manpower" toolbar button opens this —
+ * The Gantt Chart Schedule's own "Members" toolbar button opens this —
  * a project-scoped roster of real people (name + optional trade) for
  * task-level accountability, separate from estimate_task_labor_
  * assignments' own role+headcount cost-estimation rows (see
@@ -148,7 +148,7 @@ function WorkerRow({ projectId, worker }: { projectId: number; worker: Worker })
  * entry to a specific task happens from the task list's own "Assigned"
  * column, not here — this modal only maintains the roster itself.
  */
-export function ManpowerModalContent({
+export function MembersModalContent({
   projectId,
   workers,
   onClose,

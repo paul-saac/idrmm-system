@@ -304,7 +304,7 @@ export function ProjectDetailView({
    * fetched alongside costEstimate/progress in page.tsx. */
   ganttCanUndo: boolean;
   ganttCanRedo: boolean;
-  /** The project's own Manpower roster + each task's current
+  /** The project's own Members roster + each task's current
    * assignments from it — see lib/workers/data.ts, fetched alongside
    * costEstimate/progress in page.tsx. */
   workers: Worker[];
