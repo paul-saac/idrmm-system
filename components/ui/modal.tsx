@@ -3,11 +3,23 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, X } from "lucide-react";
 
+// max-w-2xl (the original, and every other modal in this app) is too
+// narrow for a screen that's really a small spreadsheet — several
+// editable columns per material line, nested under every task, nested
+// under every category — rather than the one-form-at-a-time content
+// every other modal holds. "large" opts a specific modal into more
+// breathing room without changing anyone else's.
+const SIZE_CLASS = {
+  default: "max-w-2xl",
+  large: "max-w-6xl",
+} as const;
+
 export function Modal({
   open,
   onClose,
   onBack,
   title,
+  size = "default",
   children,
 }: {
   open: boolean;
@@ -18,6 +30,7 @@ export function Modal({
    * previous one without fully closing/discarding everything. */
   onBack?: () => void;
   title: string;
+  size?: keyof typeof SIZE_CLASS;
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -84,7 +97,7 @@ export function Modal({
       // meant for its old centered/margined look), which would otherwise
       // still clip the explicit height below. rounded-lg is this app's
       // own 5px token (see globals.css), not Tailwind's default 8px.
-      className="fixed top-4 right-4 left-auto m-0 h-[calc(100dvh-2rem)] max-h-none w-full max-w-2xl overflow-hidden rounded-lg border border-zinc-200 bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col"
+      className={`fixed top-4 right-4 left-auto m-0 h-[calc(100dvh-2rem)] max-h-none w-full ${SIZE_CLASS[size]} overflow-hidden rounded-lg border border-zinc-200 bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col`}
     >
       <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
         <div className="flex items-center gap-1">

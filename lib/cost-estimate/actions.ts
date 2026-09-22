@@ -5,11 +5,60 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
 import { recordGanttCheckpoint } from "@/lib/cost-estimate/undo-redo";
+import type { CostCategory } from "@/lib/cost-estimate/data";
 
 export type CostEstimateActionState = {
   error?: string;
   success?: boolean;
+  /** Only set by createCategory, for the Gantt Chart's own inline "add
+   * a phase, then immediately rename it in place" flow (see
+   * handleAddPhase in gantt-chart-view.tsx) — lets the caller know
+   * which row to drop straight into a rename input for, without a
+   * second round trip to look it back up. */
+  categoryId?: number;
+  /** Same idea as categoryId above, just for createTask — the Gantt
+   * Chart's own inline "add a subtask, then immediately rename it in
+   * place" flow (see handleAddSubtask in gantt-chart-view.tsx). */
+  taskId?: number;
+  /** Only set by undoGanttAction/redoGanttAction (undo-redo-actions.ts)
+   * — the freshly-restored categories/tasks, fetched server-side via
+   * getCostEstimate in that same round trip, so the Gantt Chart can
+   * show the actual reverted schedule the instant this resolves
+   * instead of waiting on a second, much slower router.refresh() (that
+   * one re-fetches this whole page's ~23 unrelated queries) just to
+   * find out what undo/redo actually changed. */
+  categories?: CostCategory[];
+  /** Same idea as `categories` above, set alongside it by the same two
+   * actions — the freshly-recomputed canUndo/canRedo *after* this
+   * particular undo/redo already landed. Without this, the Undo/Redo
+   * buttons kept reading their stale *pre*-undo enabled state (still
+   * true right after an undo that emptied the history) until
+   * router.refresh() caught up — a real bug, not just a cosmetic
+   * flash: a second click landing in that window fired a second real
+   * undo/redo the admin never intended. */
+  canUndo?: boolean;
+  canRedo?: boolean;
 };
+
+// A sane bound for a task's own planned Start/End year — same
+// reasoning and same numbers as gantt-chart-view.tsx's own client-side
+// copy of this check (kept deliberately duplicated rather than shared
+// across the client/server boundary, matching how this app already
+// treats every other cross-cutting validation constant). This is the
+// actual, authoritative check; the client-side one just keeps an
+// obviously-mistyped year from ever flashing on screen while this
+// round-trips.
+const MIN_PLANNED_YEAR = 1980;
+const MAX_PLANNED_YEAR = 2100;
+
+function isPlannedYearInRange(iso: string): boolean {
+  const year = Number(iso.slice(0, 4));
+  return (
+    Number.isFinite(year) && year >= MIN_PLANNED_YEAR && year <= MAX_PLANNED_YEAR
+  );
+}
+
+const INVALID_DATE_RANGE_ERROR = `Invalid date range — planned dates must fall between ${MIN_PLANNED_YEAR} and ${MAX_PLANNED_YEAR}.`;
 
 /**
  * Next's dev console-error overlay renders a raw PostgrestError object
@@ -187,19 +236,25 @@ export async function createCategory(
     }
 
     const supabase = await createClient();
-    const { error } = await supabase.from("estimate_categories").insert({
-      project_id: projectId,
-      category_name: categoryName,
-    });
+    const { data, error } = await supabase
+      .from("estimate_categories")
+      .insert({
+        project_id: projectId,
+        category_name: categoryName,
+      })
+      .select("id")
+      .single();
 
-    if (error) {
-      logSupabaseError("[createCategory] Supabase insert failed", error);
+    if (error || !data) {
+      if (error) {
+        logSupabaseError("[createCategory] Supabase insert failed", error);
+      }
       return { error: "Could not create category. Please try again." };
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
-    return { success: true };
+    return { success: true, categoryId: data.id };
   });
 }
 
@@ -281,109 +336,12 @@ export async function deleteCategory(
   });
 }
 
-/**
- * The Gantt Chart Schedule's own "Add Phase" flow (the "+" next to the
- * Task column header) — unlike the Cost Estimate Breakdown's plain
- * createCategory above, a brand-new phase there is created together
- * with a first task item in one step, since an empty phase has no
- * planned dates of its own to show on the chart (its row is a computed
- * rollup of its tasks' dates — see gantt-chart-view.tsx) and would just
- * render a placeholder bar until someone came back to add one.
- *
- * There's no separate task-name field in that form: the phase itself
- * *is* the main task being scheduled here, not a subtask underneath it,
- * so the underlying task row reuses the phase's own name rather than
- * asking the admin to type it twice. Cost fields (quantity, labor/
- * material/equipment estimates, predecessor, other costs) default to
- * zero/empty and stay editable afterward through the normal Edit Task
- * Item form, same as any other task — including renaming it separately
- * from its phase later, if it ever needs one.
- */
-export async function createPhaseWithFirstTask(
-  projectId: number,
-  _prevState: CostEstimateActionState,
-  formData: FormData
-): Promise<CostEstimateActionState> {
-  return safely(async () => {
-    const profile = await requireAdmin();
-    if (!profile) {
-      return { error: "You are not authorized to manage cost estimates." };
-    }
-
-    const categoryName = String(formData.get("categoryName") ?? "").trim();
-    if (!categoryName) {
-      return { error: "Phase name is required." };
-    }
-    const plannedStartDate = parseOptionalDate(formData.get("plannedStartDate"));
-    const plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
-    if (!plannedStartDate || !plannedEndDate) {
-      return { error: "Start and end dates are required." };
-    }
-    if (plannedEndDate < plannedStartDate) {
-      return { error: "End date can't be before the start date." };
-    }
-    const isMilestone = formData.get("isMilestone") === "on";
-
-    const supabase = await createClient();
-
-    const { data: category, error: categoryError } = await supabase
-      .from("estimate_categories")
-      .insert({
-        project_id: projectId,
-        category_name: categoryName,
-      })
-      .select("id")
-      .single();
-
-    if (categoryError || !category) {
-      if (categoryError) {
-        logSupabaseError(
-          "[createPhaseWithFirstTask] category insert failed",
-          categoryError
-        );
-      }
-      return { error: "Could not create the phase. Please try again." };
-    }
-
-    const { error: taskError } = await supabase.from("estimate_tasks").insert({
-      project_id: projectId,
-      category_id: category.id,
-      task_name: categoryName,
-      estimated_quantity: 0,
-      unit: null,
-      labor_estimate: 0,
-      material_estimate: 0,
-      equipment_estimate: 0,
-      other_cost_estimate: 0,
-      total_estimate_cost: 0,
-      planned_start_date: plannedStartDate,
-      planned_end_date: plannedEndDate,
-      predecessor_task_id: null,
-      is_milestone: isMilestone,
-    });
-
-    if (taskError) {
-      logSupabaseError(
-        "[createPhaseWithFirstTask] task insert failed",
-        taskError
-      );
-      // The phase itself was already created successfully at this point
-      // — say so, rather than implying nothing happened and inviting a
-      // resubmit that would create a duplicate phase. Checkpoint that
-      // real DB change too, not just the full-success path below, so
-      // Undo can still get back out of this partial state.
-      await recordGanttCheckpoint(supabase, projectId, profile.id);
-      return {
-        error:
-          'Phase created, but its schedule could not be saved. Add it from the phase\'s own "+" instead.',
-      };
-    }
-
-    await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
-    return { success: true };
-  });
-}
+// createPhaseWithFirstTask (the Gantt Chart's old "Add Task" flow) lived
+// here — removed after it turned out to be the actual cause of a real
+// bug: every new phase silently came with a same-named first subtask
+// nobody asked for. AddPhaseForm now calls createCategory above
+// directly instead, the same plain "just the phase, nothing under it"
+// creation the Cost Estimate Breakdown's own CategoryForm already used.
 
 // ---------------------------------------------------------------------------
 // Task items
@@ -529,11 +487,23 @@ export async function createTask(
       return { error: "Select a category." };
     }
     if (
+      (fields.plannedStartDate && !isPlannedYearInRange(fields.plannedStartDate)) ||
+      (fields.plannedEndDate && !isPlannedYearInRange(fields.plannedEndDate))
+    ) {
+      return { error: INVALID_DATE_RANGE_ERROR };
+    }
+    // Never let the end date fall before the start date — snap it to
+    // match the start (a single-day task) instead of rejecting the
+    // whole submission over it. Per an explicit request: whatever the
+    // start date ends up being, the end date should never read as
+    // earlier than it, automatically, not something the admin has to
+    // notice and fix by hand.
+    if (
       fields.plannedStartDate &&
       fields.plannedEndDate &&
       fields.plannedEndDate < fields.plannedStartDate
     ) {
-      return { error: "Planned end date can't be before the planned start date." };
+      fields.plannedEndDate = fields.plannedStartDate;
     }
 
     const supabase = await createClient();
@@ -659,134 +629,14 @@ export async function createTask(
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);
-    return { success: true };
+    return { success: true, taskId: task.id };
   });
 }
 
-export async function updateTask(
-  taskId: number,
-  projectId: number,
-  _prevState: CostEstimateActionState,
-  formData: FormData
-): Promise<CostEstimateActionState> {
-  return safely(async () => {
-    const profile = await requireAdmin();
-    if (!profile) {
-      return { error: "You are not authorized to manage cost estimates." };
-    }
-
-    const fields = buildTaskFields(formData);
-
-    if (!fields.taskName) {
-      return { error: "Task description is required." };
-    }
-    if (!fields.categoryId) {
-      return { error: "Select a category." };
-    }
-    if (
-      fields.plannedStartDate &&
-      fields.plannedEndDate &&
-      fields.plannedEndDate < fields.plannedStartDate
-    ) {
-      return { error: "Planned end date can't be before the planned start date." };
-    }
-
-    const supabase = await createClient();
-
-    const predecessorError = await validatePredecessor(
-      supabase,
-      fields.predecessorTaskId,
-      projectId,
-      taskId
-    );
-    if (predecessorError) {
-      return { error: predecessorError };
-    }
-
-    const { error } = await supabase
-      .from("estimate_tasks")
-      .update({
-        category_id: fields.categoryId,
-        task_name: fields.taskName,
-        estimated_quantity: fields.estimatedQuantity,
-        unit: fields.unit || null,
-        labor_estimate: fields.laborEstimate,
-        material_estimate: fields.materialEstimate,
-        equipment_estimate: fields.equipmentEstimate,
-        other_cost_estimate: fields.otherCostEstimate,
-        total_estimate_cost: fields.totalEstimateCost,
-        planned_start_date: fields.plannedStartDate,
-        planned_end_date: fields.plannedEndDate,
-        predecessor_task_id: fields.predecessorTaskId,
-        is_milestone: fields.isMilestone,
-        priority: fields.priority,
-      })
-      .eq("id", taskId);
-
-    if (error) {
-      logSupabaseError("[updateTask] Supabase update failed", error);
-      return { error: "Could not save changes. Please try again." };
-    }
-
-    // Deliberately does NOT touch estimate_task_material_assignments /
-    // estimate_task_labor_assignments — those are only ever edited from
-    // the Gantt Chart Schedule's own task form (updateSubtask below).
-    // This form doesn't render those fields, so writing them here from
-    // an (always-empty) fields.materialAssignments/laborAssignments
-    // would silently wipe out whatever was set on the Gantt Chart —
-    // same trap already fixed once for Milestone/Predecessor on this
-    // exact form.
-
-    // Replace this task's other-cost items wholesale rather than diffing
-    // individual edits/adds/removes — simpler, and nothing else
-    // references these rows by id, so reassigning fresh ids on every
-    // save has no downstream effect.
-    const { error: deleteError } = await supabase
-      .from("estimate_task_other_costs")
-      .delete()
-      .eq("task_id", taskId);
-
-    if (deleteError) {
-      logSupabaseError(
-        "[updateTask] Supabase other-cost delete failed",
-        deleteError
-      );
-      await recordGanttCheckpoint(supabase, projectId, profile.id);
-      return {
-        error: "Could not save the other cost items. Please try again.",
-      };
-    }
-
-    if (fields.otherCostItems.length > 0) {
-      const { error: insertError } = await supabase
-        .from("estimate_task_other_costs")
-        .insert(
-          fields.otherCostItems.map((item) => ({
-            task_id: taskId,
-            cost_name: item.costName,
-            amount: item.amount,
-          }))
-        );
-
-      if (insertError) {
-        logSupabaseError(
-          "[updateTask] Supabase other-cost insert failed",
-          insertError
-        );
-        await recordGanttCheckpoint(supabase, projectId, profile.id);
-        return {
-          error: "Could not save the other cost items. Please try again.",
-        };
-      }
-    }
-
-    await recomputeWeights(supabase, projectId);
-
-    await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
-    return { success: true };
-  });
-}
+// updateTask (the Cost Estimate Breakdown's own former edit action) lived
+// here — removed as dead code once task-form.tsx (its sole caller) was
+// deleted along with that tab's own editing capability. Gantt's own
+// updateSubtask below is the one real task-edit path now.
 
 /**
  * Persists a drag-move or drag-resize on the Gantt Chart view — just
@@ -806,8 +656,22 @@ export async function updateTaskSchedule(
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
+    if (
+      !isPlannedYearInRange(plannedStartDate) ||
+      !isPlannedYearInRange(plannedEndDate)
+    ) {
+      return { error: INVALID_DATE_RANGE_ERROR };
+    }
+    // Never let the end date fall before the start date — snap it to
+    // match the start instead of rejecting the drag/edit outright. See
+    // createTask's own matching comment for the reasoning. gantt-chart-
+    // view.tsx's own persistTaskDates already clamps this client-side
+    // too (so the optimistic override shown immediately after a drag or
+    // typed edit is already correct, no flash-then-correct), but this
+    // is the actual source of truth and has to hold on its own
+    // regardless of what any particular caller already did.
     if (plannedEndDate < plannedStartDate) {
-      return { error: "Planned end date can't be before the planned start date." };
+      plannedEndDate = plannedStartDate;
     }
 
     const supabase = await createClient();
@@ -870,41 +734,37 @@ export async function updateTaskPriority(
 }
 
 /**
- * The Gantt Chart's own inline Percent Complete cell — same direct-call
- * pattern as updateTaskPriority above. Deliberately independent of
- * lib/progress/data.ts's own ProjectProgress (still derived from
- * approved Daily Log work items, for the separate Progress Overview
- * tab) — this is estimate_tasks.percent_complete, a plain directly-
- * editable field the Gantt Chart owns entirely on its own, per an
- * explicit request to keep the two systems unconnected.
+ * Narrow, name-only update for a subtask's inline rename cell — mirrors
+ * updateCategory's own narrow shape above, deliberately NOT built on top
+ * of updateSubtask further down: that action overwrites dates, priority,
+ * milestone flag, successor link, and material/labor assignments
+ * wholesale from whatever FormData it's given, so driving it from a
+ * name-only inline edit would silently wipe every other field on the
+ * task. This only ever touches task_name.
  */
-export async function updateTaskPercentComplete(
+export async function renameTask(
   taskId: number,
   projectId: number,
-  percentComplete: number
+  name: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
     const profile = await requireAdmin();
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
-    if (
-      !Number.isFinite(percentComplete) ||
-      percentComplete < 0 ||
-      percentComplete > 100
-    ) {
-      return { error: "Percent complete must be between 0 and 100." };
+    if (!name.trim()) {
+      return { error: "Task name is required." };
     }
 
     const supabase = await createClient();
     const { error } = await supabase
       .from("estimate_tasks")
-      .update({ percent_complete: Math.round(percentComplete) })
+      .update({ task_name: name.trim() })
       .eq("id", taskId);
 
     if (error) {
-      logSupabaseError("[updateTaskPercentComplete] Supabase update failed", error);
-      return { error: "Could not save the new percent complete. Please try again." };
+      logSupabaseError("[renameTask] Supabase update failed", error);
+      return { error: "Could not save the new name. Please try again." };
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
@@ -912,6 +772,13 @@ export async function updateTaskPercentComplete(
     return { success: true };
   });
 }
+
+// updateTaskPercentComplete (the Gantt Chart's old freely-typable
+// Percent Complete cell) lived here — removed along with that cell.
+// Percent complete is now always computed (Automatic Progress
+// Completion, anchored by a Progress Tracking Override — see
+// lib/task-progress/calculate.ts and recordTaskProgress in
+// lib/task-progress/actions.ts), never a plain directly-editable field.
 
 /**
  * The actual validate-and-write behind setPredecessor below, split out so
@@ -1039,7 +906,7 @@ export async function updateSubtask(
 
     const taskName = String(formData.get("taskName") ?? "").trim();
     const plannedStartDate = parseOptionalDate(formData.get("plannedStartDate"));
-    const plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
+    let plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
     const isMilestone = formData.get("isMilestone") === "on";
     const successorTaskId = parseOptionalId(formData.get("successorTaskId"));
     const priority = parsePriority(formData.get("priority"));
@@ -1050,11 +917,20 @@ export async function updateSubtask(
       return { error: "Task name is required." };
     }
     if (
+      (plannedStartDate && !isPlannedYearInRange(plannedStartDate)) ||
+      (plannedEndDate && !isPlannedYearInRange(plannedEndDate))
+    ) {
+      return { error: INVALID_DATE_RANGE_ERROR };
+    }
+    // Never let the end date fall before the start date — snap it to
+    // match the start instead of rejecting the whole edit. See
+    // createTask's own matching comment for the reasoning.
+    if (
       plannedStartDate &&
       plannedEndDate &&
       plannedEndDate < plannedStartDate
     ) {
-      return { error: "Planned end date can't be before the planned start date." };
+      plannedEndDate = plannedStartDate;
     }
 
     const supabase = await createClient();
@@ -1222,6 +1098,87 @@ export async function deleteTask(
     }
 
     await recomputeWeights(supabase, projectId);
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * Replaces one task's entire planned-materials list wholesale — the
+ * same delete-then-reinsert block updateSubtask's own form submission
+ * already runs against estimate_task_material_assignments, pulled out
+ * on its own so the Cost Estimate Breakdown's own Material Breakdown
+ * modal (see material-breakdown-modal-content.tsx) can save an edited
+ * list directly, without going through updateSubtask's full form (task
+ * name/dates/successor/priority/manpower — none of which that modal
+ * touches). Called directly as a plain function (not useActionState —
+ * this takes a plain array, matching setTaskWorkers' own convention in
+ * lib/workers/actions.ts for the same reason), one call per task whose
+ * own list actually changed.
+ */
+export async function updateTaskMaterialAssignments(
+  taskId: number,
+  projectId: number,
+  assignments: {
+    materialName: string;
+    specification: string | null;
+    plannedQuantity: number;
+    unit: string | null;
+  }[]
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const supabase = await createClient();
+
+    const { error: deleteError } = await supabase
+      .from("estimate_task_material_assignments")
+      .delete()
+      .eq("task_id", taskId);
+    if (deleteError) {
+      logSupabaseError(
+        "[updateTaskMaterialAssignments] Supabase delete failed",
+        deleteError
+      );
+      return { error: "Could not save the material list. Please try again." };
+    }
+
+    const cleaned = assignments
+      .map((item) => ({
+        materialName: item.materialName.trim(),
+        specification: item.specification?.trim() || null,
+        plannedQuantity: item.plannedQuantity,
+        unit: item.unit?.trim() || null,
+      }))
+      .filter((item) => item.materialName.length > 0);
+
+    if (cleaned.length > 0) {
+      const { error: insertError } = await supabase
+        .from("estimate_task_material_assignments")
+        .insert(
+          cleaned.map((item) => ({
+            task_id: taskId,
+            material_name: item.materialName,
+            specification: item.specification,
+            planned_quantity: Number.isFinite(item.plannedQuantity)
+              ? item.plannedQuantity
+              : 0,
+            unit: item.unit,
+          }))
+        );
+      if (insertError) {
+        logSupabaseError(
+          "[updateTaskMaterialAssignments] Supabase insert failed",
+          insertError
+        );
+        return { error: "Could not save the material list. Please try again." };
+      }
+    }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidatePath(`/admin/projects/${projectId}`);

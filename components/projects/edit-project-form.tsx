@@ -8,6 +8,18 @@ import type { AccountRow } from "@/lib/accounts/data";
 
 const initialState: ProjectActionState = {};
 
+// ISO weekday numbers (1=Monday..7=Sunday), matching working_days'
+// own storage convention — see 0040_task_progress_tracking.sql.
+const WEEKDAY_OPTIONS = [
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+  { value: 7, label: "Sun" },
+] as const;
+
 function personLabel(account: AccountRow) {
   return `${account.firstName} ${account.lastName}`.trim() || account.email;
 }
@@ -220,6 +232,32 @@ export function EditProjectForm({
             ))}
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5 sm:col-span-2">
+        <span className="text-sm font-medium text-zinc-800">Working days</span>
+        <p className="text-xs text-zinc-500">
+          Which days count toward the Gantt Chart&apos;s Automatic Progress
+          Completion — a task&apos;s schedule-based progress only advances
+          on the days checked here.
+        </p>
+        <div className="flex flex-wrap gap-3">
+          {WEEKDAY_OPTIONS.map((day) => (
+            <label
+              key={day.value}
+              className="flex cursor-pointer items-center gap-1.5 text-sm text-zinc-700"
+            >
+              <input
+                type="checkbox"
+                name="workingDays"
+                value={day.value}
+                defaultChecked={project.workingDays.includes(day.value)}
+                className="size-4 cursor-pointer rounded border-zinc-300 text-zinc-800 focus:ring-2 focus:ring-zinc-200"
+              />
+              {day.label}
+            </label>
+          ))}
         </div>
       </div>
 

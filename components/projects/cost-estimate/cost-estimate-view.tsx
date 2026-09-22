@@ -1,17 +1,11 @@
 "use client";
 
-import { Fragment, useActionState, useState } from "react";
-import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
-import { EditIcon } from "@/components/icons/edit-icon";
+import { Fragment, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
-import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
-import { TaskForm } from "@/components/projects/cost-estimate/task-form";
-import {
-  deleteCategory,
-  deleteTask,
-  type CostEstimateActionState,
-} from "@/lib/cost-estimate/actions";
-import type { CostEstimate, CostTask } from "@/lib/cost-estimate/data";
+import { MaterialBreakdownModalContent } from "@/components/projects/cost-estimate/material-breakdown-modal-content";
+import { LaborBreakdownModalContent } from "@/components/projects/cost-estimate/labor-breakdown-modal-content";
+import type { CostEstimate } from "@/lib/cost-estimate/data";
 
 // Accept null/undefined even though the props are typed as plain `number`
 // — lib/cost-estimate/data.ts already coalesces every numeric field to 0,
@@ -25,132 +19,59 @@ function formatWeight(weight: number | null | undefined) {
   return `${(weight ?? 0).toFixed(2)}%`;
 }
 
-const deleteInitialState: CostEstimateActionState = {};
-
 const MIN_CATEGORIES_WIDTH = 200;
 const DEFAULT_CATEGORIES_WIDTH = 280;
 
-export function CategoryDeleteButton({
-  categoryId,
-  projectId,
-  categoryName,
-}: {
-  categoryId: number;
-  projectId: number;
-  categoryName: string;
-}) {
-  const boundAction = deleteCategory.bind(null, categoryId, projectId);
-  const [state, formAction, pending] = useActionState(
-    boundAction,
-    deleteInitialState
-  );
+// Every column this table renders — Categories, Estimated Quantity,
+// Unit, Labor, Material, Equipment, Other, Total Estimated Cost, Weight
+// — used only to span the "Other" cost breakdown row across all of
+// them. A plain constant rather than something computed: this table has
+// no manage-mode/Action column anymore (see CostEstimateView's own doc
+// comment on why), so the count never varies.
+const COLUMN_COUNT = 9;
 
-  return (
-    <span className="relative inline-flex">
-      <form
-        action={formAction}
-        onSubmit={(e) => {
-          if (!window.confirm(`Delete "${categoryName}"?`)) {
-            e.preventDefault();
-          }
-        }}
-      >
-        <button
-          type="submit"
-          disabled={pending}
-          aria-label="Delete category"
-          className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      </form>
-      {state?.error && (
-        <span
-          role="alert"
-          className="absolute top-full left-1/2 z-10 mt-1 w-48 -translate-x-1/2 rounded-md border border-red-200 bg-white px-2 py-1 text-center text-xs font-normal text-red-600 normal-case shadow-sm"
-        >
-          {state.error}
-        </span>
-      )}
-    </span>
-  );
-}
-
-export function TaskDeleteButton({
-  taskId,
-  projectId,
-  taskName,
-}: {
-  taskId: number;
-  projectId: number;
-  taskName: string;
-}) {
-  const boundAction = deleteTask.bind(null, taskId, projectId);
-  const [state, formAction, pending] = useActionState(
-    boundAction,
-    deleteInitialState
-  );
-
-  return (
-    <span className="relative inline-flex">
-      <form
-        action={formAction}
-        onSubmit={(e) => {
-          if (!window.confirm(`Delete "${taskName}"?`)) {
-            e.preventDefault();
-          }
-        }}
-      >
-        <button
-          type="submit"
-          disabled={pending}
-          aria-label="Delete task item"
-          className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      </form>
-      {state?.error && (
-        <span
-          role="alert"
-          className="absolute top-full right-0 z-10 mt-1 w-48 rounded-md border border-red-200 bg-white px-2 py-1 text-right text-xs font-normal text-red-600 shadow-sm"
-        >
-          {state.error}
-        </span>
-      )}
-    </span>
-  );
-}
-
+/**
+ * A read-only view of the project's own cost estimate *structure* —
+ * every add/edit/delete of a category or task itself lives on the Gantt
+ * Chart instead (see gantt-chart-view.tsx), per an explicit decision
+ * that task management should have exactly one place, not two that
+ * could drift out of sync or leave someone unsure which screen to use.
+ *
+ * The Material column is the one deliberate exception: clicking its own
+ * header (see MaterialBreakdownModalContent's own doc comment) opens a
+ * project-wide, *editable* view of every task's planned material
+ * list — the intended landing spot for a Bill of Materials import, and
+ * for hand-editing that same list without one. That's editing a task's
+ * material sub-list, not the task itself, so it doesn't reopen the
+ * "only Gantt edits tasks" rule above. Labor's own header opens the
+ * read-only equivalent (project-wide, but view-only — see
+ * LaborBreakdownModalContent) since nothing has asked for that one to
+ * be editable here yet.
+ */
 export function CostEstimateView({
   projectId,
   estimate,
-  defaultLaborCostPercent,
 }: {
   projectId: number;
   estimate: CostEstimate;
-  defaultLaborCostPercent: number | null;
 }) {
-  const [manageMode, setManageMode] = useState(false);
-  // Editing only — adding a category or task item now happens from the
-  // Gantt Chart below instead (see gantt-chart-view.tsx's own Add Phase/
-  // Add Task, which write to this same cost estimate data), so there's
-  // no "add" mode to track here anymore, just which existing row (if
-  // any) is open for editing.
-  const [categoryModal, setCategoryModal] = useState<{
-    id: number;
-    name: string;
-  } | null>(null);
-  const [taskModal, setTaskModal] = useState<CostTask | null>(null);
+  // Project-wide, not per-task — see the two modal components' own doc
+  // comments for why a column-header trigger replaced an earlier
+  // per-task-row version of this.
+  const [materialBreakdownOpen, setMaterialBreakdownOpen] = useState(false);
+  const [laborBreakdownOpen, setLaborBreakdownOpen] = useState(false);
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<number>>(
     new Set()
   );
-  // Every phase starts expanded (unlike Daily Logs' own list, this table
-  // is normally browsed as "the whole estimate," not scanned
-  // chronologically) — collapsing one is opt-in per phase.
+  // Every phase starts collapsed — this table is a quick-reference
+  // summary now (all editing happens on the Gantt Chart below), so
+  // landing on just the category rows/subtotals first, with the detail
+  // an opt-in expand away, reads better than a long fully-open table on
+  // every visit. Lazy initializer since this only ever needs to run
+  // once, off however many categories exist at mount.
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<
     Set<number>
-  >(new Set());
+  >(() => new Set(estimate.categories.map((c) => c.id)));
   // The only resizable column — a task name can run much longer than
   // any of the fixed numeric columns need, so this one's width is
   // user-controlled instead of guessing a single width that fits every
@@ -202,8 +123,6 @@ export function CostEstimateView({
   }
 
   const { categories, summary } = estimate;
-  const categoryOptions = categories.map((c) => ({ id: c.id, name: c.name }));
-  const columnCount = 9 + (manageMode ? 1 : 0);
 
   return (
     // No border/rounded chrome of its own — this renders as a direct
@@ -219,8 +138,9 @@ export function CostEstimateView({
             No cost estimate yet
           </p>
           <p className="mt-1 text-sm text-zinc-400">
-            Add a phase and task items from the Gantt Chart below to
-            start building the cost breakdown structure.
+            Add a phase and task items, or import a Bill of Materials, from
+            the Gantt Chart below to start building the cost breakdown
+            structure.
           </p>
         </div>
       ) : (
@@ -232,22 +152,7 @@ export function CostEstimateView({
                     style={{ width: categoriesWidth }}
                     className="relative border-r border-zinc-200 px-4 py-2.5"
                   >
-                    <span className="flex items-center justify-between gap-2 pr-3">
-                      Categories
-                      <button
-                        type="button"
-                        onClick={() => setManageMode((m) => !m)}
-                        aria-label="Toggle edit mode"
-                        aria-pressed={manageMode}
-                        className={`cursor-pointer rounded border p-1 transition ${
-                          manageMode
-                            ? "border-zinc-900 bg-zinc-900 text-white"
-                            : "border-zinc-200 text-zinc-500 hover:bg-zinc-100"
-                        }`}
-                      >
-                        <EditIcon className="size-3.5" />
-                      </button>
-                    </span>
+                    Categories
                     {/* The one resize handle in this table — a wider
                         invisible drag target than the border itself, so
                         it's actually easy to grab. */}
@@ -262,11 +167,27 @@ export function CostEstimateView({
                   <th className="w-20 border-r border-zinc-200 px-4 py-2.5">
                     Unit
                   </th>
-                  <th className="w-28 border-r border-zinc-200 px-4 py-2.5 text-right">
-                    Labor
+                  <th className="w-28 border-r border-zinc-200 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setLaborBreakdownOpen(true)}
+                      title="View the project's full labor breakdown"
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-100 hover:text-zinc-900"
+                    >
+                      Labor
+                      <ChevronRight className="size-3.5 shrink-0" />
+                    </button>
                   </th>
-                  <th className="w-28 border-r border-zinc-200 px-4 py-2.5 text-right">
-                    Material
+                  <th className="w-28 border-r border-zinc-200 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setMaterialBreakdownOpen(true)}
+                      title="View the project's full material breakdown"
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-100 hover:text-zinc-900"
+                    >
+                      Material
+                      <ChevronRight className="size-3.5 shrink-0" />
+                    </button>
                   </th>
                   <th className="w-28 border-r border-zinc-200 px-4 py-2.5 text-right">
                     Equipment
@@ -277,14 +198,7 @@ export function CostEstimateView({
                   <th className="w-48 border-r border-zinc-200 px-4 py-2.5 text-right whitespace-nowrap">
                     Total Estimated Cost
                   </th>
-                  <th
-                    className={`w-24 px-4 py-2.5 text-right ${manageMode ? "border-r border-zinc-200" : ""}`}
-                  >
-                    Weight
-                  </th>
-                  {manageMode && (
-                    <th className="w-24 px-4 py-2.5 text-right">Action</th>
-                  )}
+                  <th className="w-24 px-4 py-2.5 text-right">Weight</th>
                 </tr>
               </thead>
               <tbody>
@@ -312,49 +226,22 @@ export function CostEstimateView({
                           className="border-r border-zinc-200 px-4 py-2.5"
                           colSpan={8}
                         >
-                          <span className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => toggleCategory(category.id)}
-                              className="flex cursor-pointer items-center gap-2 transition hover:text-zinc-900"
-                            >
-                              {isOpen ? (
-                                <ChevronDown className="size-3.5 flex-shrink-0 text-zinc-400" />
-                              ) : (
-                                <ChevronRight className="size-3.5 flex-shrink-0 text-zinc-400" />
-                              )}
-                              {category.name}
-                            </button>
-                            {manageMode && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setCategoryModal({
-                                      id: category.id,
-                                      name: category.name,
-                                    })
-                                  }
-                                  aria-label="Edit category"
-                                  className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
-                                >
-                                  <EditIcon className="size-3.5" />
-                                </button>
-                                <CategoryDeleteButton
-                                  categoryId={category.id}
-                                  projectId={projectId}
-                                  categoryName={category.name}
-                                />
-                              </>
+                          <button
+                            type="button"
+                            onClick={() => toggleCategory(category.id)}
+                            className="flex cursor-pointer items-center gap-2 transition hover:text-zinc-900"
+                          >
+                            {isOpen ? (
+                              <ChevronDown className="size-3.5 shrink-0 text-zinc-400" />
+                            ) : (
+                              <ChevronRight className="size-3.5 shrink-0 text-zinc-400" />
                             )}
-                          </span>
+                            {category.name}
+                          </button>
                         </td>
-                        <td
-                          className={`border-r border-zinc-200 px-4 py-2.5 text-right ${manageMode ? "" : "border-r-0"}`}
-                        >
+                        <td className="px-4 py-2.5 text-right">
                           {formatWeight(category.weight)}
                         </td>
-                        {manageMode && <td className="px-4 py-2.5" />}
                       </tr>
 
                       {isOpen &&
@@ -409,36 +296,15 @@ export function CostEstimateView({
                               <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                                 {formatCurrency(task.totalEstimateCost)}
                               </td>
-                              <td
-                                className={`px-4 py-2.5 text-right ${manageMode ? "border-r border-zinc-200" : ""}`}
-                              >
+                              <td className="px-4 py-2.5 text-right">
                                 {formatWeight(task.weight)}
                               </td>
-                              {manageMode && (
-                                <td className="px-4 py-2.5">
-                                  <div className="flex items-center justify-end gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => setTaskModal(task)}
-                                      aria-label="Edit task item"
-                                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
-                                    >
-                                      <EditIcon className="size-3.5" />
-                                    </button>
-                                    <TaskDeleteButton
-                                      taskId={task.id}
-                                      projectId={projectId}
-                                      taskName={task.name}
-                                    />
-                                  </div>
-                                </td>
-                              )}
                             </tr>
                             {expanded && hasOtherCosts && (
                               <tr className="border-b border-zinc-200 bg-zinc-50/60">
                                 <td
                                   className="px-4 py-2"
-                                  colSpan={columnCount}
+                                  colSpan={COLUMN_COUNT}
                                 >
                                   <ul className="ml-8 flex flex-col gap-0.5 text-xs text-zinc-500">
                                     {task.otherCostItems.map((item) => (
@@ -487,7 +353,6 @@ export function CostEstimateView({
                     {formatCurrency(summary.totalEstimatedCost)}
                   </td>
                   <td className="px-4 py-3 text-right">100.00%</td>
-                  {manageMode && <td className="px-4 py-3" />}
                 </tr>
               </tfoot>
             </table>
@@ -495,29 +360,24 @@ export function CostEstimateView({
       )}
 
       <Modal
-        open={categoryModal !== null}
-        onClose={() => setCategoryModal(null)}
-        title="Edit Category"
+        open={materialBreakdownOpen}
+        onClose={() => setMaterialBreakdownOpen(false)}
+        title="Material Breakdown"
+        size="large"
       >
-        <CategoryForm
+        <MaterialBreakdownModalContent
           projectId={projectId}
-          category={categoryModal ?? undefined}
-          onSuccess={() => setCategoryModal(null)}
+          categories={categories}
+          onClose={() => setMaterialBreakdownOpen(false)}
         />
       </Modal>
 
       <Modal
-        open={taskModal !== null}
-        onClose={() => setTaskModal(null)}
-        title="Edit Task Item"
+        open={laborBreakdownOpen}
+        onClose={() => setLaborBreakdownOpen(false)}
+        title="Labor Breakdown"
       >
-        <TaskForm
-          projectId={projectId}
-          categories={categoryOptions}
-          task={taskModal ?? undefined}
-          defaultLaborCostPercent={defaultLaborCostPercent}
-          onSuccess={() => setTaskModal(null)}
-        />
+        <LaborBreakdownModalContent categories={categories} />
       </Modal>
     </div>
   );

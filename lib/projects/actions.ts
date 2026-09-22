@@ -23,6 +23,19 @@ function parseOptionalDate(value: FormDataEntryValue | null) {
   return str || null;
 }
 
+/** Reads the Edit Project form's own working-day checkboxes (ISO
+ * weekday numbers, 1=Monday..7=Sunday) — see 0040_task_progress_
+ * tracking.sql. An empty selection is allowed (a project with no
+ * working days simply never advances Automatic Progress Completion on
+ * its own, still correctable via a Progress Tracking Override), not
+ * silently forced back to a default. */
+function parseWorkingDays(formData: FormData): number[] {
+  return formData
+    .getAll("workingDays")
+    .map((value) => Number(value))
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= 7);
+}
+
 export async function createProject(
   _prevState: ProjectActionState,
   formData: FormData
@@ -132,6 +145,7 @@ export async function updateProject(
       ),
       project_manager_id: projectManagerId,
       foreman_id: foremanId,
+      working_days: parseWorkingDays(formData),
     })
     .eq("id", projectId);
 

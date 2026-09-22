@@ -211,6 +211,23 @@ input[type="date"][data-empty="true"] {
 }
 
 /*
+ * The date-header row's own text (e.g. "Thu, 4" and the "June" month
+ * label above it) — gantt-task-react's own default is 14px (its own
+ * <Gantt> fontSize prop, not set here, so it falls back to the
+ * library's own default), a size this app never explicitly chose, just
+ * inherited. `_9w8d5`/`_2q1Kt` are that same CSS-module map's own
+ * calendarBottomText/calendarTopText values (confirmed directly by
+ * reading the compiled bundle, same as `_3KcaM` above) — scoped to just
+ * this header text, not the <Gantt> fontSize prop itself, which would
+ * also shrink the tooltip and the library's own (mostly hidden, see
+ * above) bar-label text along with it.
+ */
+.gantt-task-react-root ._9w8d5,
+.gantt-task-react-root ._2q1Kt {
+  font-size: 11px;
+}
+
+/*
  * Milestones get their own, stronger override on top of the rule
  * above. gantt-task-react's isTextInside logic (see the comment above)
  * measures its own <text>'s rendered width exactly once, right after

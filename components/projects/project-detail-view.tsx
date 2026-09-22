@@ -10,6 +10,7 @@ import { Modal } from "@/components/ui/modal";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
+import { ImportBomModalContent } from "@/components/projects/cost-estimate/import-bom-modal-content";
 import { ProgressView } from "@/components/projects/progress/progress-view";
 // gantt-task-react renders its timeline as an SVG sized from
 // client-measured container layout, computed post-mount — loaded with
@@ -73,6 +74,7 @@ import type { ProjectProgress } from "@/lib/progress/data";
 import type { DelayRiskAssessment } from "@/lib/forecasting/data";
 import type { DailyLogSummary, SurveyQuestion } from "@/lib/daily-logs/data";
 import type { Worker, TaskWorkerAssignments } from "@/lib/workers/data";
+import type { TaskProgressToday } from "@/lib/task-progress/data";
 
 const MAIN_TABS = [
   { value: "overview", label: "Overview" },
@@ -269,6 +271,7 @@ export function ProjectDetailView({
   ganttCanRedo,
   workers,
   taskWorkerAssignments,
+  taskProgressToday,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
@@ -309,6 +312,11 @@ export function ProjectDetailView({
    * costEstimate/progress in page.tsx. */
   workers: Worker[];
   taskWorkerAssignments: TaskWorkerAssignments;
+  /** Every task's own cumulative-to-date total plus whatever's already
+   * recorded for today — see lib/task-progress/data.ts, fetched
+   * alongside costEstimate/progress in page.tsx. Powers the Gantt
+   * Chart's own Progress Tracking modal. */
+  taskProgressToday: Record<number, TaskProgressToday>;
 }) {
   // Reading the initial tab/sub-tab from the URL lets a link *into* this
   // page (e.g. a Daily Log detail page's back button) land on the exact
@@ -366,6 +374,12 @@ export function ProjectDetailView({
   // above this, but that's now redundant with the sticky project header,
   // which already shows all of it.
   const [costOverviewOpen, setCostOverviewOpen] = useState(true);
+  // Shared by both the Gantt Chart toolbar's own "Import BOM" button and
+  // the Cost Estimate Breakdown's own entry points (its empty state and
+  // header) — lifted up here, the nearest common ancestor of both, so
+  // either one opens the exact same modal instance instead of two
+  // separately-rendered copies of the same flow that could drift apart.
+  const [importBomModalOpen, setImportBomModalOpen] = useState(false);
 
   // The breadcrumb tracks only the main tab (Overview/Progress/
   // Materials/Equipment/Expenses) — switching a sub-tab within one of
@@ -692,7 +706,6 @@ export function ProjectDetailView({
                   <CostEstimateView
                     projectId={project.id}
                     estimate={costEstimate}
-                    defaultLaborCostPercent={project.defaultLaborCostPercent}
                   />
                 </div>
               )}
@@ -702,14 +715,24 @@ export function ProjectDetailView({
               projectId={project.id}
               categories={costEstimate.categories}
               projectStartDate={project.startDate}
-              projectTargetEndDate={project.targetEndDate}
               canUndo={ganttCanUndo}
               canRedo={ganttCanRedo}
               workers={workers}
               taskWorkerAssignments={taskWorkerAssignments}
+              materials={materials}
+              taskProgressToday={taskProgressToday}
+              onImportBom={() => setImportBomModalOpen(true)}
             />
           </div>
         )}
+
+        <Modal
+          open={importBomModalOpen}
+          onClose={() => setImportBomModalOpen(false)}
+          title="Import Bill of Materials"
+        >
+          <ImportBomModalContent onClose={() => setImportBomModalOpen(false)} />
+        </Modal>
         </div>
       </main>
 

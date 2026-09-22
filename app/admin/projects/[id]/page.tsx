@@ -6,6 +6,7 @@ import { listAccountsByRole } from "@/lib/accounts/data";
 import { getCostEstimate } from "@/lib/cost-estimate/data";
 import { getGanttUndoRedoState } from "@/lib/cost-estimate/undo-redo";
 import { listWorkers, listTaskWorkerAssignments } from "@/lib/workers/data";
+import { listTaskProgressToday } from "@/lib/task-progress/data";
 import { getProjectProgress } from "@/lib/progress/data";
 import { listDailyLogs, listSurveyQuestions } from "@/lib/daily-logs/data";
 import {
@@ -71,6 +72,7 @@ export default async function ProjectDetailPage({
     ganttUndoRedoState,
     workers,
     taskWorkerAssignments,
+    taskProgressToday,
   ] = await Promise.all([
     getProjectById(projectId),
     listAccountsByRole(["project_manager"]),
@@ -94,6 +96,7 @@ export default async function ProjectDetailPage({
     getGanttUndoRedoState(projectId),
     listWorkers(projectId),
     listTaskWorkerAssignments(projectId),
+    listTaskProgressToday(projectId),
   ]);
 
   const expenseOverview = summarizeExpenses(
@@ -173,6 +176,7 @@ export default async function ProjectDetailPage({
       ganttCanRedo={ganttUndoRedoState.canRedo}
       workers={workers}
       taskWorkerAssignments={taskWorkerAssignments}
+      taskProgressToday={taskProgressToday}
     />
   );
 }

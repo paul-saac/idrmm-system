@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
+import { listTaskProgressAnchors } from "@/lib/task-progress/data";
+import { computeAutoPercentComplete } from "@/lib/task-progress/calculate";
 
 export type OtherCostItem = {
   id: number;
@@ -115,24 +117,39 @@ export type CostEstimate = {
 export async function getCostEstimate(projectId: number): Promise<CostEstimate> {
   const supabase = await createClient();
 
-  const [{ data: categoryRows }, { data: taskRows }] = await Promise.all([
-    supabase
-      .from("estimate_categories")
-      .select("id, category_name, weight")
-      .eq("project_id", projectId)
-      .order("id", { ascending: true }),
-    supabase
-      .from("estimate_tasks")
-      .select("*")
-      .eq("project_id", projectId)
-      .order("id", { ascending: true }),
-  ]);
+  const [{ data: categoryRows }, { data: taskRows }, { data: projectRow }] =
+    await Promise.all([
+      supabase
+        .from("estimate_categories")
+        .select("id, category_name, weight")
+        .eq("project_id", projectId)
+        .order("id", { ascending: true }),
+      supabase
+        .from("estimate_tasks")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("id", { ascending: true }),
+      supabase
+        .from("projects")
+        .select("working_days")
+        .eq("id", projectId)
+        .maybeSingle(),
+    ]);
+
+  // Falls back to the same Mon-Sat default the DB column itself defaults
+  // to — projectRow can come back null only if the project row itself
+  // somehow doesn't exist, in which case there's nothing to compute
+  // progress for anyway.
+  const workingDays: readonly number[] = projectRow?.working_days ?? [
+    1, 2, 3, 4, 5, 6,
+  ];
 
   const taskIds = (taskRows ?? []).map((row) => row.id);
   const [
     { data: otherCostRows, error: otherCostError },
     { data: materialAssignmentRows },
     { data: laborAssignmentRows },
+    progressAnchorsByTask,
   ] = await Promise.all([
     taskIds.length > 0
       ? supabase
@@ -155,6 +172,10 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
           .in("task_id", taskIds)
           .order("id", { ascending: true })
       : Promise.resolve({ data: [] as never[] }),
+    // Every task's own Progress Tracking Override anchor (see
+    // lib/task-progress/data.ts) — what computeAutoPercentComplete
+    // below projects each task's live percentComplete forward from.
+    listTaskProgressAnchors(taskIds),
   ]);
 
   if (otherCostError) {
@@ -251,7 +272,21 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       predecessorTaskId: row.predecessor_task_id,
       isMilestone: row.is_milestone ?? false,
       priority: toTaskPriority(row.priority),
-      percentComplete: Math.min(100, Math.max(0, row.percent_complete ?? 0)),
+      // Live-computed (Automatic Progress Completion, anchored by the
+      // task's own latest Progress Tracking Override if one exists —
+      // see lib/task-progress/calculate.ts) rather than read from the
+      // stored percent_complete column, which this feature supersedes
+      // as the actual source of a task's own percent complete (see
+      // 0040_task_progress_tracking.sql's own comment on why that
+      // column is left in place but no longer read/written).
+      percentComplete: computeAutoPercentComplete({
+        plannedStartDate: row.planned_start_date,
+        plannedEndDate: row.planned_end_date,
+        estimatedQuantity: row.estimated_quantity ?? 0,
+        workingDays,
+        anchor: progressAnchorsByTask[row.id] ?? null,
+        today: new Date(),
+      }),
       materialAssignments: materialAssignmentsByTask.get(row.id) ?? [],
       laborAssignments: laborAssignmentsByTask.get(row.id) ?? [],
     };

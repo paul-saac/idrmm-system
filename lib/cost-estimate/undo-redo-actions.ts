@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
-import { restoreGanttSnapshot, type GanttSnapshot } from "@/lib/cost-estimate/undo-redo";
+import {
+  restoreGanttSnapshot,
+  getGanttUndoRedoState,
+  type GanttSnapshot,
+} from "@/lib/cost-estimate/undo-redo";
+import { getCostEstimate } from "@/lib/cost-estimate/data";
 import type { CostEstimateActionState } from "@/lib/cost-estimate/actions";
 
 async function requireAdmin() {
@@ -81,7 +86,43 @@ async function moveGanttHistory(
     .eq("id", projectId);
 
   revalidatePath(`/admin/projects/${projectId}`);
-  return { success: true };
+
+  // Fetched here, in the same round trip, so the Gantt Chart can show
+  // the actual restored schedule the instant this action resolves —
+  // see CostEstimateActionState's own doc comment on `categories` for
+  // why that matters (revalidatePath above still triggers a full
+  // router.refresh() on the client, which stays the source of truth
+  // once it lands, this just means the UI doesn't have to sit idle
+  // waiting for that much bigger, ~23-query round trip first). A
+  // failure here isn't the undo/redo itself failing — the restore above
+  // already committed — so it's logged and swallowed rather than
+  // turned into an error the caller has to unwind a real state change
+  // over; the client falls back to waiting for router.refresh() same as
+  // before this existed.
+  // Same reasoning for canUndo/canRedo as for `categories` just above —
+  // confirmed directly this was the actual cause of a real bug report:
+  // without this, the buttons kept showing their *pre*-undo enabled
+  // state (stale canUndo/canRedo props) for however long router.refresh()
+  // below took to land, meaning Undo stayed clickable — and a second
+  // click during that window fired a second real undo — for that whole
+  // window right after the first undo had already succeeded, not just a
+  // cosmetic flash.
+  let categories: CostEstimateActionState["categories"];
+  let canUndo: CostEstimateActionState["canUndo"];
+  let canRedo: CostEstimateActionState["canRedo"];
+  try {
+    const [costEstimate, historyState] = await Promise.all([
+      getCostEstimate(projectId),
+      getGanttUndoRedoState(projectId),
+    ]);
+    categories = costEstimate.categories;
+    canUndo = historyState.canUndo;
+    canRedo = historyState.canRedo;
+  } catch (error) {
+    console.error(`[${direction}GanttAction] post-restore refetch failed`, error);
+  }
+
+  return { success: true, categories, canUndo, canRedo };
 }
 
 export async function undoGanttAction(
@@ -94,4 +135,48 @@ export async function redoGanttAction(
   projectId: number
 ): Promise<CostEstimateActionState> {
   return moveGanttHistory(projectId, "redo");
+}
+
+/**
+ * Wipes this project's entire Undo/Redo history — called once by
+ * GanttChartView the instant it mounts (see its own useEffect), per an
+ * explicit request that Undo/Redo should only ever track actions taken
+ * in the *current* Gantt Chart session: reloading the page or
+ * navigating away from it (the Overview tab, the only place this
+ * component renders — see project-detail-view.tsx's own tab switch,
+ * which unmounts it like any other tab) and coming back should always
+ * start both buttons with nothing to undo or redo, never carrying
+ * history over from an earlier visit.
+ *
+ * Deliberately just deletes every gantt_snapshots row for this project
+ * and nulls the cursor, rather than trying to keep some "pre-session"
+ * history around in a way the buttons simply ignore — there is no
+ * further use for it once a fresh session has started (nothing else in
+ * this app reads gantt_snapshots), and leaving it in place would be
+ * dead weight for recordGanttCheckpoint's own MAX_GANTT_HISTORY_PER_PROJECT
+ * trimming to eventually catch up with instead of being gone already.
+ *
+ * Best-effort and silent like recordGanttCheckpoint's own doc comment
+ * describes for the same reason — this is app-level housekeeping, not
+ * something the admin asked for directly, so a failure here shouldn't
+ * surface as an error interrupting their work. Worst case on failure:
+ * this session's Undo/Redo buttons start already reflecting whatever
+ * history happened to be left over, exactly like before this existed.
+ */
+export async function resetGanttHistory(projectId: number): Promise<void> {
+  try {
+    const profile = await requireAdmin();
+    if (!profile) return;
+
+    const supabase = await createClient();
+    await supabase.from("gantt_snapshots").delete().eq("project_id", projectId);
+    await supabase
+      .from("projects")
+      .update({ gantt_undo_cursor_id: null })
+      .eq("id", projectId);
+
+    revalidatePath(`/admin/projects/${projectId}`);
+  } catch (error) {
+    console.error("[resetGanttHistory] unexpected error", error);
+  }
 }

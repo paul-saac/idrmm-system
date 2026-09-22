@@ -20,12 +20,13 @@ export function CategoryForm({
 }: {
   projectId: number;
   category?: Pick<CostCategory, "id" | "name">;
-  /** Adds a Delete button (edit mode only) to this same modal — opt-in
-   * via a prop rather than always-on, since this form is shared: the
-   * Gantt Chart's own task list wants delete to live only in the edit
-   * form, not as a separate Actions-column icon (see gantt-chart-view.tsx),
-   * but the Cost Estimate Breakdown page keeps its own existing
-   * standalone CategoryDeleteButton and doesn't pass this. */
+  /** Adds a Delete button (edit mode only) to this same modal — the
+   * Gantt Chart's own task list (the only place this form is used;
+   * editing a category/task lives there exclusively, not on the Cost
+   * Estimate Breakdown page, which is read-only) wants delete to live
+   * only in the edit form, not as a separate Actions-column icon (see
+   * gantt-chart-view.tsx). Kept as an opt-in prop rather than always-on
+   * since add mode (category === undefined) never wants one. */
   showDeleteButton?: boolean;
   onSuccess?: () => void;
 }) {

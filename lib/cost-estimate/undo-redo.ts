@@ -182,6 +182,22 @@ function diffRows(current: RawRow[], target: RawRow[]) {
  * category_id must already exist); tasks themselves in two passes so
  * predecessor_task_id is never set before every task row exists to be
  * pointed at.
+ *
+ * Each phase below is one batched `.upsert(rows, { onConflict: "id" })`
+ * call covering every row that phase touches, not a per-row insert/
+ * update in a loop — undo/redo was confirmed directly to feel slow
+ * specifically because of this: a rename that only ever touches one
+ * row elsewhere in this app was, here, however many individual awaited
+ * round trips as there were rows in the whole snapshot (every category
+ * + every task + every child-table row), each one a full network
+ * round trip to Supabase, all sequential. Batching doesn't change what
+ * ends up in the DB (`.upsert` on the primary key inserts a still-
+ * missing row or updates an existing one exactly like the old insert/
+ * update split did — the "insert vs update" distinction was already
+ * meaningless output-wise, it only ever picked which single-row call to
+ * make), it just does the same work in the number of round trips FK
+ * ordering actually requires (six here, worst case) instead of one per
+ * row.
  */
 export async function restoreGanttSnapshot(
   supabase: SupabaseClient,
@@ -211,37 +227,39 @@ export async function restoreGanttSnapshot(
     await supabase.from("estimate_categories").delete().in("id", categoriesDiff.toDeleteIds);
   }
 
-  for (const category of categoriesDiff.toInsert) {
-    await supabase.from("estimate_categories").insert(category as never);
-  }
-  for (const category of categoriesDiff.toUpdate) {
-    const { id, ...rest } = category;
-    await supabase.from("estimate_categories").update(rest as never).eq("id", id);
+  const categoriesToUpsert = [...categoriesDiff.toInsert, ...categoriesDiff.toUpdate];
+  if (categoriesToUpsert.length > 0) {
+    await supabase
+      .from("estimate_categories")
+      .upsert(categoriesToUpsert as never[], { onConflict: "id" });
   }
 
   // Pass 1: every task row, predecessor_task_id forced null so no
   // insert/update can reference a task id that doesn't exist yet.
-  for (const task of tasksDiff.toInsert) {
+  const tasksToUpsertPass1 = [...tasksDiff.toInsert, ...tasksDiff.toUpdate].map(
+    (task) => ({ ...task, predecessor_task_id: null })
+  );
+  if (tasksToUpsertPass1.length > 0) {
     await supabase
       .from("estimate_tasks")
-      .insert({ ...task, predecessor_task_id: null } as never);
+      .upsert(tasksToUpsertPass1 as never[], { onConflict: "id" });
   }
-  for (const task of tasksDiff.toUpdate) {
-    const { id, ...rest } = task;
+  // Pass 2: now that every task in the snapshot exists as a row (pass 1
+  // above), set the real predecessor links — a partial-row upsert
+  // (just id + predecessor_task_id) only ever updates that one column
+  // on conflict, exactly like the original per-row `.update()` calls
+  // did; it can't accidentally insert a bare/incomplete row here since
+  // every id it targets is already guaranteed to exist post-pass-1.
+  const predecessorLinks = snapshot.tasks
+    .filter(
+      (task) =>
+        task.predecessor_task_id !== null && task.predecessor_task_id !== undefined
+    )
+    .map((task) => ({ id: task.id, predecessor_task_id: task.predecessor_task_id }));
+  if (predecessorLinks.length > 0) {
     await supabase
       .from("estimate_tasks")
-      .update({ ...rest, predecessor_task_id: null } as never)
-      .eq("id", id);
-  }
-  // Pass 2: now that every task in the snapshot exists as a row, set the
-  // real predecessor links.
-  for (const task of snapshot.tasks) {
-    if (task.predecessor_task_id !== null && task.predecessor_task_id !== undefined) {
-      await supabase
-        .from("estimate_tasks")
-        .update({ predecessor_task_id: task.predecessor_task_id } as never)
-        .eq("id", task.id);
-    }
+      .upsert(predecessorLinks as never[], { onConflict: "id" });
   }
 
   for (const [table, currentRows, targetRows] of [
@@ -257,12 +275,9 @@ export async function restoreGanttSnapshot(
     if (diff.toDeleteIds.length > 0) {
       await supabase.from(table).delete().in("id", diff.toDeleteIds);
     }
-    for (const row of diff.toInsert) {
-      await supabase.from(table).insert(row as never);
-    }
-    for (const row of diff.toUpdate) {
-      const { id, ...rest } = row;
-      await supabase.from(table).update(rest as never).eq("id", id);
+    const toUpsert = [...diff.toInsert, ...diff.toUpdate];
+    if (toUpsert.length > 0) {
+      await supabase.from(table).upsert(toUpsert as never[], { onConflict: "id" });
     }
   }
 }

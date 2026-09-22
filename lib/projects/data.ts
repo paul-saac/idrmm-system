@@ -14,6 +14,10 @@ export type ProjectRow = {
    * uses to auto-fill a new task's Labor Estimate as this % of (Material
    * + Equipment + Other) — see task-form.tsx. Null means no auto-fill. */
   defaultLaborCostPercent: number | null;
+  /** ISO weekday numbers (1=Monday..7=Sunday) that count toward the
+   * Gantt Chart's own Automatic Progress Completion — see
+   * 0040_task_progress_tracking.sql. */
+  workingDays: number[];
   projectManagerId: string;
   projectManagerName: string | null;
   foremanId: string;
@@ -64,6 +68,7 @@ function toProjectRow(
     actual_end_date: string | null;
     allocated_budget: number | null;
     default_labor_cost_percent: number | null;
+    working_days: number[] | null;
     project_manager_id: string;
     foreman_id: string;
   },
@@ -79,6 +84,7 @@ function toProjectRow(
     actualEndDate: row.actual_end_date,
     allocatedBudget: row.allocated_budget,
     defaultLaborCostPercent: row.default_labor_cost_percent,
+    workingDays: row.working_days ?? [1, 2, 3, 4, 5, 6],
     projectManagerId: row.project_manager_id,
     projectManagerName: formatName(namesById.get(row.project_manager_id)),
     foremanId: row.foreman_id,

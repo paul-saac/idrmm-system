@@ -59,6 +59,10 @@ export interface Database {
            * means no undo/redo history has been recorded for this project
            * yet (never been through a tracked mutating action). */
           gantt_undo_cursor_id: number | null;
+          /** ISO weekday numbers (1=Monday..7=Sunday) that count toward
+           * Automatic Progress Completion's own working-day math — see
+           * 0040_task_progress_tracking.sql. */
+          working_days: number[];
         };
         Insert: {
           project_name: string;
@@ -72,6 +76,7 @@ export interface Database {
           project_manager_id: string;
           foreman_id: string;
           created_by: string;
+          working_days?: number[];
         };
         Update: {
           project_name?: string;
@@ -85,6 +90,7 @@ export interface Database {
           project_manager_id?: string;
           foreman_id?: string;
           gantt_undo_cursor_id?: number | null;
+          working_days?: number[];
         };
         Relationships: [];
       };
@@ -317,6 +323,51 @@ export interface Database {
         Insert: {
           task_id: number;
           worker_id: number;
+        };
+        Update: never;
+        Relationships: [];
+      };
+      task_progress_entries: {
+        // One row per task per calendar day a Progress Tracking Override
+        // was recorded — see 0040_task_progress_tracking.sql.
+        // quantity_completed is that day's own increment, not a running
+        // total.
+        Row: {
+          id: number;
+          task_id: number;
+          entry_date: string;
+          quantity_completed: number;
+          labor_headcount: number;
+          recorded_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          task_id: number;
+          entry_date: string;
+          quantity_completed?: number;
+          labor_headcount?: number;
+          recorded_by?: string | null;
+        };
+        Update: {
+          quantity_completed?: number;
+          labor_headcount?: number;
+        };
+        Relationships: [];
+      };
+      task_progress_material_usage: {
+        // Materials consumed on one task_progress_entries row's own day
+        // — each one is a real project_materials.quantity deduction, see
+        // recordTaskProgress in lib/task-progress/actions.ts.
+        Row: {
+          id: number;
+          progress_entry_id: number;
+          material_id: number;
+          quantity: number;
+        };
+        Insert: {
+          progress_entry_id: number;
+          material_id: number;
+          quantity?: number;
         };
         Update: never;
         Relationships: [];
