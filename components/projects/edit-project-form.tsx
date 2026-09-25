@@ -1,7 +1,7 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
-import { ChevronDown } from "lucide-react";
+import { useActionState, useEffect, useId } from "react";
+import { ChevronDown, Trash2 } from "lucide-react";
 import { updateProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
@@ -36,17 +36,23 @@ export function EditProjectForm({
   projectManagers,
   foremen,
   onSuccess,
+  onRequestDelete,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
   foremen: AccountRow[];
   onSuccess?: () => void;
+  /** Closes this modal and opens the (centered, non-stacking) Delete
+   * Project confirmation modal instead — see project-detail-view.tsx's
+   * own wiring. Never a window.confirm() here. */
+  onRequestDelete: () => void;
 }) {
   const boundAction = updateProject.bind(null, project.id);
   const [state, formAction, pending] = useActionState(
     boundAction,
     initialState
   );
+  const formId = useId();
 
   useEffect(() => {
     if (state.success) {
@@ -58,8 +64,14 @@ export function EditProjectForm({
   }, [state]);
 
   return (
-    <form action={formAction} className="grid gap-4 sm:grid-cols-2" noValidate>
-      <div className="flex flex-col gap-1.5 sm:col-span-2">
+    <div className="flex h-full min-h-full flex-col gap-4">
+      <form
+        id={formId}
+        action={formAction}
+        className="grid gap-4 sm:grid-cols-2"
+        noValidate
+      >
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor="edit-projectName"
           className="text-sm font-medium text-zinc-800"
@@ -165,26 +177,6 @@ export function EditProjectForm({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5 sm:col-span-2">
-        <label
-          htmlFor="edit-defaultLaborCostPercent"
-          className="text-sm font-medium text-zinc-800"
-        >
-          Default labor cost %
-        </label>
-        <input
-          id="edit-defaultLaborCostPercent"
-          name="defaultLaborCostPercent"
-          type="number"
-          min="0"
-          max="100"
-          step="0.01"
-          defaultValue={project.defaultLaborCostPercent ?? ""}
-          autoComplete="off"
-          className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        />
-      </div>
-
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-projectManagerId"
@@ -237,11 +229,6 @@ export function EditProjectForm({
 
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <span className="text-sm font-medium text-zinc-800">Working days</span>
-        <p className="text-xs text-zinc-500">
-          Which days count toward the Gantt Chart&apos;s Automatic Progress
-          Completion — a task&apos;s schedule-based progress only advances
-          on the days checked here.
-        </p>
         <div className="flex flex-wrap gap-3">
           {WEEKDAY_OPTIONS.map((day) => (
             <label
@@ -253,28 +240,45 @@ export function EditProjectForm({
                 name="workingDays"
                 value={day.value}
                 defaultChecked={project.workingDays.includes(day.value)}
-                className="size-4 cursor-pointer rounded border-zinc-300 text-zinc-800 focus:ring-2 focus:ring-zinc-200"
+                // accent-color, not the text-* + forms-plugin trick this
+                // app's other checkboxes assume — @tailwindcss/forms isn't
+                // actually installed here, so text-* alone left every
+                // checkbox in the app rendering with the browser's own
+                // native (blue) checked color, confirmed directly. This
+                // is the one that actually controls it, cross-browser.
+                className="size-4 cursor-pointer rounded border-zinc-300 accent-zinc-900 focus:ring-2 focus:ring-zinc-200"
               />
               {day.label}
             </label>
           ))}
         </div>
       </div>
+      </form>
 
-      <div className="flex items-center gap-3 sm:col-span-2">
+      {state?.error && (
+        <p role="alert" className="text-sm text-red-600">
+          {state.error}
+        </p>
+      )}
+
+      <div className="mt-auto flex items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={onRequestDelete}
+          className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+        >
+          <Trash2 className="size-3.5" />
+          Delete
+        </button>
         <button
           type="submit"
+          form={formId}
           disabled={pending}
           className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {pending ? "Saving..." : "Save changes"}
         </button>
-        {state?.error && (
-          <p role="alert" className="text-sm text-red-600">
-            {state.error}
-          </p>
-        )}
       </div>
-    </form>
+    </div>
   );
 }

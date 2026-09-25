@@ -86,11 +86,19 @@ export async function captureGanttSnapshot(
  * than turned into an error the caller has to handle, so it can never
  * make an otherwise-successful edit look like it failed.
  *
- * No "baseline" snapshot of the state before a project's very first
- * tracked edit — the first checkpoint recorded for a project simply
- * isn't itself undoable (nothing earlier to compare it to). Accepted
- * trade-off for keeping every one of the 10 call sites a single line
- * with no other change to that action's own control flow.
+ * Records no "baseline" of its own — a checkpoint from *this* function
+ * is always a snapshot of the state *after* whatever action just ran,
+ * never a before-state, so the very first one ever recorded for a
+ * project would otherwise have nothing older to undo back to. In
+ * practice that gap is already closed elsewhere: resetGanttHistory
+ * (undo-redo-actions.ts), called once every time the Gantt Chart is
+ * opened per its own session-scoped history design, seeds exactly that
+ * missing baseline before any of these 10 call sites can run. This
+ * function staying baseline-agnostic is what keeps each of those call
+ * sites a single line with no other change to its own control flow —
+ * only a project that somehow reaches a mutating action without ever
+ * going through that reset (this app has no such path today) would hit
+ * the original "first checkpoint isn't itself undoable" gap.
  */
 export async function recordGanttCheckpoint(
   supabase: SupabaseClient,

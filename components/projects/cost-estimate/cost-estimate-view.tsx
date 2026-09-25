@@ -51,14 +51,39 @@ const COLUMN_COUNT = 9;
 export function CostEstimateView({
   projectId,
   estimate,
+  defaultLaborCostPercent,
+  onImportBom,
+  materialBreakdownOpen,
+  materialBreakdownHighlightTaskId,
+  onOpenMaterialBreakdown,
+  onCloseMaterialBreakdown,
 }: {
   projectId: number;
   estimate: CostEstimate;
+  /** The project's own default labor cost % (see
+   * updateProjectDefaultLaborCostPercent's own doc comment) — forwarded
+   * straight down to LaborBreakdownModalContent, which owns editing it. */
+  defaultLaborCostPercent: number | null;
+  /** Opens the shared "Import Bill of Materials" modal — owned by
+   * project-detail-view.tsx, the nearest common ancestor, in case
+   * another entry point ever needs the same modal instance. Forwarded
+   * straight down to MaterialBreakdownModalContent's own footer. */
+  onImportBom: () => void;
+  /** The Material Breakdown modal's own open state and which task's row
+   * (if any) to highlight once it opens — lifted up to
+   * project-detail-view.tsx (same reasoning as onImportBom above) since
+   * the Gantt Chart's own Edit Task form needs to open this exact modal
+   * instance too, from a completely different subtree. This view's own
+   * "Material" column header still opens it, just through this callback
+   * now instead of local state. */
+  materialBreakdownOpen: boolean;
+  materialBreakdownHighlightTaskId: number | null;
+  onOpenMaterialBreakdown: () => void;
+  onCloseMaterialBreakdown: () => void;
 }) {
   // Project-wide, not per-task — see the two modal components' own doc
   // comments for why a column-header trigger replaced an earlier
   // per-task-row version of this.
-  const [materialBreakdownOpen, setMaterialBreakdownOpen] = useState(false);
   const [laborBreakdownOpen, setLaborBreakdownOpen] = useState(false);
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<number>>(
     new Set()
@@ -172,7 +197,7 @@ export function CostEstimateView({
                       type="button"
                       onClick={() => setLaborBreakdownOpen(true)}
                       title="View the project's full labor breakdown"
-                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-100 hover:text-zinc-900"
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white"
                     >
                       Labor
                       <ChevronRight className="size-3.5 shrink-0" />
@@ -181,9 +206,9 @@ export function CostEstimateView({
                   <th className="w-28 border-r border-zinc-200 text-right">
                     <button
                       type="button"
-                      onClick={() => setMaterialBreakdownOpen(true)}
+                      onClick={onOpenMaterialBreakdown}
                       title="View the project's full material breakdown"
-                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-100 hover:text-zinc-900"
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white"
                     >
                       Material
                       <ChevronRight className="size-3.5 shrink-0" />
@@ -219,13 +244,37 @@ export function CostEstimateView({
                     (t) => !t.isMilestone || t.totalEstimateCost > 0
                   );
                   const isOpen = !collapsedCategoryIds.has(category.id);
+                  // Rolled up from every task in the category, the same
+                  // way the Material Breakdown modal's own categoryAmount
+                  // does it (see material-breakdown-modal-content.tsx) —
+                  // a category has no direct equipment/other cost of its
+                  // own, only material (categoryMaterialEstimate) and, if
+                  // it has no tasks yet, labor (categoryLaborEstimate —
+                  // see 0047_category_labor_estimate.sql's own comment),
+                  // so those are the only columns with a "plus the
+                  // category's own line" on top of the sum of its tasks.
+                  const categoryLaborTotal =
+                    category.categoryLaborEstimate +
+                    category.tasks.reduce((sum, t) => sum + t.laborEstimate, 0);
+                  const categoryMaterialTotal =
+                    category.categoryMaterialEstimate +
+                    category.tasks.reduce((sum, t) => sum + t.materialEstimate, 0);
+                  const categoryEquipmentTotal = category.tasks.reduce(
+                    (sum, t) => sum + t.equipmentEstimate,
+                    0
+                  );
+                  const categoryOtherTotal = category.tasks.reduce(
+                    (sum, t) => sum + t.otherCostEstimate,
+                    0
+                  );
+                  const categoryTotalCost =
+                    category.categoryMaterialEstimate +
+                    category.categoryLaborEstimate +
+                    category.tasks.reduce((sum, t) => sum + t.totalEstimateCost, 0);
                   return (
                     <Fragment key={category.id}>
                       <tr className="border-y border-zinc-200 bg-white text-xs font-medium text-zinc-500">
-                        <td
-                          className="border-r border-zinc-200 px-4 py-2.5"
-                          colSpan={8}
-                        >
+                        <td className="border-r border-zinc-200 px-4 py-2.5">
                           <button
                             type="button"
                             onClick={() => toggleCategory(category.id)}
@@ -239,6 +288,27 @@ export function CostEstimateView({
                             {category.name}
                           </button>
                         </td>
+                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                          —
+                        </td>
+                        <td className="border-r border-zinc-200 px-4 py-2.5">
+                          —
+                        </td>
+                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                          {formatCurrency(categoryLaborTotal)}
+                        </td>
+                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                          {formatCurrency(categoryMaterialTotal)}
+                        </td>
+                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                          {formatCurrency(categoryEquipmentTotal)}
+                        </td>
+                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                          {formatCurrency(categoryOtherTotal)}
+                        </td>
+                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                          {formatCurrency(categoryTotalCost)}
+                        </td>
                         <td className="px-4 py-2.5 text-right">
                           {formatWeight(category.weight)}
                         </td>
@@ -250,7 +320,7 @@ export function CostEstimateView({
                         const expanded = expandedTaskIds.has(task.id);
                         return (
                           <Fragment key={task.id}>
-                            <tr className="border-b border-zinc-200 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-50">
+                            <tr className="border-b border-zinc-200 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-white">
                               <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8">
                                 {task.name}
                               </td>
@@ -280,7 +350,7 @@ export function CostEstimateView({
                                         ? "Collapse other cost breakdown"
                                         : "Expand other cost breakdown"
                                     }
-                                    className="flex cursor-pointer items-center justify-end gap-1 transition hover:text-zinc-900"
+                                    className="flex cursor-pointer items-center justify-end gap-1 transition hover:text-white"
                                   >
                                     {expanded ? (
                                       <ChevronDown className="size-3.5" />
@@ -332,24 +402,26 @@ export function CostEstimateView({
                   );
                 })}
               </tbody>
+              {/* Same "black" as the project header (bg-zinc-900 — see
+                  that header's own doc comment on this token). */}
               <tfoot>
-                <tr className="bg-zinc-100 text-sm font-semibold text-zinc-800">
-                  <td className="border-r border-zinc-300 px-4 py-3" colSpan={3}>
+                <tr className="bg-zinc-900 text-sm font-semibold text-white">
+                  <td className="border-r border-white/10 px-4 py-3" colSpan={3}>
                     PROJECT TOTAL
                   </td>
-                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
+                  <td className="border-r border-white/10 px-4 py-3 text-right">
                     {formatCurrency(summary.totalsByColumn.labor)}
                   </td>
-                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
+                  <td className="border-r border-white/10 px-4 py-3 text-right">
                     {formatCurrency(summary.totalsByColumn.material)}
                   </td>
-                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
+                  <td className="border-r border-white/10 px-4 py-3 text-right">
                     {formatCurrency(summary.totalsByColumn.equipment)}
                   </td>
-                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
+                  <td className="border-r border-white/10 px-4 py-3 text-right">
                     {formatCurrency(summary.totalsByColumn.other)}
                   </td>
-                  <td className="border-r border-zinc-300 px-4 py-3 text-right">
+                  <td className="border-r border-white/10 px-4 py-3 text-right">
                     {formatCurrency(summary.totalEstimatedCost)}
                   </td>
                   <td className="px-4 py-3 text-right">100.00%</td>
@@ -361,14 +433,16 @@ export function CostEstimateView({
 
       <Modal
         open={materialBreakdownOpen}
-        onClose={() => setMaterialBreakdownOpen(false)}
+        onClose={onCloseMaterialBreakdown}
         title="Material Breakdown"
         size="large"
       >
         <MaterialBreakdownModalContent
           projectId={projectId}
           categories={categories}
-          onClose={() => setMaterialBreakdownOpen(false)}
+          onClose={onCloseMaterialBreakdown}
+          onImportBom={onImportBom}
+          highlightTaskId={materialBreakdownHighlightTaskId}
         />
       </Modal>
 
@@ -377,7 +451,12 @@ export function CostEstimateView({
         onClose={() => setLaborBreakdownOpen(false)}
         title="Labor Breakdown"
       >
-        <LaborBreakdownModalContent categories={categories} />
+        <LaborBreakdownModalContent
+          projectId={projectId}
+          categories={categories}
+          defaultLaborCostPercent={defaultLaborCostPercent}
+          onClose={() => setLaborBreakdownOpen(false)}
+        />
       </Modal>
     </div>
   );

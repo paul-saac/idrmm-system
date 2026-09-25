@@ -14,12 +14,26 @@ const SIZE_CLASS = {
   large: "max-w-6xl",
 } as const;
 
+// "panel" (the original, and every other modal in this app) docks to
+// the top-right edge and stretches full-height, reading as a sidebar —
+// see the className below for why. "centered" is a deliberate
+// deviation for a modal that should read as an ordinary dialog box
+// instead (e.g. Import Bill of Materials) — a normal rectangle sized
+// to its own content, centered in the viewport via the m-auto/inset-0
+// trick, capped at 85dvh so a tall step still scrolls internally
+// rather than growing past the viewport.
+const VARIANT_CLASS = {
+  panel: "fixed top-4 right-4 left-auto m-0 h-[calc(100dvh-2rem)] max-h-none",
+  centered: "fixed inset-0 m-auto h-fit max-h-[85dvh]",
+} as const;
+
 export function Modal({
   open,
   onClose,
   onBack,
   title,
   size = "default",
+  variant = "panel",
   children,
 }: {
   open: boolean;
@@ -31,6 +45,9 @@ export function Modal({
   onBack?: () => void;
   title: string;
   size?: keyof typeof SIZE_CLASS;
+  /** See VARIANT_CLASS's own doc comment above. Defaults to "panel" so
+   * every existing call site keeps its current look unchanged. */
+  variant?: keyof typeof VARIANT_CLASS;
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -83,21 +100,25 @@ export function Modal({
           e.clientY <= rect.bottom;
         if (!inside) onClose();
       }}
-      // left-auto un-sets the browser's own dialog:modal default of
-      // left:0 (part of its inset:0 shorthand) — with that still active,
-      // having both left:0 and right:0 plus an explicit width is
-      // over-constrained, and the spec has left win over right for LTR
-      // content, which docked this to the left instead. A <dialog>
-      // doesn't stretch to fill top+bottom insets the way an ordinary
-      // fixed-position div would (confirmed directly — with bottom-4
-      // instead of an explicit height, it just sized to its own content
-      // and left a large unintended gap at the bottom), so the height
-      // is computed explicitly instead. max-h-none un-sets the same
-      // default's own max-height (a calc() a few pixels short of 100%,
-      // meant for its old centered/margined look), which would otherwise
-      // still clip the explicit height below. rounded-lg is this app's
-      // own 5px token (see globals.css), not Tailwind's default 8px.
-      className={`fixed top-4 right-4 left-auto m-0 h-[calc(100dvh-2rem)] max-h-none w-full ${SIZE_CLASS[size]} overflow-hidden rounded-lg border border-zinc-200 bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col`}
+      // panel's own left-auto un-sets the browser's own dialog:modal
+      // default of left:0 (part of its inset:0 shorthand) — with that
+      // still active, having both left:0 and right:0 plus an explicit
+      // width is over-constrained, and the spec has left win over right
+      // for LTR content, which docked this to the left instead. A
+      // <dialog> doesn't stretch to fill top+bottom insets the way an
+      // ordinary fixed-position div would (confirmed directly — with
+      // bottom-4 instead of an explicit height, it just sized to its
+      // own content and left a large unintended gap at the bottom), so
+      // panel's height is computed explicitly instead. max-h-none
+      // un-sets the same default's own max-height (a calc() a few
+      // pixels short of 100%, meant for its old centered/margined
+      // look), which would otherwise still clip the explicit height
+      // below. centered instead leans on that same inset-0/margin:auto
+      // browser default (all four insets pinned, width/height smaller
+      // than the viewport) to center itself, sized to fit its own
+      // content up to max-h-[85dvh]. rounded-lg is this app's own 5px
+      // token (see globals.css), not Tailwind's default 8px.
+      className={`${VARIANT_CLASS[variant]} w-full ${SIZE_CLASS[size]} overflow-hidden rounded-lg border border-zinc-200 bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col`}
     >
       <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
         <div className="flex items-center gap-1">

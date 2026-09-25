@@ -21,9 +21,6 @@ export function projectStatusBadgeClasses(status: ProjectStatus): string {
   switch (status) {
     case "planning":
       return "bg-amber-50 text-amber-700";
-    // Matches the project header's own progress bar fill (bg-emerald-100
-    // / text-emerald-700 in project-detail-view.tsx) — "On going" reads
-    // as the same color the progress bar already uses for this project.
     case "ongoing":
       return "bg-emerald-100 text-emerald-700";
     case "completed":

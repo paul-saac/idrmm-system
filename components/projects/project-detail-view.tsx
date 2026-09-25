@@ -73,7 +73,11 @@ import type { CostEstimate } from "@/lib/cost-estimate/data";
 import type { ProjectProgress } from "@/lib/progress/data";
 import type { DelayRiskAssessment } from "@/lib/forecasting/data";
 import type { DailyLogSummary, SurveyQuestion } from "@/lib/daily-logs/data";
-import type { Worker, TaskWorkerAssignments } from "@/lib/workers/data";
+import type {
+  Worker,
+  TaskWorkerAssignments,
+  CategoryWorkerAssignments,
+} from "@/lib/workers/data";
 import type { TaskProgressToday } from "@/lib/task-progress/data";
 
 const MAIN_TABS = [
@@ -84,6 +88,18 @@ const MAIN_TABS = [
   { value: "expenses", label: "Expenses" },
 ] as const;
 type MainTab = (typeof MAIN_TABS)[number]["value"];
+
+// "Progress" (the Gantt Chart, Daily Logs, Progress Tracking, etc.) is
+// on hold per an explicit request — everything underneath it stays in
+// the codebase untouched (this is purely a nav-visibility change, not a
+// removal), since where each of its own features eventually lands is
+// still undecided. Only the visible tab BAR filters it out below;
+// MAIN_TABS itself (and MainTab/activeTab's own type) still includes
+// "progress" so the tab's own content-rendering branch, the breadcrumb
+// label lookup, and a deep link into it (e.g. a Daily Log detail page's
+// own back button, see initialTab below) all keep working exactly as
+// before — there's just no button here to click into it from.
+const VISIBLE_MAIN_TABS = MAIN_TABS.filter((tab) => tab.value !== "progress");
 
 const PROGRESS_SUB_TABS = [
   { value: "overview", label: "Progress Overview" },
@@ -118,17 +134,6 @@ const deleteInitialState: ProjectActionState = {};
 
 function formatCurrency(amount: number | null) {
   return amount != null ? `₱${amount.toLocaleString("en-PH")}` : "—";
-}
-
-function formatDateLong(iso: string | null) {
-  if (!iso) return "—";
-  // Appending a time avoids the date shifting a day back in negative-UTC
-  // timezones, since new Date("2026-04-08") parses as UTC midnight.
-  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 /**
@@ -195,12 +200,20 @@ function StatCard({
   );
 }
 
-function DeleteProjectButton({
+// Rendered inside a centered Modal (see the delete-confirm Modal below),
+// never a window.confirm() — an admin deleting an entire project is a
+// real, hard-to-reverse action worth a proper dialog, not a bare browser
+// alert. Opened only from EditProjectForm's own Delete button, which
+// closes the Edit Project modal in the same click that opens this one
+// (see onRequestDelete's own wiring below) so the two never stack.
+function DeleteProjectModalContent({
   projectId,
   projectName,
+  onClose,
 }: {
   projectId: number;
   projectName: string;
+  onClose: () => void;
 }) {
   const boundAction = deleteProject.bind(null, projectId);
   const [state, formAction, pending] = useActionState(
@@ -209,36 +222,35 @@ function DeleteProjectButton({
   );
 
   return (
-    <div className="relative">
-      <form
-        action={formAction}
-        onSubmit={(e) => {
-          if (
-            !window.confirm(
-              `Delete "${projectName}"? This cannot be undone.`
-            )
-          ) {
-            e.preventDefault();
-          }
-        }}
-      >
-        <button
-          type="submit"
-          disabled={pending}
-          className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <Trash2 className="size-4" />
-          Delete
-        </button>
-      </form>
+    <div className="flex flex-col gap-5">
+      <p className="text-sm text-zinc-600">
+        Delete <span className="font-medium text-zinc-900">{projectName}</span>
+        ? This cannot be undone.
+      </p>
       {state?.error && (
-        <p
-          role="alert"
-          className="absolute top-full right-0 mt-1 w-48 text-right text-xs text-red-600"
-        >
+        <p role="alert" className="text-sm text-red-600">
           {state.error}
         </p>
       )}
+      <div className="flex items-center justify-end gap-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+        >
+          Cancel
+        </button>
+        <form action={formAction}>
+          <button
+            type="submit"
+            disabled={pending}
+            className="flex cursor-pointer items-center gap-1.5 rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Trash2 className="size-3.5" />
+            {pending ? "Deleting..." : "Delete"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -271,7 +283,9 @@ export function ProjectDetailView({
   ganttCanRedo,
   workers,
   taskWorkerAssignments,
+  categoryWorkerAssignments,
   taskProgressToday,
+  categoryProgressToday,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
@@ -312,11 +326,18 @@ export function ProjectDetailView({
    * costEstimate/progress in page.tsx. */
   workers: Worker[];
   taskWorkerAssignments: TaskWorkerAssignments;
+  /** Same idea, one level up — see CategoryWorkerAssignments's own doc
+   * comment. */
+  categoryWorkerAssignments: CategoryWorkerAssignments;
   /** Every task's own cumulative-to-date total plus whatever's already
    * recorded for today — see lib/task-progress/data.ts, fetched
    * alongside costEstimate/progress in page.tsx. Powers the Gantt
    * Chart's own Progress Tracking modal. */
   taskProgressToday: Record<number, TaskProgressToday>;
+  /** Same idea, one level up, for a task-less category's own Progress
+   * Tracking Override — see lib/category-progress/data.ts, fetched
+   * alongside costEstimate/progress in page.tsx. */
+  categoryProgressToday: Record<number, TaskProgressToday>;
 }) {
   // Reading the initial tab/sub-tab from the URL lets a link *into* this
   // page (e.g. a Daily Log detail page's back button) land on the exact
@@ -360,6 +381,12 @@ export function ProjectDetailView({
         : "overview"
     );
   const [editOpen, setEditOpen] = useState(false);
+  // The Delete Project confirmation modal — a separate piece of state
+  // from editOpen (not a second "screen" inside the same Modal) so the
+  // two can never both be true at once and stack; onRequestDelete below
+  // always flips both in the same click.
+  const [deleteProjectConfirmOpen, setDeleteProjectConfirmOpen] =
+    useState(false);
   // The DOM node the active sub-tab's own toolbar (filters, "Add X"
   // buttons) portals into — see SubTabsRow below. Only one sub-view is
   // ever mounted at a time, so one shared slot is enough; a callback
@@ -374,12 +401,28 @@ export function ProjectDetailView({
   // above this, but that's now redundant with the sticky project header,
   // which already shows all of it.
   const [costOverviewOpen, setCostOverviewOpen] = useState(true);
-  // Shared by both the Gantt Chart toolbar's own "Import BOM" button and
-  // the Cost Estimate Breakdown's own entry points (its empty state and
-  // header) — lifted up here, the nearest common ancestor of both, so
-  // either one opens the exact same modal instance instead of two
-  // separately-rendered copies of the same flow that could drift apart.
+  // Opens the shared "Import Bill of Materials" modal from the Material
+  // Breakdown modal's own footer (see MaterialBreakdownModalContent) —
+  // lifted up here rather than owned by CostEstimateView so the same
+  // modal instance could still be reused if another entry point needs
+  // one later.
   const [importBomModalOpen, setImportBomModalOpen] = useState(false);
+  // The Material Breakdown modal's own open state, lifted up here (same
+  // reasoning as importBomModalOpen above) since the Gantt Chart's own
+  // Edit Task form needs to open it too, from a completely different
+  // subtree than CostEstimateView's own "Material" column header
+  // trigger — see openMaterialBreakdown below. highlightTaskId carries
+  // which task's own row (if any) to scroll to and flash once it opens;
+  // null means "just open it plain," same as the header trigger already
+  // did before this existed.
+  const [materialBreakdownOpen, setMaterialBreakdownOpen] = useState(false);
+  const [materialBreakdownHighlightTaskId, setMaterialBreakdownHighlightTaskId] =
+    useState<number | null>(null);
+
+  function openMaterialBreakdown(taskId?: number) {
+    setMaterialBreakdownHighlightTaskId(taskId ?? null);
+    setMaterialBreakdownOpen(true);
+  }
 
   // The breadcrumb tracks only the main tab (Overview/Progress/
   // Materials/Equipment/Expenses) — switching a sub-tab within one of
@@ -410,7 +453,7 @@ export function ProjectDetailView({
     // this one scroll container instead, so the header scrolls away with
     // everything else, same as a plain document.
     <div className="flex-1 overflow-y-auto">
-      <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-8 py-5">
+      <header className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-8 py-5">
         <nav className="flex items-center gap-1.5 text-base">
           <Link
             href="/admin/projects"
@@ -425,10 +468,25 @@ export function ProjectDetailView({
       </header>
 
       <main>
-        <div className="rounded-lg border border-none pt-6 bg-white">
+        {/* The app's own "black" (bg-zinc-900, remapped in globals.css
+            to a warm #3B3939 — see AdminSidebar's own doc comment on
+            why the sidebar itself deliberately opts OUT of this token)
+            — same color as the active SubTabsRow pill (e.g. "Progress
+            Overview"), applied here too so both read as the same
+            "black" rather than two different near-blacks. A one-off
+            dark header purely for visual variety, not tied to any
+            state (status, theme, etc). */}
+        {/* No rounding at all — this block sits flush against the
+            breadcrumb header directly above it (bg-zinc-50, no gap
+            between them) and against the sticky tabs block directly
+            below it (same bg-zinc-900), so any rounded corner here —
+            top or bottom — just pokes a stray notch of the page's own
+            background through rather than reading as a deliberate
+            floating card. */}
+        <div className="border border-none pt-6 bg-zinc-900">
           <div className="flex items-start justify-between gap-3 mx-8">
             <div className="flex flex-wrap items-center gap-3.5">
-              <h1 className="text-2xl font-semibold text-zinc-900">
+              <h1 className="text-2xl font-semibold text-white">
                 {project.name}
               </h1>
               <span
@@ -445,7 +503,7 @@ export function ProjectDetailView({
               onClick={() => setEditOpen(true)}
               aria-label="Edit project"
               title="Edit project"
-              className="flex flex-shrink-0 cursor-pointer items-center justify-center rounded border border-zinc-200 p-2 text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+              className="flex flex-shrink-0 cursor-pointer items-center justify-center rounded border border-white/15 p-2 text-zinc-400 transition hover:border-white/25 hover:bg-white/10 hover:text-white"
             >
               <EditIcon className="size-4" />
             </button>
@@ -453,45 +511,20 @@ export function ProjectDetailView({
 
           <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm mx-8">
             {project.location && (
-              <span className="text-zinc-500">{project.location}</span>
+              <span className="text-zinc-400">{project.location}</span>
             )}
-            <span className="text-zinc-300">|</span>
-            <span className="text-zinc-500">
-              <span className="text-zinc-900">Project Manager:</span>{" "}
+            <span className="text-zinc-600">|</span>
+            <span className="text-zinc-400">
+              <span className="text-zinc-200">Project Manager:</span>{" "}
               {project.projectManagerName ?? "—"}
             </span>
-            <span className="text-zinc-300">|</span>
-            <span className="text-zinc-500">
-              <span className="text-zinc-900">Foreman:</span>{" "}
+            <span className="text-zinc-600">|</span>
+            <span className="text-zinc-400">
+              <span className="text-zinc-200">Foreman:</span>{" "}
               {project.foremanName ?? "—"}
             </span>
           </div>
 
-          {/* Same overall-progress figure as the Overview sub-tab's own
-              "Overall Progress" card below (and the Progress tab's) —
-              surfaced here too since it's the one number worth seeing
-              no matter which tab is open, not just on Overview. */}
-          <div className="mt-4 mx-8">
-            <div className="relative h-8 w-full overflow-hidden rounded-xs bg-zinc-100">
-              <div
-                className="h-full rounded-sm bg-emerald-100 transition-all"
-                style={{ width: `${progress.overallPercent}%` }}
-              />
-              <span className="absolute inset-y-0 left-3 flex items-center text-sm font-semibold text-emerald-700">
-                {Math.round(progress.overallPercent)}%
-              </span>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-xs text-zinc-500">
-              <span>
-                <span className="font-medium text-zinc-700">Start Date:</span>{" "}
-                {formatDateLong(project.startDate)}
-              </span>
-              <span>
-                <span className="font-medium text-zinc-700">Target End Date:</span>{" "}
-                {formatDateLong(project.targetEndDate)}
-              </span>
-            </div>
-          </div>
         </div>
 
         {/* Pinned so the main tabs stay reachable while everything below
@@ -499,21 +532,22 @@ export function ProjectDetailView({
             switching pages no longer requires scrolling back up. pt-3
             keeps it from sitting flush against the very top edge once
             stuck (padding, not margin — a margin on the child here would
-            collapse away and leave no gap once actually stuck). bg-white
-            keeps scrolled-away content from showing through; z-20 is
-            well below the Modal (native <dialog>, browser top layer) so
-            Edit Project etc. are unaffected. */}
-        <div className="sticky top-0 z-20 bg-white pt-3">
-          <div className="mt-5 border-b border-zinc-300">
+            collapse away and leave no gap once actually stuck). Same
+            dark bg as the block above so the two read as one continuous
+            header once stuck; z-20 is well below the Modal (native
+            <dialog>, browser top layer) so Edit Project etc. are
+            unaffected. */}
+        <div className="sticky top-0 z-20 bg-zinc-900 pt-3">
+          <div className="mt-5">
             <div className="flex gap-10 px-8">
-              {MAIN_TABS.map((tab) => (
+              {VISIBLE_MAIN_TABS.map((tab) => (
                 <button
                   key={tab.value}
                   type="button"
                   onClick={() => setActiveTab(tab.value)}
                   className={`cursor-pointer border-b-2 pb-2 text-xs font-medium transition ${activeTab === tab.value
-                    ? "border-zinc-900 text-zinc-900"
-                    : "border-transparent text-zinc-500 hover:text-zinc-700"
+                    ? "border-white text-white"
+                    : "border-transparent text-zinc-400 hover:text-zinc-200"
                     }`}
                 >
                   {tab.label}
@@ -706,6 +740,12 @@ export function ProjectDetailView({
                   <CostEstimateView
                     projectId={project.id}
                     estimate={costEstimate}
+                    defaultLaborCostPercent={project.defaultLaborCostPercent}
+                    onImportBom={() => setImportBomModalOpen(true)}
+                    materialBreakdownOpen={materialBreakdownOpen}
+                    materialBreakdownHighlightTaskId={materialBreakdownHighlightTaskId}
+                    onOpenMaterialBreakdown={() => openMaterialBreakdown()}
+                    onCloseMaterialBreakdown={() => setMaterialBreakdownOpen(false)}
                   />
                 </div>
               )}
@@ -719,9 +759,11 @@ export function ProjectDetailView({
               canRedo={ganttCanRedo}
               workers={workers}
               taskWorkerAssignments={taskWorkerAssignments}
+              categoryWorkerAssignments={categoryWorkerAssignments}
               materials={materials}
               taskProgressToday={taskProgressToday}
-              onImportBom={() => setImportBomModalOpen(true)}
+              categoryProgressToday={categoryProgressToday}
+              onOpenMaterialBreakdown={openMaterialBreakdown}
             />
           </div>
         )}
@@ -730,6 +772,7 @@ export function ProjectDetailView({
           open={importBomModalOpen}
           onClose={() => setImportBomModalOpen(false)}
           title="Import Bill of Materials"
+          variant="centered"
         >
           <ImportBomModalContent onClose={() => setImportBomModalOpen(false)} />
         </Modal>
@@ -741,23 +784,29 @@ export function ProjectDetailView({
         onClose={() => setEditOpen(false)}
         title="Edit Project"
       >
-        <div className="flex flex-col gap-5">
-          <EditProjectForm
-            project={project}
-            projectManagers={projectManagers}
-            foremen={foremen}
-            onSuccess={() => setEditOpen(false)}
-          />
-          <div className="flex items-center justify-between gap-3 border-t border-zinc-200 pt-4">
-            <p className="text-xs text-zinc-400">
-              Deleting a project can&apos;t be undone.
-            </p>
-            <DeleteProjectButton
-              projectId={project.id}
-              projectName={project.name}
-            />
-          </div>
-        </div>
+        <EditProjectForm
+          project={project}
+          projectManagers={projectManagers}
+          foremen={foremen}
+          onSuccess={() => setEditOpen(false)}
+          onRequestDelete={() => {
+            setEditOpen(false);
+            setDeleteProjectConfirmOpen(true);
+          }}
+        />
+      </Modal>
+
+      <Modal
+        open={deleteProjectConfirmOpen}
+        onClose={() => setDeleteProjectConfirmOpen(false)}
+        title="Delete Project"
+        variant="centered"
+      >
+        <DeleteProjectModalContent
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setDeleteProjectConfirmOpen(false)}
+        />
       </Modal>
     </div>
   );

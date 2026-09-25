@@ -196,3 +196,57 @@ export async function setTaskWorkers(
     return { success: true };
   });
 }
+
+/**
+ * Same idea as setTaskWorkers above, one level up — a category's own
+ * assigned workers (see CategoryWorkerAssignments's own doc comment).
+ */
+export async function setCategoryWorkers(
+  categoryId: number,
+  projectId: number,
+  workerIds: number[]
+): Promise<WorkerActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage task assignments." };
+    }
+
+    const supabase = await createClient();
+
+    const { error: deleteError } = await supabase
+      .from("category_worker_assignments")
+      .delete()
+      .eq("category_id", categoryId);
+
+    if (deleteError) {
+      logSupabaseError(
+        "[setCategoryWorkers] Supabase delete failed",
+        deleteError
+      );
+      return { error: "Could not save assignment. Please try again." };
+    }
+
+    if (workerIds.length > 0) {
+      const { error: insertError } = await supabase
+        .from("category_worker_assignments")
+        .insert(
+          workerIds.map((workerId) => ({
+            category_id: categoryId,
+            worker_id: workerId,
+          }))
+        );
+
+      if (insertError) {
+        logSupabaseError(
+          "[setCategoryWorkers] Supabase insert failed",
+          insertError
+        );
+        return { error: "Could not save assignment. Please try again." };
+      }
+    }
+
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}

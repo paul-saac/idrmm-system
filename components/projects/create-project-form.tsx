@@ -127,25 +127,6 @@ export function CreateProjectForm({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5 sm:col-span-2">
-        <label
-          htmlFor="defaultLaborCostPercent"
-          className="text-sm font-medium text-zinc-800"
-        >
-          Default labor cost %
-        </label>
-        <input
-          id="defaultLaborCostPercent"
-          name="defaultLaborCostPercent"
-          type="number"
-          min="0"
-          max="100"
-          step="0.01"
-          autoComplete="off"
-          className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        />
-      </div>
-
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="projectManagerId"

@@ -26,10 +26,13 @@ import {
  * parse, and "Confirm" only shows what *would* be created rather than
  * calling any server action. Nothing here writes to the database.
  *
- * Opened from two places — the Gantt Chart toolbar and the Cost
- * Estimate Breakdown's own header/empty state (see project-detail-
- * view.tsx, which owns this modal's open state so both entry points
- * land on the exact same screen instead of two that could drift apart).
+ * Opened from the Material Breakdown modal's own footer (see
+ * MaterialBreakdownModalContent) — project-detail-view.tsx still owns
+ * this modal's open state in case another entry point needs the same
+ * instance later. Rendered as Modal's "centered" variant (an ordinary
+ * dialog box) rather than the app's usual right-docked panel — this
+ * flow isn't a spreadsheet-sized screen like the modal that opens it,
+ * so it reads better centered.
  */
 
 type DraftMaterialLine = {

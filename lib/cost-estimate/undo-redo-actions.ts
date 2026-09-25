@@ -6,6 +6,7 @@ import { getSessionProfile } from "@/lib/auth/session";
 import {
   restoreGanttSnapshot,
   getGanttUndoRedoState,
+  captureGanttSnapshot,
   type GanttSnapshot,
 } from "@/lib/cost-estimate/undo-redo";
 import { getCostEstimate } from "@/lib/cost-estimate/data";
@@ -148,20 +149,32 @@ export async function redoGanttAction(
  * start both buttons with nothing to undo or redo, never carrying
  * history over from an earlier visit.
  *
- * Deliberately just deletes every gantt_snapshots row for this project
- * and nulls the cursor, rather than trying to keep some "pre-session"
- * history around in a way the buttons simply ignore — there is no
- * further use for it once a fresh session has started (nothing else in
- * this app reads gantt_snapshots), and leaving it in place would be
- * dead weight for recordGanttCheckpoint's own MAX_GANTT_HISTORY_PER_PROJECT
- * trimming to eventually catch up with instead of being gone already.
+ * Deletes every existing gantt_snapshots row for this project, then
+ * immediately seeds a fresh *baseline* one — the state exactly as it
+ * stands right now, before this session's first edit — and points the
+ * cursor at it, rather than leaving the cursor null.
+ *
+ * That baseline isn't optional bookkeeping — confirmed directly this
+ * was the actual cause of a real bug report ("I add a task, Undo still
+ * isn't clickable until I do a *second* thing"). recordGanttCheckpoint
+ * itself only ever records a snapshot of the state *after* an action —
+ * its own doc comment already calls out that a project's very first-
+ * ever tracked edit has nothing older to undo back to, and explicitly
+ * accepts that as a rare one-time edge case. Wiping the history on
+ * every single session start turns that rare edge case into the
+ * *common* one: with a null cursor, the first action of every session
+ * would insert one snapshot with nothing before it — genuinely nothing
+ * to undo to — and only a *second* action would finally give Undo
+ * something (the first action's own snapshot) to revert to. Seeding
+ * this baseline first closes that gap: the first real action now has
+ * this baseline to undo back to, same as every action after it.
  *
  * Best-effort and silent like recordGanttCheckpoint's own doc comment
  * describes for the same reason — this is app-level housekeeping, not
  * something the admin asked for directly, so a failure here shouldn't
  * surface as an error interrupting their work. Worst case on failure:
- * this session's Undo/Redo buttons start already reflecting whatever
- * history happened to be left over, exactly like before this existed.
+ * falls back to a null cursor (the old behavior, before this baseline
+ * existed) rather than leaving the project in a half-reset state.
  */
 export async function resetGanttHistory(projectId: number): Promise<void> {
   try {
@@ -170,9 +183,31 @@ export async function resetGanttHistory(projectId: number): Promise<void> {
 
     const supabase = await createClient();
     await supabase.from("gantt_snapshots").delete().eq("project_id", projectId);
+
+    let cursorId: number | null = null;
+    try {
+      const baseline = await captureGanttSnapshot(supabase, projectId);
+      const { data: inserted, error } = await supabase
+        .from("gantt_snapshots")
+        .insert({
+          project_id: projectId,
+          snapshot: baseline as never,
+          created_by: profile.id,
+        })
+        .select("id")
+        .single();
+      if (error || !inserted) {
+        console.error("[resetGanttHistory] baseline insert failed", error);
+      } else {
+        cursorId = inserted.id;
+      }
+    } catch (error) {
+      console.error("[resetGanttHistory] baseline capture failed", error);
+    }
+
     await supabase
       .from("projects")
-      .update({ gantt_undo_cursor_id: null })
+      .update({ gantt_undo_cursor_id: cursorId })
       .eq("id", projectId);
 
     revalidatePath(`/admin/projects/${projectId}`);

@@ -19,6 +19,12 @@ export type Worker = {
  * unlike a Map. */
 export type TaskWorkerAssignments = Record<number, number[]>;
 
+/** Same idea as TaskWorkerAssignments above, one level up — a category
+ * (phase) with no tasks yet (or work that belongs to the phase as a
+ * whole) can still have workers assigned directly. Keyed by category id
+ * for the same reason. See 0045_category_worker_assignments.sql. */
+export type CategoryWorkerAssignments = Record<number, number[]>;
+
 export async function listWorkers(projectId: number): Promise<Worker[]> {
   const supabase = await createClient();
   const { data } = await supabase
@@ -63,6 +69,43 @@ export async function listTaskWorkerAssignments(
       existing.push(row.worker_id);
     } else {
       result[row.task_id] = [row.worker_id];
+    }
+  }
+  return result;
+}
+
+export async function listCategoryWorkerAssignments(
+  projectId: number
+): Promise<CategoryWorkerAssignments> {
+  const supabase = await createClient();
+
+  // Unlike task_worker_assignments, category_worker_assignments could
+  // filter straight off estimate_categories.project_id via a join, but
+  // Supabase's own .in() shape (fetch this project's category ids
+  // first, same as listTaskWorkerAssignments does for tasks) keeps both
+  // functions symmetric and avoids relying on PostgREST's embedded-
+  // filter syntax for a table with no direct project_id column of its
+  // own.
+  const { data: categoryRows } = await supabase
+    .from("estimate_categories")
+    .select("id")
+    .eq("project_id", projectId);
+
+  const categoryIds = (categoryRows ?? []).map((row) => row.id);
+  if (categoryIds.length === 0) return {};
+
+  const { data } = await supabase
+    .from("category_worker_assignments")
+    .select("category_id, worker_id")
+    .in("category_id", categoryIds);
+
+  const result: CategoryWorkerAssignments = {};
+  for (const row of data ?? []) {
+    const existing = result[row.category_id];
+    if (existing) {
+      existing.push(row.worker_id);
+    } else {
+      result[row.category_id] = [row.worker_id];
     }
   }
   return result;

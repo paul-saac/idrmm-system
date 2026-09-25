@@ -71,9 +71,6 @@ export async function createProject(
       start_date: parseOptionalDate(formData.get("startDate")),
       target_end_date: parseOptionalDate(formData.get("targetEndDate")),
       allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
-      default_labor_cost_percent: parseOptionalNumber(
-        formData.get("defaultLaborCostPercent")
-      ),
       project_manager_id: projectManagerId,
       foreman_id: foremanId,
       created_by: profile.id,
@@ -140,9 +137,6 @@ export async function updateProject(
       target_end_date: parseOptionalDate(formData.get("targetEndDate")),
       actual_end_date: parseOptionalDate(formData.get("actualEndDate")),
       allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
-      default_labor_cost_percent: parseOptionalNumber(
-        formData.get("defaultLaborCostPercent")
-      ),
       project_manager_id: projectManagerId,
       foreman_id: foremanId,
       working_days: parseWorkingDays(formData),
@@ -155,6 +149,47 @@ export async function updateProject(
   }
 
   revalidatePath("/admin/projects");
+  revalidatePath(`/admin/projects/${projectId}`);
+  return { success: true };
+}
+
+/**
+ * Its own dedicated action rather than a field in updateProject's form —
+ * this used to be a field on the Add/Edit Project forms, moved into the
+ * Labor Breakdown modal instead (see LaborBreakdownModalContent) so it
+ * sits next to the labor costs it actually informs. A single-field
+ * update, not routed through updateProject, since that action overwrites
+ * every field from a full form submit — calling it from a modal that
+ * only ever has this one value in scope would null out the rest.
+ */
+export async function updateProjectDefaultLaborCostPercent(
+  projectId: number,
+  percent: number | null
+): Promise<ProjectActionState> {
+  const profile = await getSessionProfile();
+
+  if (!profile || profile.role !== "admin") {
+    return { error: "You are not authorized to edit projects." };
+  }
+
+  if (percent != null && (!Number.isFinite(percent) || percent < 0 || percent > 100)) {
+    return { error: "Enter a percentage between 0 and 100." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("projects")
+    .update({ default_labor_cost_percent: percent })
+    .eq("id", projectId);
+
+  if (error) {
+    console.error(
+      "[updateProjectDefaultLaborCostPercent] Supabase update failed:",
+      error
+    );
+    return { error: "Could not save changes. Please try again." };
+  }
+
   revalidatePath(`/admin/projects/${projectId}`);
   return { success: true };
 }

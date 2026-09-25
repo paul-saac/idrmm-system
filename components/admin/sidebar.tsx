@@ -45,7 +45,7 @@ export function AdminSidebar({
     <aside
       onMouseEnter={() => setCollapsed(false)}
       onMouseLeave={() => setCollapsed(true)}
-      className={`flex h-full shrink-0 flex-col bg-[#18181b] transition-[width] duration-300 ease-in-out ${
+      className={`flex h-full shrink-0 flex-col bg-[#222225] transition-[width] duration-300 ease-in-out ${
         collapsed ? "w-20" : "w-64"
       }`}
     >

@@ -240,9 +240,9 @@ input[type="date"][data-empty="true"] {
  * diamond, and flickering as gantt-task-react's own later remeasurement
  * passes flip it back and forth. Rather than depend on that measurement
  * at all for milestones, this hides *both* possible classes for them —
- * gantt-chart-view.tsx renders its own name label next to the diamond
- * instead (a `position: absolute` span, entirely outside gantt-task-
- * react's own rendering, not subject to this bug).
+ * a milestone's own name is never shown at all now, per an explicit
+ * request (this rule doubles as that: nothing else renders a
+ * replacement label).
  *
  * Scoped with :has() to only a milestone's own row: a <text> whose
  * sibling is the milestone diamond's own wrapper <g> (class _RRr13,
@@ -283,6 +283,17 @@ input[type="date"][data-empty="true"] {
  *
  * The same attribute also drives the cell's own active background/
  * border, right below — one attribute, one source of truth, for both.
+ *
+ * color is forced here too, not just background-color — these cells'
+ * own resting state now hovers to a dark bg with white text (see
+ * gantt-chart-view.tsx's own hover:bg-zinc-900 hover:text-white), and
+ * the mouse is still over the cell (hover) for the whole time it's
+ * also focused/active (data-cell-active), so without this, the
+ * Tailwind hover:text-white utility kept winning over this rule's own
+ * background-color:#fff — white text on a white active cell,
+ * confirmed directly as invisible input text/selected option. This
+ * attribute selector's higher specificity beats that hover utility's
+ * plain class selector, same as it already did for background-color.
  */
 .gantt-task-react-root input[type="date"]:not([readonly])::-webkit-calendar-picker-indicator {
   opacity: 0;
@@ -293,6 +304,7 @@ input[type="date"][data-empty="true"] {
 .gantt-task-react-root input[type="date"][data-cell-active="true"],
 .gantt-task-react-root select[data-cell-active="true"] {
   background-color: #fff;
+  color: var(--color-zinc-700);
   outline: 1px solid var(--color-zinc-400);
   outline-offset: -2px;
 }

@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { listTaskProgressAnchors } from "@/lib/task-progress/data";
+import { listCategoryProgressAnchors } from "@/lib/category-progress/data";
 import { computeAutoPercentComplete } from "@/lib/task-progress/calculate";
 
 export type OtherCostItem = {
@@ -23,6 +24,14 @@ export type TaskMaterialAssignment = {
   specification: string | null;
   plannedQuantity: number;
   unit: string | null;
+  /** $/unit rate — this line's own Amount (Material Breakdown modal) is
+   * plannedQuantity * unitCost. See 0041_material_line_costs.sql. */
+  unitCost: number;
+  /** Null means "compute plannedQuantity * unitCost as normal"; a
+   * non-null value means Amount was typed directly on this line (no
+   * clean quantity/unit cost breakdown). See
+   * 0043_amount_overrides.sql's own comment. */
+  amountOverride: number | null;
 };
 
 /** Manpower planned for a task ahead of time — same relationship to
@@ -41,7 +50,24 @@ export type CostTask = {
   estimatedQuantity: number;
   unit: string | null;
   laborEstimate: number;
+  /** Stored, not computed at read time — kept in sync by
+   * updateTaskMaterialAssignments (lib/cost-estimate/actions.ts)
+   * whenever the Material Breakdown modal saves: (materialDirectQuantity
+   * * materialUnitCost) + the sum of every materialAssignments line's
+   * own (plannedQuantity * unitCost). See 0041_material_line_costs.sql. */
   materialEstimate: number;
+  /** This task's own direct BOM line — a lump-sum task with no material
+   * breakdown underneath it (e.g. "Mobilization") gets its Amount from
+   * here instead. Deliberately separate from estimatedQuantity/unit
+   * above — see 0041_material_line_costs.sql's own comment for why. */
+  materialDirectQuantity: number;
+  materialDirectUnit: string | null;
+  materialUnitCost: number;
+  /** Null means "compute materialDirectQuantity * materialUnitCost as
+   * normal"; a non-null value means this task's own Amount was typed
+   * directly (no clean quantity/unit cost breakdown). See
+   * 0043_amount_overrides.sql's own comment. */
+  materialDirectAmountOverride: number | null;
   equipmentEstimate: number;
   otherCostEstimate: number;
   otherCostItems: OtherCostItem[];
@@ -87,6 +113,53 @@ export type CostCategory = {
   name: string;
   weight: number;
   tasks: CostTask[];
+  /** A category's own direct BOM line — for a category with no tasks
+   * yet, or a category-level lump sum — same reasoning as CostTask's own
+   * materialDirectQuantity/materialDirectUnit/materialUnitCost, one
+   * level up. See 0042_category_direct_cost.sql's own comment. */
+  materialDirectQuantity: number;
+  materialDirectUnit: string | null;
+  materialUnitCost: number;
+  /** Null means "compute materialDirectQuantity * materialUnitCost as
+   * normal"; a non-null value means this category's own Amount was
+   * typed directly (no clean quantity/unit cost breakdown). See
+   * 0043_amount_overrides.sql's own comment. */
+  materialDirectAmountOverride: number | null;
+  /** Stored — this line's own (materialDirectQuantity *
+   * materialUnitCost, or materialDirectAmountOverride if set) only, kept
+   * in sync by updateCategoryMaterialDirect (lib/cost-estimate/
+   * actions.ts). Already folded into this CostEstimate's own
+   * summary.totalsByColumn.material/totalEstimatedCost below. */
+  categoryMaterialEstimate: number;
+  /** This category's own planned schedule — only meaningful (and only
+   * ever shown/editable in the Gantt Chart) while it has no tasks yet;
+   * once it does, its start/end is a rollup of theirs instead. See
+   * 0044_category_schedule.sql's own comment. */
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
+  /** Always directly set, never a rollup of its tasks' own priorities
+   * (unlike Start/End) — see 0046_category_priority.sql's own comment. */
+  priority: TaskPriority;
+  /** This category's own direct labor cost — same "only meaningful
+   * while it has no tasks yet" rule as plannedStartDate/plannedEndDate
+   * above, one level up from CostTask's own laborEstimate. See
+   * 0047_category_labor_estimate.sql's own comment. */
+  categoryLaborEstimate: number;
+  /** This category's own tracked quantity/unit — same "only meaningful
+   * while it has no tasks yet" rule as categoryLaborEstimate above, one
+   * level up from CostTask's own estimatedQuantity/unit. See
+   * 0048_category_progress_tracking.sql's own comment. */
+  estimatedQuantity: number;
+  unit: string | null;
+  /** Same idea as CostTask's own percentComplete, one level up — live-
+   * computed (Automatic Progress Completion, anchored by this category's
+   * own latest Progress Tracking Override if one exists), only ever
+   * meaningful while this category has no tasks yet; once it does, its
+   * own percent complete is a rollup of theirs instead, same asymmetric
+   * rule Start/End/Labor Percentage already use (see
+   * percentCompleteByCategoryId's own doc comment in
+   * gantt-chart-view.tsx). */
+  percentComplete: number;
 };
 
 export type CostEstimateSummary = {
@@ -121,7 +194,9 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     await Promise.all([
       supabase
         .from("estimate_categories")
-        .select("id, category_name, weight")
+        .select(
+          "id, category_name, weight, material_direct_quantity, material_direct_unit, material_unit_cost, material_direct_amount, category_material_estimate, planned_start_date, planned_end_date, priority, category_labor_estimate, estimated_quantity, unit"
+        )
         .eq("project_id", projectId)
         .order("id", { ascending: true }),
       supabase
@@ -145,11 +220,13 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
   ];
 
   const taskIds = (taskRows ?? []).map((row) => row.id);
+  const categoryIds = (categoryRows ?? []).map((row) => row.id);
   const [
     { data: otherCostRows, error: otherCostError },
     { data: materialAssignmentRows },
     { data: laborAssignmentRows },
     progressAnchorsByTask,
+    progressAnchorsByCategory,
   ] = await Promise.all([
     taskIds.length > 0
       ? supabase
@@ -161,7 +238,9 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     taskIds.length > 0
       ? supabase
           .from("estimate_task_material_assignments")
-          .select("id, task_id, material_name, specification, planned_quantity, unit")
+          .select(
+            "id, task_id, material_name, specification, planned_quantity, unit, unit_cost, amount"
+          )
           .in("task_id", taskIds)
           .order("id", { ascending: true })
       : Promise.resolve({ data: [] as never[] }),
@@ -176,6 +255,9 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     // lib/task-progress/data.ts) — what computeAutoPercentComplete
     // below projects each task's live percentComplete forward from.
     listTaskProgressAnchors(taskIds),
+    // Same idea, one level up, for a task-less category's own Progress
+    // Tracking Override — see lib/category-progress/data.ts.
+    listCategoryProgressAnchors(categoryIds),
   ]);
 
   if (otherCostError) {
@@ -218,6 +300,8 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       specification: row.specification,
       plannedQuantity: row.planned_quantity ?? 0,
       unit: row.unit,
+      unitCost: row.unit_cost ?? 0,
+      amountOverride: row.amount,
     };
     const existing = materialAssignmentsByTask.get(row.task_id) ?? [];
     existing.push(item);
@@ -262,6 +346,10 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       unit: row.unit,
       laborEstimate: row.labor_estimate ?? 0,
       materialEstimate: row.material_estimate ?? 0,
+      materialDirectQuantity: row.material_direct_quantity ?? 0,
+      materialDirectUnit: row.material_direct_unit,
+      materialUnitCost: row.material_unit_cost ?? 0,
+      materialDirectAmountOverride: row.material_direct_amount,
       equipmentEstimate: row.equipment_estimate ?? 0,
       otherCostEstimate: row.other_cost_estimate ?? 0,
       otherCostItems: otherCostsByTask.get(row.id) ?? [],
@@ -305,13 +393,46 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     name: row.category_name,
     weight: row.weight ?? 0,
     tasks: tasksByCategory.get(row.id) ?? [],
+    materialDirectQuantity: row.material_direct_quantity ?? 0,
+    materialDirectUnit: row.material_direct_unit,
+    materialUnitCost: row.material_unit_cost ?? 0,
+    materialDirectAmountOverride: row.material_direct_amount,
+    categoryMaterialEstimate: row.category_material_estimate ?? 0,
+    plannedStartDate: row.planned_start_date,
+    plannedEndDate: row.planned_end_date,
+    priority: toTaskPriority(row.priority),
+    categoryLaborEstimate: row.category_labor_estimate ?? 0,
+    estimatedQuantity: row.estimated_quantity ?? 0,
+    unit: row.unit,
+    percentComplete: computeAutoPercentComplete({
+      plannedStartDate: row.planned_start_date,
+      plannedEndDate: row.planned_end_date,
+      estimatedQuantity: row.estimated_quantity ?? 0,
+      workingDays,
+      anchor: progressAnchorsByCategory[row.id] ?? null,
+      today: new Date(),
+    }),
   }));
 
-  const taskCount = taskRows?.length ?? 0;
-  const totalEstimatedCost = (taskRows ?? []).reduce(
-    (sum, row) => sum + (row.total_estimate_cost ?? 0),
+  const categoryMaterialTotal = categories.reduce(
+    (sum, c) => sum + c.categoryMaterialEstimate,
     0
   );
+  totalsByColumn.material += categoryMaterialTotal;
+  const categoryLaborTotal = categories.reduce(
+    (sum, c) => sum + c.categoryLaborEstimate,
+    0
+  );
+  totalsByColumn.labor += categoryLaborTotal;
+
+  const taskCount = taskRows?.length ?? 0;
+  const totalEstimatedCost =
+    (taskRows ?? []).reduce(
+      (sum, row) => sum + (row.total_estimate_cost ?? 0),
+      0
+    ) +
+    categoryMaterialTotal +
+    categoryLaborTotal;
 
   return {
     categories,

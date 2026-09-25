@@ -695,6 +695,54 @@ export async function updateTaskSchedule(
 }
 
 /**
+ * Same idea as updateTaskSchedule above, one level up — a category's
+ * own planned start/end (see CostCategory.plannedStartDate's own doc
+ * comment). Only reachable from the Gantt Chart's own Start/End cells
+ * while the category has no tasks yet; once it does, those cells lock
+ * back to a read-only rollup and this is never called for it again.
+ */
+export async function updateCategorySchedule(
+  categoryId: number,
+  projectId: number,
+  plannedStartDate: string,
+  plannedEndDate: string
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    if (
+      !isPlannedYearInRange(plannedStartDate) ||
+      !isPlannedYearInRange(plannedEndDate)
+    ) {
+      return { error: INVALID_DATE_RANGE_ERROR };
+    }
+    if (plannedEndDate < plannedStartDate) {
+      plannedEndDate = plannedStartDate;
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_categories")
+      .update({
+        planned_start_date: plannedStartDate,
+        planned_end_date: plannedEndDate,
+      })
+      .eq("id", categoryId);
+
+    if (error) {
+      logSupabaseError("[updateCategorySchedule] Supabase update failed", error);
+      return { error: "Could not save the new schedule. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
  * The Gantt Chart's own inline Priority cell — a dropdown, not a form,
  * so this is called directly (same pattern as updateTaskSchedule above)
  * rather than through useActionState. `priority` comes from a <select>
@@ -724,6 +772,45 @@ export async function updateTaskPriority(
 
     if (error) {
       logSupabaseError("[updateTaskPriority] Supabase update failed", error);
+      return { error: "Could not save the new priority. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * Same idea as updateTaskPriority above, one level up — a category's
+ * own priority (see CostCategory.priority's own doc comment). Always
+ * directly set, never a rollup of its tasks' own priorities.
+ */
+export async function updateCategoryPriority(
+  categoryId: number,
+  projectId: number,
+  priority: string
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    if (!(VALID_PRIORITIES as readonly string[]).includes(priority)) {
+      return { error: "Invalid priority." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_categories")
+      .update({ priority })
+      .eq("id", categoryId);
+
+    if (error) {
+      logSupabaseError(
+        "[updateCategoryPriority] Supabase update failed",
+        error
+      );
       return { error: "Could not save the new priority. Please try again." };
     }
 
@@ -781,13 +868,13 @@ export async function renameTask(
 // lib/task-progress/actions.ts), never a plain directly-editable field.
 
 /**
- * The actual validate-and-write behind setPredecessor below, split out so
- * updateSubtask (further down) can reuse it directly instead of calling
- * the exported setPredecessor action — which would otherwise record its
- * own recordGanttCheckpoint mid-way through updateSubtask's own larger
- * write, splitting one "Edit Task" submission into two separate undo
- * steps. Each caller records its own single checkpoint once, at the end
- * of everything *it* changed.
+ * The actual validate-and-write behind updateSubtask's own "Successor"
+ * field below (setting task A's predecessor is how task A's own
+ * successor, "the task that starts after A," gets recorded). Split out
+ * of updateSubtask as its own function purely so a failed link can
+ * short-circuit that larger write cleanly, without updateSubtask having
+ * to record its own recordGanttCheckpoint until everything it changed
+ * (including this) has actually succeeded.
  */
 async function applyPredecessor(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -833,56 +920,14 @@ async function applyPredecessor(
 }
 
 /**
- * Sets one task's predecessor by dragging a connector on the Gantt Chart
- * Schedule directly from one bar to another — called directly (not
- * bound to a <form>), same as updateTaskSchedule above. This is a
- * narrower entry point than the Predecessor <select> in the Task form:
- * that dropdown already lets you pick any task in the project as a
- * predecessor, but a connector dragged on the chart is deliberately
- * scoped to "within this phase" (see gantt-chart-view.tsx's own
- * connector-drag handler, which only ever offers same-phase targets to
- * drop onto) — enforced here too, not just assumed from the client.
- */
-export async function setPredecessor(
-  taskId: number,
-  predecessorTaskId: number,
-  projectId: number
-): Promise<CostEstimateActionState> {
-  return safely(async () => {
-    const profile = await requireAdmin();
-    if (!profile) {
-      return { error: "You are not authorized to manage cost estimates." };
-    }
-
-    const supabase = await createClient();
-
-    const result = await applyPredecessor(
-      supabase,
-      taskId,
-      predecessorTaskId,
-      projectId
-    );
-    if (result.error) {
-      return result;
-    }
-
-    await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
-    return { success: true };
-  });
-}
-
-/**
  * The Gantt Chart Schedule's own lightweight "Edit Task" form — updates
- * a task's own schedule fields (name/dates/milestone) and, unlike
- * updateTask's own Predecessor field (which points *this* task at
- * whichever one it starts after), manages the *inverse* relationship: a
+ * a task's own schedule fields (name/dates/milestone) and manages a
  * "Successor" field picking which *other* task should start after this
- * one — the same thing dragging this task's own connector handle onto
- * another bar sets (see setPredecessor above, reused here for the
- * "assign" half, since the same-phase/not-self validation is identical
- * either way). Reassigning or clearing a successor means writing to the
- * *other* task's own predecessor_task_id, never this task's own row.
+ * one (the inverse of that other task's own predecessor_task_id — see
+ * applyPredecessor above, reused here for the "assign" half, since the
+ * same-phase/not-self validation is identical either way). Reassigning
+ * or clearing a successor means writing to the *other* task's own
+ * predecessor_task_id, never this task's own row.
  *
  * A task can only have one predecessor (a single FK column), so
  * "current successor" is "whichever other task in the project already
@@ -905,32 +950,11 @@ export async function updateSubtask(
     }
 
     const taskName = String(formData.get("taskName") ?? "").trim();
-    const plannedStartDate = parseOptionalDate(formData.get("plannedStartDate"));
-    let plannedEndDate = parseOptionalDate(formData.get("plannedEndDate"));
     const isMilestone = formData.get("isMilestone") === "on";
     const successorTaskId = parseOptionalId(formData.get("successorTaskId"));
-    const priority = parsePriority(formData.get("priority"));
-    const materialAssignments = buildMaterialAssignmentDrafts(formData);
-    const laborAssignments = buildLaborAssignmentDrafts(formData);
 
     if (!taskName) {
       return { error: "Task name is required." };
-    }
-    if (
-      (plannedStartDate && !isPlannedYearInRange(plannedStartDate)) ||
-      (plannedEndDate && !isPlannedYearInRange(plannedEndDate))
-    ) {
-      return { error: INVALID_DATE_RANGE_ERROR };
-    }
-    // Never let the end date fall before the start date — snap it to
-    // match the start instead of rejecting the whole edit. See
-    // createTask's own matching comment for the reasoning.
-    if (
-      plannedStartDate &&
-      plannedEndDate &&
-      plannedEndDate < plannedStartDate
-    ) {
-      plannedEndDate = plannedStartDate;
     }
 
     const supabase = await createClient();
@@ -965,9 +989,8 @@ export async function updateSubtask(
       (row) => row.id === successorTaskId
     );
     if (successorTaskId !== null && !alreadyLinked) {
-      // applyPredecessor, not setPredecessor — this whole action records
-      // its own single checkpoint at the end (see applyPredecessor's own
-      // doc comment above for why).
+      // This whole action records its own single checkpoint at the end
+      // — see applyPredecessor's own doc comment above for why.
       const linkResult = await applyPredecessor(
         supabase,
         successorTaskId,
@@ -979,14 +1002,24 @@ export async function updateSubtask(
       }
     }
 
+    // Deliberately no planned_start_date/planned_end_date/priority here
+    // — this form no longer manages a task's schedule or priority at
+    // all (removed per an explicit request, since the Gantt task list's
+    // own Start/End/Priority cells already do; those stay the one place
+    // that edits them). Omitting the columns from this update leaves
+    // whatever's already stored untouched, same as how
+    // estimatedQuantity/materialEstimate/etc. were already excluded
+    // here. Material/labor assignments are the same story — see this
+    // form's own doc comment: materials are now exclusively managed
+    // from the Material Breakdown modal, and the labor/manpower
+    // role+headcount list this used to also manage here has no UI left
+    // anywhere in the app to show it, so this action no longer touches
+    // either table.
     const { error } = await supabase
       .from("estimate_tasks")
       .update({
         task_name: taskName,
-        planned_start_date: plannedStartDate,
-        planned_end_date: plannedEndDate,
         is_milestone: isMilestone,
-        priority,
       })
       .eq("id", taskId)
       .eq("project_id", projectId);
@@ -997,75 +1030,6 @@ export async function updateSubtask(
       // DB-state change even though this particular write failed.
       await recordGanttCheckpoint(supabase, projectId, profile.id);
       return { error: "Could not update task. Please try again." };
-    }
-
-    // Replace this task's planned materials/manpower wholesale, same
-    // "delete then reinsert" convention updateTask uses for Other Cost
-    // Items — nothing else references these rows by id.
-    const { error: materialDeleteError } = await supabase
-      .from("estimate_task_material_assignments")
-      .delete()
-      .eq("task_id", taskId);
-    if (materialDeleteError) {
-      logSupabaseError(
-        "[updateSubtask] Supabase material-assignment delete failed",
-        materialDeleteError
-      );
-      await recordGanttCheckpoint(supabase, projectId, profile.id);
-      return { error: "Could not save planned materials. Please try again." };
-    }
-    if (materialAssignments.length > 0) {
-      const { error: materialInsertError } = await supabase
-        .from("estimate_task_material_assignments")
-        .insert(
-          materialAssignments.map((item) => ({
-            task_id: taskId,
-            material_name: item.materialName,
-            specification: item.specification || null,
-            planned_quantity: item.plannedQuantity,
-            unit: item.unit || null,
-          }))
-        );
-      if (materialInsertError) {
-        logSupabaseError(
-          "[updateSubtask] Supabase material-assignment insert failed",
-          materialInsertError
-        );
-        await recordGanttCheckpoint(supabase, projectId, profile.id);
-        return { error: "Could not save planned materials. Please try again." };
-      }
-    }
-
-    const { error: laborDeleteError } = await supabase
-      .from("estimate_task_labor_assignments")
-      .delete()
-      .eq("task_id", taskId);
-    if (laborDeleteError) {
-      logSupabaseError(
-        "[updateSubtask] Supabase labor-assignment delete failed",
-        laborDeleteError
-      );
-      await recordGanttCheckpoint(supabase, projectId, profile.id);
-      return { error: "Could not save planned manpower. Please try again." };
-    }
-    if (laborAssignments.length > 0) {
-      const { error: laborInsertError } = await supabase
-        .from("estimate_task_labor_assignments")
-        .insert(
-          laborAssignments.map((item) => ({
-            task_id: taskId,
-            worker_role: item.workerRole,
-            planned_worker_count: item.plannedWorkerCount,
-          }))
-        );
-      if (laborInsertError) {
-        logSupabaseError(
-          "[updateSubtask] Supabase labor-assignment insert failed",
-          laborInsertError
-        );
-        await recordGanttCheckpoint(supabase, projectId, profile.id);
-        return { error: "Could not save planned manpower. Please try again." };
-      }
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
@@ -1121,11 +1085,23 @@ export async function deleteTask(
 export async function updateTaskMaterialAssignments(
   taskId: number,
   projectId: number,
+  materialDirect: {
+    quantity: number;
+    unit: string | null;
+    unitCost: number;
+    /** Null means "compute quantity * unitCost as normal"; a non-null
+     * value means Amount was typed directly on this task's own line
+     * (no clean quantity/unit cost breakdown). See
+     * 0043_amount_overrides.sql's own comment. */
+    amountOverride: number | null;
+  },
   assignments: {
     materialName: string;
     specification: string | null;
     plannedQuantity: number;
     unit: string | null;
+    unitCost: number;
+    amountOverride: number | null;
   }[]
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
@@ -1152,8 +1128,15 @@ export async function updateTaskMaterialAssignments(
       .map((item) => ({
         materialName: item.materialName.trim(),
         specification: item.specification?.trim() || null,
-        plannedQuantity: item.plannedQuantity,
+        plannedQuantity: Number.isFinite(item.plannedQuantity)
+          ? item.plannedQuantity
+          : 0,
         unit: item.unit?.trim() || null,
+        unitCost: Number.isFinite(item.unitCost) ? item.unitCost : 0,
+        amountOverride:
+          item.amountOverride != null && Number.isFinite(item.amountOverride)
+            ? item.amountOverride
+            : null,
       }))
       .filter((item) => item.materialName.length > 0);
 
@@ -1165,10 +1148,10 @@ export async function updateTaskMaterialAssignments(
             task_id: taskId,
             material_name: item.materialName,
             specification: item.specification,
-            planned_quantity: Number.isFinite(item.plannedQuantity)
-              ? item.plannedQuantity
-              : 0,
+            planned_quantity: item.plannedQuantity,
             unit: item.unit,
+            unit_cost: item.unitCost,
+            amount: item.amountOverride,
           }))
         );
       if (insertError) {
@@ -1178,6 +1161,368 @@ export async function updateTaskMaterialAssignments(
         );
         return { error: "Could not save the material list. Please try again." };
       }
+    }
+
+    // material_estimate/total_estimate_cost are stored columns, not
+    // computed at read time (see CostTask.materialEstimate's own doc
+    // comment) — kept in sync here, in the same round trip, rather than
+    // left stale until some unrelated action next happens to touch this
+    // task's own cost fields.
+    const directQuantity = Number.isFinite(materialDirect.quantity)
+      ? materialDirect.quantity
+      : 0;
+    const directUnitCost = Number.isFinite(materialDirect.unitCost)
+      ? materialDirect.unitCost
+      : 0;
+    const directAmountOverride =
+      materialDirect.amountOverride != null &&
+      Number.isFinite(materialDirect.amountOverride)
+        ? materialDirect.amountOverride
+        : null;
+    const directAmount = directAmountOverride ?? directQuantity * directUnitCost;
+    const newMaterialEstimate =
+      directAmount +
+      cleaned.reduce(
+        (sum, item) =>
+          sum + (item.amountOverride ?? item.plannedQuantity * item.unitCost),
+        0
+      );
+
+    const { data: currentTask, error: taskFetchError } = await supabase
+      .from("estimate_tasks")
+      .select("labor_estimate, equipment_estimate, other_cost_estimate")
+      .eq("id", taskId)
+      .single();
+    if (taskFetchError || !currentTask) {
+      logSupabaseError(
+        "[updateTaskMaterialAssignments] Supabase task fetch failed",
+        taskFetchError
+      );
+      return { error: "Could not save the material list. Please try again." };
+    }
+
+    const newTotalEstimateCost =
+      (currentTask.labor_estimate ?? 0) +
+      newMaterialEstimate +
+      (currentTask.equipment_estimate ?? 0) +
+      (currentTask.other_cost_estimate ?? 0);
+
+    const { error: taskUpdateError } = await supabase
+      .from("estimate_tasks")
+      .update({
+        material_direct_quantity: directQuantity,
+        material_direct_unit: materialDirect.unit?.trim() || null,
+        material_unit_cost: directUnitCost,
+        material_direct_amount: directAmountOverride,
+        material_estimate: newMaterialEstimate,
+        total_estimate_cost: newTotalEstimateCost,
+      })
+      .eq("id", taskId);
+    if (taskUpdateError) {
+      logSupabaseError(
+        "[updateTaskMaterialAssignments] Supabase task update failed",
+        taskUpdateError
+      );
+      return { error: "Could not save the material list. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * Saves a task's own labor_estimate — called from the Labor Breakdown
+ * modal's own Labor Percentage cell (see LaborBreakdownModalContent),
+ * which computes this peso amount itself (percent * this task's own
+ * material+equipment+other cost, the same rule-of-thumb formula
+ * 0036_project_default_labor_cost_percent.sql originally documented)
+ * and passes the result straight in — this action just persists it,
+ * the same fetch-current-then-recompute-total pattern
+ * updateTaskMaterialAssignments above already uses for the other cost
+ * columns.
+ */
+export async function updateTaskLaborEstimate(
+  taskId: number,
+  projectId: number,
+  laborEstimate: number
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const supabase = await createClient();
+
+    const { data: currentTask, error: fetchError } = await supabase
+      .from("estimate_tasks")
+      .select("material_estimate, equipment_estimate, other_cost_estimate")
+      .eq("id", taskId)
+      .single();
+    if (fetchError || !currentTask) {
+      logSupabaseError(
+        "[updateTaskLaborEstimate] Supabase task fetch failed",
+        fetchError
+      );
+      return { error: "Could not save the labor cost. Please try again." };
+    }
+
+    const totalEstimateCost =
+      laborEstimate +
+      (currentTask.material_estimate ?? 0) +
+      (currentTask.equipment_estimate ?? 0) +
+      (currentTask.other_cost_estimate ?? 0);
+
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({
+        labor_estimate: laborEstimate,
+        total_estimate_cost: totalEstimateCost,
+      })
+      .eq("id", taskId);
+
+    if (error) {
+      logSupabaseError("[updateTaskLaborEstimate] Supabase update failed", error);
+      return { error: "Could not save the labor cost. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * Bulk-applies a Labor Rate % project-wide, unconditionally — called
+ * from the Labor Breakdown modal's own top field (see
+ * LaborBreakdownModalContent). Per an explicit decision: the rate is the
+ * one authoritative source for labor cost, so changing it recomputes
+ * EVERY task's own labor_estimate, AND every task-less category's own
+ * category_labor_estimate (see 0047_category_labor_estimate.sql's own
+ * comment — a category with tasks has no direct labor line of its own,
+ * same asymmetric rule Material Breakdown already established), to
+ * rate% * the project's overall Material + Equipment + Other total —
+ * overwriting whatever was there before, including a row whose own
+ * Labor Percentage cell was individually typed into earlier. There's no
+ * "already has its own labor cost, leave it alone" carve-out; the rate
+ * field is a reset, not a fill-in-the-blanks default.
+ *
+ * Deliberately fetches every category/task's own Material + Equipment +
+ * Other cost FRESH here, server-side, rather than trusting the
+ * categories the client already has in props — those can be one
+ * revalidation behind the database (e.g. right after a Material
+ * Breakdown save in the same session), and computing the % against a
+ * stale, too-low total would silently under-apply the rate. This is the
+ * one place that base is computed for real.
+ */
+export async function applyLaborRateProjectWide(
+  projectId: number,
+  percent: number
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const supabase = await createClient();
+
+    const [{ data: categoryRows, error: categoryError }, { data: taskRows, error: taskError }] =
+      await Promise.all([
+        supabase
+          .from("estimate_categories")
+          .select("id, category_material_estimate")
+          .eq("project_id", projectId),
+        supabase
+          .from("estimate_tasks")
+          .select("id, category_id, material_estimate, equipment_estimate, other_cost_estimate")
+          .eq("project_id", projectId),
+      ]);
+
+    if (categoryError || taskError || !categoryRows || !taskRows) {
+      logSupabaseError(
+        "[applyLaborRateProjectWide] Supabase fetch failed",
+        categoryError ?? taskError!
+      );
+      return { error: "Could not apply the labor rate. Please try again." };
+    }
+
+    const projectBase =
+      categoryRows.reduce((sum, c) => sum + (c.category_material_estimate ?? 0), 0) +
+      taskRows.reduce(
+        (sum, t) =>
+          sum +
+          (t.material_estimate ?? 0) +
+          (t.equipment_estimate ?? 0) +
+          (t.other_cost_estimate ?? 0),
+        0
+      );
+    const newAmount = (percent / 100) * projectBase;
+
+    const categoryTaskCount = new Map<number, number>();
+    for (const t of taskRows) {
+      categoryTaskCount.set(t.category_id, (categoryTaskCount.get(t.category_id) ?? 0) + 1);
+    }
+    const taskLessCategories = categoryRows.filter(
+      (c) => (categoryTaskCount.get(c.id) ?? 0) === 0
+    );
+
+    // TEMPORARY diagnostics — narrowing down why task-less categories
+    // keep reading back as 0% despite this running with no visible
+    // error. .select() forces Supabase to return the rows it actually
+    // matched/updated, so an empty array here (vs. a real row) would
+    // mean RLS or the .eq("id", ...) itself silently matched nothing,
+    // rather than the write erroring outright.
+    console.log(
+      "[applyLaborRateProjectWide] projectBase=",
+      projectBase,
+      "newAmount=",
+      newAmount,
+      "taskLessCategories=",
+      taskLessCategories.map((c) => c.id)
+    );
+
+    const taskResults = await Promise.all(
+      taskRows.map((t) =>
+        supabase
+          .from("estimate_tasks")
+          .update({
+            labor_estimate: newAmount,
+            total_estimate_cost:
+              newAmount +
+              (t.material_estimate ?? 0) +
+              (t.equipment_estimate ?? 0) +
+              (t.other_cost_estimate ?? 0),
+          })
+          .eq("id", t.id)
+      )
+    );
+    const categoryResults = await Promise.all(
+      taskLessCategories.map((c) =>
+        supabase
+          .from("estimate_categories")
+          .update({ category_labor_estimate: newAmount })
+          .eq("id", c.id)
+          .select("id, category_labor_estimate")
+      )
+    );
+    console.log(
+      "[applyLaborRateProjectWide] categoryResults=",
+      categoryResults.map((r) => ({ error: r.error, data: r.data }))
+    );
+    const results = [...taskResults, ...categoryResults];
+    const failed = results.find((r) => r.error);
+    if (failed?.error) {
+      logSupabaseError("[applyLaborRateProjectWide] Supabase update failed", failed.error);
+      return { error: "Could not apply the labor rate. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * Saves a category's own direct labor cost (Labor Breakdown modal's own
+ * per-category cell — see LaborBreakdownModalContent) — only meaningful
+ * while the category has no tasks yet, same "own direct line" rule
+ * updateCategoryMaterialDirect below already follows for material cost.
+ * A category's own material/equipment/other-cost columns don't apply
+ * here (categories have no equipment/other cost of their own, and this
+ * doesn't touch category_material_estimate), so there's no
+ * total-recompute step the task equivalent needs — this is the only
+ * cost figure a task-less category has.
+ */
+export async function updateCategoryLaborEstimate(
+  categoryId: number,
+  projectId: number,
+  laborEstimate: number
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_categories")
+      .update({ category_labor_estimate: laborEstimate })
+      .eq("id", categoryId);
+
+    if (error) {
+      logSupabaseError("[updateCategoryLaborEstimate] Supabase update failed", error);
+      return { error: "Could not save the labor cost. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidatePath(`/admin/projects/${projectId}`);
+    return { success: true };
+  });
+}
+
+/**
+ * Saves a category's own direct BOM line (Material Breakdown modal —
+ * see CostCategory.materialDirectQuantity's own doc comment). Simpler
+ * than updateTaskMaterialAssignments above: a category has no material
+ * assignment rows of its own to delete/reinsert, so this only ever
+ * updates the 4 columns directly.
+ */
+export async function updateCategoryMaterialDirect(
+  categoryId: number,
+  projectId: number,
+  materialDirect: {
+    quantity: number;
+    unit: string | null;
+    unitCost: number;
+    /** Null means "compute quantity * unitCost as normal"; a non-null
+     * value means Amount was typed directly on this category's own line
+     * (no clean quantity/unit cost breakdown). See
+     * 0043_amount_overrides.sql's own comment. */
+    amountOverride: number | null;
+  }
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireAdmin();
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const supabase = await createClient();
+
+    const directQuantity = Number.isFinite(materialDirect.quantity)
+      ? materialDirect.quantity
+      : 0;
+    const directUnitCost = Number.isFinite(materialDirect.unitCost)
+      ? materialDirect.unitCost
+      : 0;
+    const directAmountOverride =
+      materialDirect.amountOverride != null &&
+      Number.isFinite(materialDirect.amountOverride)
+        ? materialDirect.amountOverride
+        : null;
+    const categoryMaterialEstimate =
+      directAmountOverride ?? directQuantity * directUnitCost;
+
+    const { error: updateError } = await supabase
+      .from("estimate_categories")
+      .update({
+        material_direct_quantity: directQuantity,
+        material_direct_unit: materialDirect.unit?.trim() || null,
+        material_unit_cost: directUnitCost,
+        material_direct_amount: directAmountOverride,
+        category_material_estimate: categoryMaterialEstimate,
+      })
+      .eq("id", categoryId);
+    if (updateError) {
+      logSupabaseError(
+        "[updateCategoryMaterialDirect] Supabase update failed",
+        updateError
+      );
+      return { error: "Could not save the cost line. Please try again." };
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);

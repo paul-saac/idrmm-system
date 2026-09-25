@@ -105,6 +105,38 @@ export interface Database {
           project_id: number;
           category_name: string;
           weight: number | null;
+          /** See 0042_category_direct_cost.sql's own comment — a
+           * category's own direct BOM line, same reasoning as a task's
+           * own material_direct_quantity/unit/material_unit_cost. */
+          material_direct_quantity: number | null;
+          material_direct_unit: string | null;
+          material_unit_cost: number | null;
+          category_material_estimate: number | null;
+          /** See 0043_amount_overrides.sql's own comment — null means
+           * "compute from quantity * unit cost as normal"; a non-null
+           * value means the Amount cell was typed directly (no clean
+           * quantity/unit cost breakdown), so use this instead. */
+          material_direct_amount: number | null;
+          /** See 0044_category_schedule.sql's own comment — only used
+           * while this category has no tasks yet; once it does, its own
+           * start/end is a rollup of theirs instead (see
+           * gantt-chart-view.tsx's own `tasks` useMemo). */
+          planned_start_date: string | null;
+          planned_end_date: string | null;
+          /** See 0046_category_priority.sql's own comment — always
+           * directly set, never a rollup of its tasks' own priorities. */
+          priority: string;
+          /** See 0047_category_labor_estimate.sql's own comment — only
+           * used while this category has no tasks yet; once it does,
+           * the Labor Breakdown modal shows their rolled-up total
+           * instead (see LaborBreakdownModalContent's own doc comment). */
+          category_labor_estimate: number | null;
+          /** See 0048_category_progress_tracking.sql's own comment —
+           * only used while this category has no tasks yet, same
+           * asymmetric rule as planned_start_date/category_labor_estimate
+           * above. */
+          estimated_quantity: number | null;
+          unit: string | null;
         };
         Insert: {
           // Only ever set explicitly by the undo/redo restore path (see
@@ -118,10 +150,32 @@ export interface Database {
           project_id: number;
           category_name: string;
           weight?: number;
+          material_direct_quantity?: number;
+          material_direct_unit?: string | null;
+          material_unit_cost?: number;
+          category_material_estimate?: number;
+          material_direct_amount?: number | null;
+          planned_start_date?: string | null;
+          planned_end_date?: string | null;
+          priority?: string;
+          category_labor_estimate?: number;
+          estimated_quantity?: number | null;
+          unit?: string | null;
         };
         Update: {
           category_name?: string;
           weight?: number;
+          material_direct_quantity?: number;
+          material_direct_unit?: string | null;
+          material_unit_cost?: number;
+          category_material_estimate?: number;
+          material_direct_amount?: number | null;
+          planned_start_date?: string | null;
+          planned_end_date?: string | null;
+          priority?: string;
+          category_labor_estimate?: number;
+          estimated_quantity?: number | null;
+          unit?: string | null;
         };
         Relationships: [];
       };
@@ -147,6 +201,15 @@ export interface Database {
           is_milestone: boolean;
           priority: string;
           percent_complete: number;
+          /** See 0041_material_line_costs.sql's own comment — a task's
+           * own direct BOM line (no material breakdown), deliberately
+           * separate from estimated_quantity/unit above. */
+          material_direct_quantity: number | null;
+          material_direct_unit: string | null;
+          material_unit_cost: number | null;
+          /** See 0043_amount_overrides.sql's own comment — same as
+           * CostCategory's own material_direct_amount, one level down. */
+          material_direct_amount: number | null;
         };
         Insert: {
           // See estimate_categories.Insert's own comment on `id` above —
@@ -169,6 +232,10 @@ export interface Database {
           is_milestone?: boolean;
           priority?: string;
           percent_complete?: number;
+          material_direct_quantity?: number;
+          material_direct_unit?: string | null;
+          material_unit_cost?: number;
+          material_direct_amount?: number | null;
         };
         Update: {
           category_id?: number;
@@ -187,6 +254,10 @@ export interface Database {
           is_milestone?: boolean;
           priority?: string;
           percent_complete?: number;
+          material_direct_quantity?: number;
+          material_direct_unit?: string | null;
+          material_unit_cost?: number;
+          material_direct_amount?: number | null;
         };
         Relationships: [];
       };
@@ -198,6 +269,13 @@ export interface Database {
           specification: string | null;
           planned_quantity: number;
           unit: string | null;
+          /** See 0041_material_line_costs.sql's own comment — this
+           * line's own $/unit rate; Amount = planned_quantity * this. */
+          unit_cost: number;
+          /** See 0043_amount_overrides.sql's own comment — null means
+           * "compute planned_quantity * unit_cost as normal"; a non-null
+           * value means Amount was typed directly on this line. */
+          amount: number | null;
           created_at: string;
         };
         Insert: {
@@ -208,12 +286,16 @@ export interface Database {
           specification?: string | null;
           planned_quantity?: number;
           unit?: string | null;
+          unit_cost?: number;
+          amount?: number | null;
         };
         Update: {
           material_name?: string;
           specification?: string | null;
           planned_quantity?: number;
           unit?: string | null;
+          unit_cost?: number;
+          amount?: number | null;
         };
         Relationships: [];
       };
@@ -327,6 +409,22 @@ export interface Database {
         Update: never;
         Relationships: [];
       };
+      category_worker_assignments: {
+        // Same idea as task_worker_assignments above, one level up — see
+        // 0045_category_worker_assignments.sql.
+        Row: {
+          id: number;
+          category_id: number;
+          worker_id: number;
+          created_at: string;
+        };
+        Insert: {
+          category_id: number;
+          worker_id: number;
+        };
+        Update: never;
+        Relationships: [];
+      };
       task_progress_entries: {
         // One row per task per calendar day a Progress Tracking Override
         // was recorded — see 0040_task_progress_tracking.sql.
@@ -358,6 +456,48 @@ export interface Database {
         // Materials consumed on one task_progress_entries row's own day
         // — each one is a real project_materials.quantity deduction, see
         // recordTaskProgress in lib/task-progress/actions.ts.
+        Row: {
+          id: number;
+          progress_entry_id: number;
+          material_id: number;
+          quantity: number;
+        };
+        Insert: {
+          progress_entry_id: number;
+          material_id: number;
+          quantity?: number;
+        };
+        Update: never;
+        Relationships: [];
+      };
+      category_progress_entries: {
+        // Same idea as task_progress_entries above, one level up — see
+        // 0048_category_progress_tracking.sql.
+        Row: {
+          id: number;
+          category_id: number;
+          entry_date: string;
+          quantity_completed: number;
+          labor_headcount: number;
+          recorded_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          category_id: number;
+          entry_date: string;
+          quantity_completed?: number;
+          labor_headcount?: number;
+          recorded_by?: string | null;
+        };
+        Update: {
+          quantity_completed?: number;
+          labor_headcount?: number;
+        };
+        Relationships: [];
+      };
+      category_progress_material_usage: {
+        // Same idea as task_progress_material_usage above, one level up
+        // — see 0048_category_progress_tracking.sql.
         Row: {
           id: number;
           progress_entry_id: number;
