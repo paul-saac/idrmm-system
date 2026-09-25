@@ -74,13 +74,13 @@ export type ProgressAnchor = {
  * on its own every day without any write happening, which only works if
  * it's recomputed fresh on every read.
  *
- * With no override yet, progress is purely date-based — a "fencepost"
+ * With no override yet, progress is purely date-based — a simple
  * fraction of working days elapsed since the task's own planned start,
- * out of the working days *between* start and end (a 5-working-day task
- * has 4 day-to-day gaps: start day itself is 0%, one full day elapsed is
- * 1/4 = 25%, the planned end is 100%). This branch deliberately never
- * needs estimatedQuantity — it's pure calendar math, so it works with
- * zero setup, before anyone has ever recorded a quantity for this task.
+ * out of the task's own total working days (a 4-working-day task with 2
+ * fully-elapsed days reads 2/4 = 50%; the planned end is 100%). This
+ * branch deliberately never needs estimatedQuantity — it's pure
+ * calendar math, so it works with zero setup, before anyone has ever
+ * recorded a quantity for this task.
  *
  * With an override (and only once estimatedQuantity is actually set —
  * there's nothing to compute a percent from otherwise, so this falls
@@ -160,17 +160,17 @@ export function computeAutoPercentComplete({
   if (now >= end) return 100;
 
   const totalWorkingDays = countWorkingDays(start, end, workingDays);
-  if (totalWorkingDays <= 1) return 0;
+  if (totalWorkingDays <= 0) return 0;
   // Counts from `start` itself (inclusive) up through *yesterday*, not
   // today — see this function's own doc comment on why today never
   // counts as elapsed yet. On the start day itself this is 0 (yesterday
   // is before start, so countWorkingDays' own to<from guard returns 0),
   // giving exactly 0% rather than already counting day one. Divided by
-  // totalWorkingDays - 1, not totalWorkingDays (the fencepost adjustment
-  // described above) — this formula only ever runs for now < end (the
-  // now >= end check above already handles the planned end date itself
-  // as its own flat 100%), so it approaches but never has to reach 100%
-  // on its own.
+  // the task's own total working days — a plain elapsed/total ratio,
+  // not a fencepost one — so this formula only ever runs for now < end
+  // (the now >= end check above already handles the planned end date
+  // itself as its own flat 100%), and approaches but never has to reach
+  // 100% on its own.
   const elapsedWorkingDays = countWorkingDays(start, addDays(now, -1), workingDays);
-  return clampPercent((elapsedWorkingDays / (totalWorkingDays - 1)) * 100);
+  return clampPercent((elapsedWorkingDays / totalWorkingDays) * 100);
 }
