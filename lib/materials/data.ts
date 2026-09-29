@@ -234,3 +234,91 @@ export async function getTodayMaterialProcurement(
     items: itemsByProcurementId.get(row.id) ?? [],
   }));
 }
+
+export type MaterialBreakdownEntry = {
+  id: number;
+  materialName: string;
+  specification: string | null;
+  plannedQuantity: number;
+  unit: string | null;
+  unitCost: number;
+  /** amountOverride if one was typed directly, otherwise plannedQuantity
+   * * unitCost — the same effective-amount formula the Material
+   * Breakdown modal's own live "Amount" column uses (see
+   * material-breakdown-modal-content.tsx's own lineAmount). */
+  amount: number;
+  taskName: string;
+  categoryName: string;
+};
+
+/**
+ * Every material line item entered in the Cost Estimate Breakdown's own
+ * Material Breakdown modal (estimate_task_material_assignments) — a
+ * read-only reflection for the Materials Monitoring sub-tab, purely for
+ * visibility. Deliberately NOT linked to project_materials (the actual
+ * stock roster listProjectMaterials above reads): these are free-text
+ * cost-planning lines, entered either by typing directly into Material
+ * Breakdown or (eventually) via the Import Bill of Materials flow — see
+ * ImportBomModalContent's own doc comment, which is currently a UI-only
+ * preview that never actually writes a row. Whichever way a line gets
+ * created, it lands in the same table, so this reads it back the same
+ * way either time with nothing extra to distinguish the two.
+ *
+ * A category's own direct material line (material_direct_quantity/unit/
+ * unit_cost on estimate_categories itself, see 0042_category_direct_
+ * cost.sql) is deliberately excluded — it has no material_name column at
+ * all, just a lump-sum quantity/cost, so there's no material identity to
+ * list here.
+ */
+export async function listMaterialBreakdownEntries(
+  projectId: number
+): Promise<MaterialBreakdownEntry[]> {
+  const supabase = await createClient();
+
+  const { data: categoryRows } = await supabase
+    .from("estimate_categories")
+    .select("id, category_name")
+    .eq("project_id", projectId);
+
+  const categoryIds = (categoryRows ?? []).map((row) => row.id);
+  if (categoryIds.length === 0) return [];
+  const categoryById = new Map((categoryRows ?? []).map((c) => [c.id, c]));
+
+  const { data: taskRows } = await supabase
+    .from("estimate_tasks")
+    .select("id, task_name, category_id")
+    .in("category_id", categoryIds);
+
+  const taskIds = (taskRows ?? []).map((row) => row.id);
+  if (taskIds.length === 0) return [];
+  const taskById = new Map((taskRows ?? []).map((t) => [t.id, t]));
+
+  const { data: assignmentRows } = await supabase
+    .from("estimate_task_material_assignments")
+    .select(
+      "id, task_id, material_name, specification, planned_quantity, unit, unit_cost, amount"
+    )
+    .in("task_id", taskIds)
+    .order("id", { ascending: true });
+
+  const entries: MaterialBreakdownEntry[] = [];
+  for (const row of assignmentRows ?? []) {
+    const task = taskById.get(row.task_id);
+    if (!task) continue;
+    const category = categoryById.get(task.category_id);
+    const plannedQuantity = row.planned_quantity ?? 0;
+    const unitCost = row.unit_cost ?? 0;
+    entries.push({
+      id: row.id,
+      materialName: row.material_name,
+      specification: row.specification,
+      plannedQuantity,
+      unit: row.unit,
+      unitCost,
+      amount: row.amount ?? plannedQuantity * unitCost,
+      taskName: task.task_name,
+      categoryName: category?.category_name ?? "—",
+    });
+  }
+  return entries;
+}

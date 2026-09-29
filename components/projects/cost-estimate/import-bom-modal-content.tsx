@@ -10,29 +10,42 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import {
+  extractBomFromFile,
+  type ExtractedCategory,
+} from "@/lib/bom-import/actions";
 
 /**
- * UI-only preview of the planned "Import Bill of Materials" flow —
- * upload a BOM document, "AI" extracts it into an editable draft of
- * categories -> tasks -> material line items (mirroring the Cost
- * Estimate Breakdown's own structure, since a BOM is essentially a cost
+ * "Import with AI" — upload a document (a Bill of Materials is the
+ * common case, but nothing here actually requires that specific format —
+ * any quotation/estimate laid out as phases/tasks/materials works the
+ * same way), Gemini extracts it into an editable draft of categories ->
+ * tasks -> material line items (mirroring the Cost Estimate Breakdown's
+ * own structure, since this kind of document is essentially a cost
  * estimate authored outside this system), the admin reviews/corrects
- * everything, then confirms.
+ * everything, then confirms. Still named "Bom" in this file's own name
+ * and its internal types/functions — that's just implementation history
+ * (a Bill of Materials was the first shape this was built for), not a
+ * constraint on what a user can actually upload; nothing user-facing
+ * calls it that anymore.
  *
- * The actual AI extraction and the final "write this to the project"
- * step are deliberately NOT implemented yet (explicit instruction: build
- * the flow to visualize it, not the AI itself) — "Process with AI"
- * below seeds the draft from a fixed sample instead of a real upload
- * parse, and "Confirm" only shows what *would* be created rather than
- * calling any server action. Nothing here writes to the database.
+ * "Process with AI" below calls extractBomFromFile (lib/bom-import/
+ * actions.ts), which sends the uploaded PDF/photo straight to Gemini as
+ * multimodal input — no separate PDF-text-extraction step, so it reads
+ * table layout directly and works on a scanned/photographed document the
+ * same way it works on a typed one. The final "write this to the
+ * project" step is still NOT implemented — "Confirm" only shows what
+ * *would* be created rather than calling any server action; nothing here
+ * writes to the database yet.
  *
  * Opened from the Material Breakdown modal's own footer (see
- * MaterialBreakdownModalContent) — project-detail-view.tsx still owns
- * this modal's open state in case another entry point needs the same
- * instance later. Rendered as Modal's "centered" variant (an ordinary
- * dialog box) rather than the app's usual right-docked panel — this
- * flow isn't a spreadsheet-sized screen like the modal that opens it,
- * so it reads better centered.
+ * MaterialBreakdownModalContent) and the Gantt Chart's own toolbar (see
+ * gantt-chart-view.tsx's onImportBom) — project-detail-view.tsx still
+ * owns this modal's open state so both entry points share the same
+ * instance. Rendered as Modal's "centered" variant (an ordinary dialog
+ * box) rather than the app's usual right-docked panel — this flow isn't
+ * a spreadsheet-sized screen like the modal that opens it, so it reads
+ * better centered.
  */
 
 type DraftMaterialLine = {
@@ -66,66 +79,29 @@ function nextId() {
   return Math.random().toString(36).slice(2);
 }
 
-// A small, representative slice of a real architect-prepared BOM this
-// feature is meant to import — deliberately includes both task shapes a
-// real BOM mixes: a single-line task with its own qty/unit/cost
-// (Excavation), and a task that's just a group header with all of its
-// qty/cost living on the material lines underneath it (Concrete
-// Footings/Columns) — see this component's own doc comment above for
-// why the latter's quantity/unit start blank rather than guessed.
-function buildSampleExtraction(): DraftCategory[] {
-  return [
-    {
+// extractBomFromFile returns plain ExtractedCategory[] (no ids — nothing
+// client-side to key React elements by or edit in place yet) — this
+// attaches a fresh client-generated id to every category/task/material
+// line, same as addCategory/addTask/addMaterial below already do for a
+// row created straight in the browser.
+function toDraftCategories(extracted: ExtractedCategory[]): DraftCategory[] {
+  return extracted.map((category) => ({
+    id: nextId(),
+    name: category.name,
+    tasks: category.tasks.map((task) => ({
       id: nextId(),
-      name: "E. EARTHWORKS",
-      tasks: [
-        {
-          id: nextId(),
-          name: "E.1 Excavation",
-          quantity: "12",
-          unit: "cu.m",
-          materials: [],
-        },
-        {
-          id: nextId(),
-          name: "E.2 Backfilling / Filling & Compacting",
-          quantity: "25",
-          unit: "cu.m",
-          materials: [],
-        },
-      ],
-    },
-    {
-      id: nextId(),
-      name: "G. CONCRETE WORKS",
-      tasks: [
-        {
-          id: nextId(),
-          name: "G.1 Concrete Footings",
-          quantity: "",
-          unit: "",
-          materials: [
-            { id: nextId(), name: "Portland Cement", quantity: "30", unit: "bags", unitCost: "210" },
-            { id: nextId(), name: "Screened Sand", quantity: "1", unit: "cu.m", unitCost: "1200" },
-            { id: nextId(), name: "3/4 Gravel", quantity: "2", unit: "cu.m", unitCost: "1800" },
-            { id: nextId(), name: '12mm Ø Reinforced Steel Bar', quantity: "16", unit: "pcs", unitCost: "145" },
-            { id: nextId(), name: "#16 G.I. Tie Wire", quantity: "10", unit: "kgs", unitCost: "100" },
-          ],
-        },
-        {
-          id: nextId(),
-          name: "G.2 Concrete Columns",
-          quantity: "",
-          unit: "",
-          materials: [
-            { id: nextId(), name: "Portland Cement", quantity: "33", unit: "bags", unitCost: "210" },
-            { id: nextId(), name: "Screened Sand", quantity: "2", unit: "cu.m", unitCost: "1200" },
-            { id: nextId(), name: "3/4 Gravel", quantity: "4", unit: "cu.m", unitCost: "1800" },
-          ],
-        },
-      ],
-    },
-  ];
+      name: task.name,
+      quantity: task.quantity,
+      unit: task.unit,
+      materials: task.materials.map((material) => ({
+        id: nextId(),
+        name: material.name,
+        quantity: material.quantity,
+        unit: material.unit,
+        unitCost: material.unitCost,
+      })),
+    })),
+  }));
 }
 
 function TaskQuantityField({
@@ -174,25 +150,34 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<"upload" | "processing" | "review" | "done">(
     "upload"
   );
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [categories, setCategories] = useState<DraftCategory[]>([]);
+  const [processError, setProcessError] = useState<string | null>(null);
 
   function handleFilePicked(files: FileList | null) {
-    const file = files?.[0];
-    if (file) setFileName(file.name);
+    const picked = files?.[0];
+    if (picked) {
+      setFile(picked);
+      setProcessError(null);
+    }
   }
 
-  function handleProcess() {
+  async function handleProcess() {
+    if (!file) return;
+    setProcessError(null);
     setStep("processing");
-    // Stands in for the real AI extraction call — see this file's own
-    // doc comment. The delay is purely so the step actually reads as
-    // "processing" rather than instantly swapping content.
-    setTimeout(() => {
-      setCategories(buildSampleExtraction());
-      setStep("review");
-    }, 900);
+    const formData = new FormData();
+    formData.set("file", file);
+    const result = await extractBomFromFile(formData);
+    if (!result.categories) {
+      setProcessError(result.error ?? "Something went wrong. Please try again.");
+      setStep("upload");
+      return;
+    }
+    setCategories(toDraftCategories(result.categories));
+    setStep("review");
   }
 
   function updateCategoryName(categoryId: string, name: string) {
@@ -340,8 +325,9 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
     return (
       <div className="flex flex-col gap-4">
         <p className="text-sm text-zinc-500">
-          Upload a Bill of Materials document (PDF or photo) and AI will draft
-          the phases, tasks, and material lists for you to review before
+          Upload a document (PDF or photo) — a Bill of Materials, a
+          quotation, or any similar cost estimate — and AI will draft the
+          phases, tasks, and material lists for you to review before
           anything is added to the project.
         </p>
 
@@ -370,10 +356,10 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
             className="hidden"
             onChange={(e) => handleFilePicked(e.target.files)}
           />
-          {fileName ? (
+          {file ? (
             <>
               <FileText className="size-6 text-zinc-500" />
-              <p className="text-sm font-medium text-zinc-700">{fileName}</p>
+              <p className="text-sm font-medium text-zinc-700">{file.name}</p>
               <p className="text-xs text-zinc-400">Click to choose a different file</p>
             </>
           ) : (
@@ -387,6 +373,12 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
+        {processError && (
+          <p role="alert" className="text-sm text-red-600">
+            {processError}
+          </p>
+        )}
+
         <div className="flex items-center justify-end gap-3">
           <button
             type="button"
@@ -398,7 +390,7 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             onClick={handleProcess}
-            disabled={!fileName}
+            disabled={!file}
             className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Sparkles className="size-3.5" />
@@ -415,7 +407,7 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
         <Loader2 className="size-6 animate-spin text-zinc-400" />
         <p className="text-sm font-medium text-zinc-700">Reading your document…</p>
         <p className="text-xs text-zinc-400">
-          Extracting phases, tasks, and materials from {fileName}
+          Extracting phases, tasks, and materials from {file?.name}
         </p>
       </div>
     );
@@ -430,9 +422,9 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
           This would create {categories.length} categor
           {categories.length === 1 ? "y" : "ies"}, {taskCount} task
           {taskCount === 1 ? "" : "s"}, and {materialCount} material line
-          {materialCount === 1 ? "" : "s"}. AI extraction and saving to the
-          project aren&apos;t connected yet — this is a preview of the
-          intended flow.
+          {materialCount === 1 ? "" : "s"}. Saving this to the project
+          isn&apos;t connected yet — this is a preview of what
+          &quot;Confirm &amp; Create Tasks&quot; will do.
         </p>
         <button
           type="button"

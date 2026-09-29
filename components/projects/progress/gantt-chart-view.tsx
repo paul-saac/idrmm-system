@@ -5,7 +5,15 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
-import { ChevronDown, ChevronRight, HardHat, Plus, Redo2, Undo2 } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  HardHat,
+  Plus,
+  Redo2,
+  Sparkles,
+  Undo2,
+} from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
@@ -52,6 +60,43 @@ function phaseRowId(categoryId: number) {
   return `phase-${categoryId}`;
 }
 
+function nextDay(date: Date) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + 1);
+  return next;
+}
+
+function previousDay(date: Date) {
+  const prev = new Date(date);
+  prev.setDate(prev.getDate() - 1);
+  return prev;
+}
+
+// gantt-task-react's own bar-width math treats `end` as an *exclusive*
+// boundary, not the inclusive last day the rest of this app (and the
+// DB's own planned_end_date column) treats it as — confirmed directly
+// by reading taskXCoordinate in the compiled bundle: a task whose `end`
+// is exactly midnight on its own planned end date resolves to that
+// day's own left edge, so the bar visually stops one full day short of
+// covering it. Every GanttTask.end constructed for a real task/phase
+// bar (never a milestone — its start/end are intentionally kept equal,
+// a single point in time, and were never part of this problem) is
+// pushed one day later (see nextDay above) than the true planned end
+// date to compensate, purely so the bar's own rendered width covers the
+// whole of its last working day.
+//
+// trueEndDate is the matching inverse — every other reader of a row's
+// own `.end` in this file (the End date input, the Days column, drag/
+// typed-edit persistence, the Assign Workers date badge) goes through
+// this instead of reading `.end` directly, so nothing outside the bar's
+// own rendering ever sees or saves the shifted value. The one
+// deliberate exception is GanttTooltipContent's own Duration line,
+// which reads the raw (shifted) `task.end` on purpose — see its own
+// doc comment for why that one self-corrects instead.
+function trueEndDate(row: { type: GanttTask["type"]; end: Date }): Date {
+  return row.type === "milestone" ? row.end : previousDay(row.end);
+}
+
 // Every percent-complete display in this file goes through this —
 // exactly 2 decimal places, never rounded off to a whole number. See
 // computeAutoPercentComplete's own doc comment (lib/task-progress/
@@ -88,17 +133,24 @@ function GanttTooltipContent({
   fontSize: string;
   fontFamily: string;
 }) {
+  // Deliberately the raw (shifted) task.end, not trueEndDate(task) — see
+  // trueEndDate's own doc comment. A non-milestone task.end is already
+  // pushed one day past the true planned end for bar-rendering purposes,
+  // which happens to make this exact diff-in-days formula land on the
+  // correct inclusive day count without needing its own +1 the way
+  // daysBetween (the Days column's own version of this) does.
   const durationDays = Math.floor(
     (task.end.getTime() - task.start.getTime()) / 86_400_000
   );
   const headingSize = (parseInt(fontSize, 10) || 14) + 6;
+  const displayEnd = trueEndDate(task);
 
   return (
     <div className="_3T42e" style={{ fontSize, fontFamily }}>
       <b style={{ fontSize: `${headingSize}px` }}>
         {task.name}: {task.start.getDate()}-{task.start.getMonth() + 1}-
-        {task.start.getFullYear()} - {task.end.getDate()}-
-        {task.end.getMonth() + 1}-{task.end.getFullYear()}
+        {task.start.getFullYear()} - {displayEnd.getDate()}-
+        {displayEnd.getMonth() + 1}-{displayEnd.getFullYear()}
       </b>
       {durationDays !== 0 && (
         <p className="_29NTg">Duration: {durationDays} day(s)</p>
@@ -452,6 +504,7 @@ export function GanttChartView({
   taskProgressToday,
   categoryProgressToday,
   onOpenMaterialBreakdown,
+  onImportBom,
 }: {
   projectId: number;
   /** Each task's own percentComplete (see CostTask's own doc comment)
@@ -503,6 +556,12 @@ export function GanttChartView({
    * Task form's own "See All" button under Assigned Resources (see
    * SubtaskForm's own onViewMaterials prop). */
   onOpenMaterialBreakdown: (taskId: number) => void;
+  /** Opens the shared "Import with AI" modal — same modal, same open
+   * state (project-detail-view.tsx), as the entry point already in
+   * Material Breakdown's own footer (see MaterialBreakdownModalContent's
+   * own onImportBom). This toolbar button is a second, more visible
+   * entry point into the identical flow, not a separate one. */
+  onImportBom: () => void;
 }) {
   const router = useRouter();
   // Month is the default — unlike Week, its column labels are plain
@@ -1089,7 +1148,11 @@ export function GanttChartView({
         type: category.tasks.length > 0 ? "project" : "task",
         name: category.name,
         start: new Date(Math.min(...childDates.map((d) => d.start.getTime()))),
-        end: new Date(Math.max(...childDates.map((d) => d.end.getTime()))),
+        // +1 day for the bar's own rendering — see trueEndDate's own doc
+        // comment above. `childDates` itself stays the true, unshifted
+        // date throughout (it's also what feeds a task-less phase's own
+        // rollup Start/End cells further below).
+        end: nextDay(new Date(Math.max(...childDates.map((d) => d.end.getTime())))),
         progress: percentCompleteByCategoryId.get(category.id) ?? 0,
         hideChildren: collapsedPhaseIds.has(phaseRowId(category.id)),
       });
@@ -1107,7 +1170,9 @@ export function GanttChartView({
           type: task.isMilestone ? "milestone" : "task",
           name: task.name,
           start: task.isMilestone ? milestoneDate : childDates[i].start,
-          end: task.isMilestone ? milestoneDate : childDates[i].end,
+          // +1 day for the bar's own rendering — see trueEndDate's own
+          // doc comment above. A milestone's own end is never shifted.
+          end: task.isMilestone ? milestoneDate : nextDay(childDates[i].end),
           progress: task.percentComplete,
           project: phaseRowId(category.id),
           dependencies: task.predecessorTaskId
@@ -1170,7 +1235,20 @@ export function GanttChartView({
         ? pendingCategoryScheduleOverrides.get(category.id)
         : pendingScheduleOverrides.get(Number(row.id));
       if (!override) return row;
-      return { ...row, start: toDate(override.start), end: toDate(override.end) };
+      // override.start/end are always the true, unshifted ISO dates
+      // (see persistTaskDates/persistCategoryDates) — +1 day for the
+      // bar's own rendering here too, same as `tasks` above, so an
+      // optimistic override doesn't flash the bar back to its old
+      // (unshifted-looking) width for the moment before router.refresh()
+      // lands.
+      return {
+        ...row,
+        start: toDate(override.start),
+        end:
+          row.type === "milestone"
+            ? toDate(override.end)
+            : nextDay(toDate(override.end)),
+      };
     });
   }, [tasks, pendingScheduleOverrides, pendingCategoryScheduleOverrides, categoryById]);
 
@@ -1653,13 +1731,23 @@ export function GanttChartView({
     // from persistTaskDates below.
     const category = categoryById.get(task.id);
     if (category) {
-      return persistCategoryDates(category.id, toIsoDate(task.start), toIsoDate(task.end));
+      return persistCategoryDates(
+        category.id,
+        toIsoDate(task.start),
+        toIsoDate(trueEndDate(task))
+      );
     }
     if (!taskById.has(task.id)) return false; // defensive — every real dragged row should already be in taskById or categoryById
     // A milestone only moves (no resize handles on a zero-duration
     // diamond), so task.start/task.end are still equal after a drag —
     // both get persisted as the same planned_start_date/planned_end_date.
-    return persistTaskDates(Number(task.id), toIsoDate(task.start), toIsoDate(task.end));
+    // trueEndDate is a no-op for a milestone (its own end was never
+    // shifted to begin with), so this is safe for both row kinds.
+    return persistTaskDates(
+      Number(task.id),
+      toIsoDate(task.start),
+      toIsoDate(trueEndDate(task))
+    );
   }
 
   // Same idea as persistTaskDates above, one level up — a category's
@@ -1745,7 +1833,7 @@ export function GanttChartView({
       year < MIN_PLANNED_YEAR ||
       year > MAX_PLANNED_YEAR
     ) {
-      inputEl.value = toIsoDate(field === "start" ? row.start : row.end);
+      inputEl.value = toIsoDate(field === "start" ? row.start : trueEndDate(row));
       setScheduleError(
         `Invalid date range — planned dates must fall between ${MIN_PLANNED_YEAR} and ${MAX_PLANNED_YEAR}.`
       );
@@ -1757,7 +1845,7 @@ export function GanttChartView({
     const startIso =
       field === "start" ? value : isMilestone ? value : toIsoDate(row.start);
     const endIso =
-      field === "end" ? value : isMilestone ? value : toIsoDate(row.end);
+      field === "end" ? value : isMilestone ? value : toIsoDate(trueEndDate(row));
     persistTaskDates(Number(row.id), startIso, endIso);
   }
 
@@ -1780,7 +1868,7 @@ export function GanttChartView({
       year < MIN_PLANNED_YEAR ||
       year > MAX_PLANNED_YEAR
     ) {
-      inputEl.value = toIsoDate(field === "start" ? row.start : row.end);
+      inputEl.value = toIsoDate(field === "start" ? row.start : trueEndDate(row));
       setScheduleError(
         `Invalid date range — planned dates must fall between ${MIN_PLANNED_YEAR} and ${MAX_PLANNED_YEAR}.`
       );
@@ -1789,7 +1877,7 @@ export function GanttChartView({
 
     setScheduleError(null);
     const startIso = field === "start" ? value : toIsoDate(row.start);
-    const endIso = field === "end" ? value : toIsoDate(row.end);
+    const endIso = field === "end" ? value : toIsoDate(trueEndDate(row));
     persistCategoryDates(categoryId, startIso, endIso);
   }
 
@@ -2202,7 +2290,7 @@ export function GanttChartView({
           const isFiller = row.id.startsWith(FILLER_ROW_ID_PREFIX);
           const category = isProject ? categoryById.get(row.id) : undefined;
           const task = !isProject ? taskById.get(row.id) : undefined;
-          const days = daysBetween(row.start, row.end);
+          const days = daysBetween(row.start, trueEndDate(row));
           // A phase's Start/End only lock to a read-only rollup once it
           // actually has tasks to roll up — an empty one has nothing to
           // compute from, so it's directly editable instead, same as a
@@ -2562,21 +2650,24 @@ export function GanttChartView({
               >
                 {categoryDatesLocked ? (
                   // See the matching comment on the Start input above.
+                  // trueEndDate, not row.end directly — see its own doc
+                  // comment for why row.end is one day later than the
+                  // true planned end for a non-milestone row.
                   <input
-                    key={toIsoDate(row.end)}
+                    key={toIsoDate(trueEndDate(row))}
                     type="date"
                     readOnly
                     tabIndex={-1}
-                    defaultValue={toIsoDate(row.end)}
+                    defaultValue={toIsoDate(trueEndDate(row))}
                     aria-label={`${row.name} end date`}
                     className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
                   />
                 ) : isFiller ? null : (
                   <input
                     // See the matching comment on the Start input above.
-                    key={toIsoDate(row.end)}
+                    key={toIsoDate(trueEndDate(row))}
                     type="date"
-                    defaultValue={toIsoDate(row.end)}
+                    defaultValue={toIsoDate(trueEndDate(row))}
                     onFocus={(e) => {
                       e.currentTarget.dataset.cellActive = "true";
                     }}
@@ -2788,7 +2879,7 @@ export function GanttChartView({
                             categoryId: category.id,
                             name: category.name,
                             start: row.start,
-                            end: row.end,
+                            end: trueEndDate(row),
                           })
                         }
                         title="Assign workers"
@@ -2816,7 +2907,7 @@ export function GanttChartView({
                             taskId: task.id,
                             name: task.name,
                             start: row.start,
-                            end: row.end,
+                            end: trueEndDate(row),
                           })
                         }
                         title="Assign workers"
@@ -2962,11 +3053,11 @@ export function GanttChartView({
           border, same as adjacent bordered rows elsewhere in this
           chart. */}
       <div className="flex flex-col">
-        {/* Deliberately just Undo/Redo/Members — a reference toolbar
-            image with ~25 icons (text color, cut/copy/paste, zoom,
-            print, share, lock, settings, ...) was the original ask, but
-            none of those other actions have a real feature behind them
-            in this app, so they're not here as decoration. */}
+        {/* Deliberately just Undo/Redo/Members/Import — a reference
+            toolbar image with ~25 icons (text color, cut/copy/paste,
+            zoom, print, share, lock, settings, ...) was the original
+            ask, but none of those other actions have a real feature
+            behind them in this app, so they're not here as decoration. */}
         <div className="flex items-center gap-1 border border-t-2 border-zinc-200 border-t-zinc-900 bg-zinc-50 px-2 py-1.5">
           <button
             type="button"
@@ -3016,6 +3107,16 @@ export function GanttChartView({
             className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900"
           >
             <HardHat className="size-4" />
+          </button>
+          <div className="mx-1 h-5 w-px bg-zinc-200" />
+          <button
+            type="button"
+            onClick={onImportBom}
+            aria-label="Import with AI"
+            title="Import a document with AI"
+            className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900"
+          >
+            <Sparkles className="size-4" />
           </button>
         </div>
 

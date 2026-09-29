@@ -18,7 +18,7 @@ const SIZE_CLASS = {
 // the top-right edge and stretches full-height, reading as a sidebar —
 // see the className below for why. "centered" is a deliberate
 // deviation for a modal that should read as an ordinary dialog box
-// instead (e.g. Import Bill of Materials) — a normal rectangle sized
+// instead (e.g. Import with AI) — a normal rectangle sized
 // to its own content, centered in the viewport via the m-auto/inset-0
 // trick, capped at 85dvh so a tall step still scrolls internally
 // rather than growing past the viewport.

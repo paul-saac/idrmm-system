@@ -41,6 +41,7 @@ import { MaterialExpensesView } from "@/components/projects/expenses/material-ex
 import { EquipmentExpensesView } from "@/components/projects/expenses/equipment-expenses-view";
 import { OtherExpensesView } from "@/components/projects/expenses/other-expenses-view";
 import type {
+  MaterialBreakdownEntry,
   MaterialsOverviewCounts,
   MaterialUsageHistoryEntry,
   ProjectMaterial,
@@ -267,6 +268,7 @@ export function ProjectDetailView({
   materials,
   materialsCounts,
   materialUsageHistory,
+  materialBreakdownEntries,
   todayProcurement,
   materialRequests,
   fulfillableMaterialRequests,
@@ -298,6 +300,11 @@ export function ProjectDetailView({
   materials: ProjectMaterial[];
   materialsCounts: MaterialsOverviewCounts;
   materialUsageHistory: MaterialUsageHistoryEntry[];
+  /** Read-only reflection of the Cost Estimate Breakdown's own Material
+   * Breakdown modal — see listMaterialBreakdownEntries's own doc
+   * comment (lib/materials/data.ts), fetched alongside materials in
+   * page.tsx. */
+  materialBreakdownEntries: MaterialBreakdownEntry[];
   todayProcurement: TodayProcurementEntry[];
   materialRequests: MaterialRequestListItem[];
   /** Requests that can still receive a delivery — for the Add Daily
@@ -401,11 +408,15 @@ export function ProjectDetailView({
   // above this, but that's now redundant with the sticky project header,
   // which already shows all of it.
   const [costOverviewOpen, setCostOverviewOpen] = useState(true);
-  // Opens the shared "Import Bill of Materials" modal from the Material
-  // Breakdown modal's own footer (see MaterialBreakdownModalContent) —
-  // lifted up here rather than owned by CostEstimateView so the same
-  // modal instance could still be reused if another entry point needs
-  // one later.
+  // Opens the shared "Import with AI" modal from the Material Breakdown
+  // modal's own footer (see MaterialBreakdownModalContent) — lifted up
+  // here rather than owned by CostEstimateView so the same modal
+  // instance could still be reused if another entry point needs one
+  // later (now also the Gantt Chart's own toolbar — see onImportBom
+  // below). Still named "Bom" internally (the file/component/action
+  // names) even though the modal no longer calls itself that anywhere a
+  // user sees — a Bill of Materials just happens to be the first
+  // document shape this was built for, not the only one it accepts.
   const [importBomModalOpen, setImportBomModalOpen] = useState(false);
   // The Material Breakdown modal's own open state, lifted up here (same
   // reasoning as importBomModalOpen above) since the Gantt Chart's own
@@ -631,6 +642,7 @@ export function ProjectDetailView({
             <MaterialsMonitoringView
               projectId={project.id}
               materials={materials}
+              materialBreakdownEntries={materialBreakdownEntries}
               toolbarSlot={toolbarSlotEl}
             />
           ) : activeMaterialsSubTab === "usage-logs" ? (
@@ -741,7 +753,16 @@ export function ProjectDetailView({
                     projectId={project.id}
                     estimate={costEstimate}
                     defaultLaborCostPercent={project.defaultLaborCostPercent}
-                    onImportBom={() => setImportBomModalOpen(true)}
+                    onImportBom={() => {
+                      // Closes Material Breakdown in the same click that
+                      // opens Import with AI — otherwise both dialogs
+                      // render at once (two stacked <dialog> backdrops),
+                      // since each Modal here is its own independent
+                      // open/close state. Same non-stacking pattern as
+                      // the Delete Project confirmation modal.
+                      setMaterialBreakdownOpen(false);
+                      setImportBomModalOpen(true);
+                    }}
                     materialBreakdownOpen={materialBreakdownOpen}
                     materialBreakdownHighlightTaskId={materialBreakdownHighlightTaskId}
                     onOpenMaterialBreakdown={() => openMaterialBreakdown()}
@@ -764,6 +785,7 @@ export function ProjectDetailView({
               taskProgressToday={taskProgressToday}
               categoryProgressToday={categoryProgressToday}
               onOpenMaterialBreakdown={openMaterialBreakdown}
+              onImportBom={() => setImportBomModalOpen(true)}
             />
           </div>
         )}
@@ -771,7 +793,7 @@ export function ProjectDetailView({
         <Modal
           open={importBomModalOpen}
           onClose={() => setImportBomModalOpen(false)}
-          title="Import Bill of Materials"
+          title="Import with AI"
           variant="centered"
         >
           <ImportBomModalContent onClose={() => setImportBomModalOpen(false)} />

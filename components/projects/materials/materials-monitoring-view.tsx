@@ -9,7 +9,11 @@ import {
   deleteProjectMaterial,
   type MaterialActionState,
 } from "@/lib/materials/actions";
-import type { MaterialStatus, ProjectMaterial } from "@/lib/materials/data";
+import type {
+  MaterialBreakdownEntry,
+  MaterialStatus,
+  ProjectMaterial,
+} from "@/lib/materials/data";
 
 const STATUS_FILTERS: { value: MaterialStatus | "all"; label: string }[] = [
   { value: "all", label: "All Statuses" },
@@ -47,6 +51,10 @@ function formatDate(iso: string) {
     year: "numeric",
   });
 }
+
+type CombinedRow =
+  | { kind: "stock"; material: ProjectMaterial }
+  | { kind: "breakdown"; entry: MaterialBreakdownEntry };
 
 const deleteInitialState: MaterialActionState = {};
 
@@ -99,10 +107,19 @@ function DeleteMaterialButton({
 export function MaterialsMonitoringView({
   projectId,
   materials,
+  materialBreakdownEntries,
   toolbarSlot,
 }: {
   projectId: number;
   materials: ProjectMaterial[];
+  /** Read-only reflection of the Cost Estimate Breakdown's own Material
+   * Breakdown modal — see listMaterialBreakdownEntries's own doc
+   * comment. A separate *data* source from `materials` above (real
+   * project_materials stock vs. a free-text cost-planning line, still
+   * not linked to each other), but shown together in the same Material
+   * Record Table below (see CombinedRow) rather than a separate table,
+   * per an explicit request. */
+  materialBreakdownEntries: MaterialBreakdownEntry[];
   /** DOM node (rendered by the parent's sub-tabs row) this view's own
    * "Add Material" button portals into — see SubTabsRow in
    * project-detail-view.tsx. */
@@ -116,19 +133,47 @@ export function MaterialsMonitoringView({
     { mode: "add" } | { mode: "edit"; material: ProjectMaterial } | null
   >(null);
 
+  // One shared list, one shared table — see MaterialsMonitoringView's own
+  // doc comment on materialBreakdownEntries for why these two stay
+  // separate *data* sources even while sharing this one *view*. Stock
+  // rows first (already sorted newest-updated-first), breakdown rows
+  // appended after.
+  const combinedRows = useMemo<CombinedRow[]>(
+    () => [
+      ...materials.map((material): CombinedRow => ({ kind: "stock", material })),
+      ...materialBreakdownEntries.map(
+        (entry): CombinedRow => ({ kind: "breakdown", entry })
+      ),
+    ],
+    [materials, materialBreakdownEntries]
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return materials.filter((material) => {
+    return combinedRows.filter((row) => {
+      // Status is a stock-only concept (available/low-stock/fully-
+      // consumed) — a breakdown row has no such state, so it only shows
+      // while every status is included, not a specific one.
       const matchesStatus =
-        statusFilter === "all" || material.status === statusFilter;
-      const matchesQuery =
-        !q ||
-        material.materialName.toLowerCase().includes(q) ||
-        material.materialCode.toLowerCase().includes(q) ||
-        (material.specification ?? "").toLowerCase().includes(q);
-      return matchesStatus && matchesQuery;
+        statusFilter === "all" ||
+        (row.kind === "stock" && row.material.status === statusFilter);
+      if (!matchesStatus) return false;
+      if (!q) return true;
+      if (row.kind === "stock") {
+        return (
+          row.material.materialName.toLowerCase().includes(q) ||
+          row.material.materialCode.toLowerCase().includes(q) ||
+          (row.material.specification ?? "").toLowerCase().includes(q)
+        );
+      }
+      return (
+        row.entry.materialName.toLowerCase().includes(q) ||
+        (row.entry.specification ?? "").toLowerCase().includes(q) ||
+        row.entry.taskName.toLowerCase().includes(q) ||
+        row.entry.categoryName.toLowerCase().includes(q)
+      );
     });
-  }, [materials, statusFilter, query]);
+  }, [combinedRows, statusFilter, query]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -183,7 +228,7 @@ export function MaterialsMonitoringView({
 
         {filtered.length === 0 ? (
           <p className="py-10 text-center text-sm text-zinc-400">
-            {materials.length === 0
+            {combinedRows.length === 0
               ? "No materials recorded yet."
               : "No materials match your filters."}
           </p>
@@ -192,7 +237,6 @@ export function MaterialsMonitoringView({
             <table className="w-full text-left text-sm">
               <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
                 <tr>
-                  <th className="px-4 py-2.5">Material ID</th>
                   <th className="px-4 py-2.5">Material Name</th>
                   <th className="px-4 py-2.5">Specification / Size</th>
                   <th className="px-4 py-2.5">Quantity</th>
@@ -203,48 +247,83 @@ export function MaterialsMonitoringView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {filtered.map((material) => (
-                  <tr key={material.id} className="transition-colors hover:bg-zinc-50">
-                    <td className="px-4 py-2.5 font-medium text-zinc-900">
-                      {material.materialCode}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-700">
-                      {material.materialName}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {material.specification || "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {String(material.quantity).padStart(2, "0")}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {material.unit || "—"}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <StatusBadge status={material.status} />
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {formatDate(material.lastUpdated)}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => setFormModal({ mode: "edit", material })}
-                          aria-label="View material"
-                          className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
-                        >
-                          <Eye className="size-3.5" />
-                        </button>
-                        <DeleteMaterialButton
-                          materialId={material.id}
-                          projectId={projectId}
-                          materialName={material.materialName}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((row) =>
+                  row.kind === "stock" ? (
+                    <tr
+                      key={`stock-${row.material.id}`}
+                      className="transition-colors hover:bg-zinc-50"
+                    >
+                      <td className="px-4 py-2.5 font-medium text-zinc-900">
+                        {row.material.materialName}
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-600">
+                        {row.material.specification || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-600">
+                        {String(row.material.quantity).padStart(2, "0")}
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-600">
+                        {row.material.unit || "—"}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <StatusBadge status={row.material.status} />
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-600">
+                        {formatDate(row.material.lastUpdated)}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFormModal({ mode: "edit", material: row.material })
+                            }
+                            aria-label="View material"
+                            className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                          >
+                            <Eye className="size-3.5" />
+                          </button>
+                          <DeleteMaterialButton
+                            materialId={row.material.id}
+                            projectId={projectId}
+                            materialName={row.material.materialName}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    <tr
+                      key={`breakdown-${row.entry.id}`}
+                      className="transition-colors hover:bg-zinc-50"
+                    >
+                      <td className="px-4 py-2.5">
+                        <span className="font-medium text-zinc-900">
+                          {row.entry.materialName}
+                        </span>
+                        {/* No dedicated Category/Task columns — this
+                            table is shared with real stock rows, which
+                            have neither. Kept as a small subtitle instead
+                            so the Material Breakdown context isn't lost
+                            entirely. */}
+                        <p className="text-xs text-zinc-400">
+                          {row.entry.categoryName} → {row.entry.taskName}
+                        </p>
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-600">
+                        {row.entry.specification || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-600">
+                        {String(row.entry.plannedQuantity).padStart(2, "0")}
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-600">
+                        {row.entry.unit || "—"}
+                      </td>
+                      <td className="px-4 py-2.5 text-zinc-400">—</td>
+                      <td className="px-4 py-2.5 text-zinc-400">—</td>
+                      <td className="px-4 py-2.5 text-right text-zinc-400">—</td>
+                    </tr>
+                  )
+                )}
               </tbody>
             </table>
           </div>

@@ -40,7 +40,7 @@ const COLUMN_COUNT = 9;
  * The Material column is the one deliberate exception: clicking its own
  * header (see MaterialBreakdownModalContent's own doc comment) opens a
  * project-wide, *editable* view of every task's planned material
- * list — the intended landing spot for a Bill of Materials import, and
+ * list — the intended landing spot for an AI-imported document, and
  * for hand-editing that same list without one. That's editing a task's
  * material sub-list, not the task itself, so it doesn't reopen the
  * "only Gantt edits tasks" rule above. Labor's own header opens the
@@ -64,7 +64,7 @@ export function CostEstimateView({
    * updateProjectDefaultLaborCostPercent's own doc comment) — forwarded
    * straight down to LaborBreakdownModalContent, which owns editing it. */
   defaultLaborCostPercent: number | null;
-  /** Opens the shared "Import Bill of Materials" modal — owned by
+  /** Opens the shared "Import with AI" modal — owned by
    * project-detail-view.tsx, the nearest common ancestor, in case
    * another entry point ever needs the same modal instance. Forwarded
    * straight down to MaterialBreakdownModalContent's own footer. */
@@ -163,7 +163,7 @@ export function CostEstimateView({
             No cost estimate yet
           </p>
           <p className="mt-1 text-sm text-zinc-400">
-            Add a phase and task items, or import a Bill of Materials, from
+            Add a phase and task items, or import a document with AI, from
             the Gantt Chart below to start building the cost breakdown
             structure.
           </p>

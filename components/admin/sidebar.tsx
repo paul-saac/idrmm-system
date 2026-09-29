@@ -39,13 +39,19 @@ export function AdminSidebar({
     // hovering, which is worse than a reflow on a dense dashboard like
     // this one's project detail page.
     //
-    // Explicit Tailwind-default zinc-900 rather than the `bg-zinc-900`
-    // utility — globals.css remaps that token to the app's warmer
-    // #3B3939 "black", but the sidebar keeps the original cold near-black.
+    // bg-zinc-900 — the app's own warm #3B3939 "black" (see globals.css's
+    // own --color-zinc-900 override), same token the project header and
+    // every other "black" surface already use. The sidebar used to
+    // deliberately keep Tailwind's original cold near-black (#222225)
+    // instead, per an earlier explicit choice — now aligned per a later
+    // explicit request instead.
     <aside
       onMouseEnter={() => setCollapsed(false)}
       onMouseLeave={() => setCollapsed(true)}
-      className={`flex h-full shrink-0 flex-col bg-[#222225] transition-[width] duration-300 ease-in-out ${
+      // border-zinc-950 — the app's own slightly-darker warm black (see
+      // globals.css), reads as a clean, visible edge against the
+      // sidebar's own zinc-900 without introducing an unrelated color.
+      className={`flex h-full shrink-0 flex-col border-r-2 border-zinc-950 bg-zinc-900 transition-[width] duration-300 ease-in-out ${
         collapsed ? "w-20" : "w-64"
       }`}
     >

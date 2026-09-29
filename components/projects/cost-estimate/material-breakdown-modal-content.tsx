@@ -217,11 +217,11 @@ export function MaterialBreakdownModalContent({
   projectId: number;
   categories: CostCategory[];
   onClose: () => void;
-  /** Opens the shared "Import Bill of Materials" modal — owned by
+  /** Opens the shared "Import with AI" modal — owned by
    * project-detail-view.tsx, forwarded down through CostEstimateView.
-   * Moved here from the Gantt Chart toolbar since this is the actual
-   * landing spot for an imported BOM (see CostEstimateView's own doc
-   * comment on the Material column). */
+   * Also reachable from the Gantt Chart's own toolbar (see gantt-chart-
+   * view.tsx's own onImportBom) — this is the actual landing spot either
+   * way, see CostEstimateView's own doc comment on the Material column. */
   onImportBom: () => void;
   /** Scrolls to and briefly flashes this task's own row once the modal
    * opens — set when arriving here via the Edit Task form's own "See
