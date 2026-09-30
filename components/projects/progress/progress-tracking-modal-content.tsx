@@ -2,148 +2,167 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
-import type { ProjectMaterial } from "@/lib/materials/data";
 import type { TaskProgressToday } from "@/lib/task-progress/data";
+import {
+  computeProgressBreakdown,
+  type PlannedMaterial,
+} from "@/lib/task-progress/calculate";
 
 type ProgressActionResult = { error?: string; success?: boolean };
 
-let keySeq = 0;
-function nextKey() {
-  keySeq += 1;
-  return `usage-${keySeq}`;
+function formatPercent(value: number | null) {
+  return value === null ? "—" : `${value.toFixed(0)}%`;
 }
 
-type DraftMaterialUsage = {
-  key: string;
-  materialId: number | null;
-  quantity: string;
-};
+function formatQuantity(value: number) {
+  return value.toLocaleString("en-PH", { maximumFractionDigits: 2 });
+}
 
 /**
- * Opened by a single click on a task's own bar in the Gantt Chart (see
- * handleBarClick in gantt-chart-view.tsx) — the Progress Tracking
- * Override: "the user inputs how much quantity was completed, materials
- * were consumed, and labor was spent within the day." Percent complete
- * itself is never typed directly here (or anywhere — see
- * CostEstimateView's own doc comment on why the old freely-typable cell
- * was removed): quantity completed is what actually drives it
- * (quantityCompleted / estimatedQuantity, the same relationship the
- * separate Daily-Log-driven Progress Overview tab already uses),
- * materials/labor are recorded alongside it for accountability and — for
- * materials specifically — a real project_materials stock deduction on
- * save (see recordTaskProgress/recordCategoryProgress), not additional
- * inputs to the percentage formula itself: consuming materials or
- * logging a crew isn't proof of finished work the way a completed
- * quantity is.
+ * Progress Tracking Override for one task (or task-less category), for
+ * today. Materials used (against the task's own Material Breakdown
+ * lines), workers, and elapsed time each produce a component percent;
+ * their blend is the task's computed progress, shown as accomplished
+ * weight (task weight x percent complete). Typing an accomplished weight
+ * directly overrides the blend; editing materials or workers reverts it
+ * to computed, same rule Material Breakdown's own Amount cells follow.
  *
- * Generalized to accept either a task or a task-less category (see
- * gantt-chart-view.tsx's own `progressModal` discriminated union) — this
- * component itself only ever needs the entity's id, estimatedQuantity/
- * unit, and an `onSave` callback the caller wires to either
- * recordTaskProgress or recordCategoryProgress, same "caller supplies
- * the save action" shape AssignWorkersModalContent already uses.
- *
- * Always operates on *today* (see recordTaskProgress's own doc comment
- * — no date picker, this isn't a historical backfill tool). Reopening
- * later the same day pre-fills whatever was already saved today
- * (progressToday.today), so correcting a same-day mistake is just
- * editing and resaving, not creating a duplicate entry.
+ * The override is typed in weight points but saved as a task percent
+ * (typed / weight x 100), so re-weighting the task later rescales its
+ * accomplished share instead of changing how complete the work is.
  */
 export function ProgressTrackingModalContent({
-  estimatedQuantity,
-  unit,
-  materials,
+  weight,
+  plannedStartDate,
+  plannedEndDate,
+  plannedMaterials,
+  plannedWorkerCount,
+  workingDays,
   progressToday,
   onSave,
   onClose,
 }: {
-  estimatedQuantity: number;
-  unit: string | null;
-  materials: ProjectMaterial[];
+  weight: number;
+  plannedStartDate: string | null;
+  plannedEndDate: string | null;
+  plannedMaterials: PlannedMaterial[];
+  plannedWorkerCount: number;
+  workingDays: readonly number[];
   progressToday: TaskProgressToday;
   onSave: (input: {
-    quantityCompletedToday: number;
     laborHeadcount: number;
-    materialsUsed: { materialId: number; quantity: number }[];
+    materialsUsed: { name: string; unit: string | null; quantity: number }[];
+    percentCompleteOverride: number | null;
   }) => Promise<ProgressActionResult>;
   onClose: () => void;
 }) {
   const router = useRouter();
-  const priorCumulative =
-    progressToday.cumulativeQuantityCompleted -
-    (progressToday.today?.quantityCompleted ?? 0);
+  const savedToday = progressToday.today;
 
-  const [quantityToday, setQuantityToday] = useState(
-    progressToday.today ? String(progressToday.today.quantityCompleted) : ""
+  const [laborInput, setLaborInput] = useState(
+    savedToday ? String(savedToday.laborHeadcount) : ""
   );
-  const [laborHeadcount, setLaborHeadcount] = useState(
-    progressToday.today ? String(progressToday.today.laborHeadcount) : ""
+  const [materialInputs, setMaterialInputs] = useState<Record<string, string>>(
+    () => {
+      const initial: Record<string, string> = {};
+      for (const material of plannedMaterials) {
+        const saved = savedToday?.materialUsage[material.key];
+        initial[material.key] = saved ? String(saved) : "";
+      }
+      return initial;
+    }
   );
-  const [materialRows, setMaterialRows] = useState<DraftMaterialUsage[]>(
-    () =>
-      progressToday.today?.materials.map((m) => ({
-        key: nextKey(),
-        materialId: m.materialId,
-        quantity: String(m.quantity),
-      })) ?? []
+  const [accomplishedInput, setAccomplishedInput] = useState(
+    savedToday?.percentCompleteOverride != null && weight > 0
+      ? ((savedToday.percentCompleteOverride / 100) * weight).toFixed(2)
+      : ""
   );
+  const [accomplishedFocused, setAccomplishedFocused] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const materialById = new Map(materials.map((m) => [m.id, m]));
+  const parsedLabor = Number(laborInput) || 0;
+  const priorLabor =
+    progressToday.cumulativeLaborHeadcount - (savedToday?.laborHeadcount ?? 0);
 
-  function addMaterialRow() {
-    setMaterialRows((prev) => [
-      ...prev,
-      { key: nextKey(), materialId: materials[0]?.id ?? null, quantity: "" },
-    ]);
+  // Every material's running total including what's typed for today —
+  // today's already-saved amount is swapped out, not double-counted.
+  const liveMaterialUsage: Record<string, number> = {};
+  for (const material of plannedMaterials) {
+    const prior =
+      (progressToday.cumulativeMaterialUsage[material.key] ?? 0) -
+      (savedToday?.materialUsage[material.key] ?? 0);
+    liveMaterialUsage[material.key] =
+      prior + (Number(materialInputs[material.key]) || 0);
   }
 
-  function updateMaterialRow(key: string, patch: Partial<DraftMaterialUsage>) {
-    setMaterialRows((prev) =>
-      prev.map((row) => (row.key === key ? { ...row, ...patch } : row))
-    );
+  const trimmedAccomplished = accomplishedInput.trim();
+  const parsedAccomplished =
+    trimmedAccomplished === "" ? null : Number(trimmedAccomplished);
+  const overridePercent =
+    weight > 0 && parsedAccomplished !== null && Number.isFinite(parsedAccomplished)
+      ? (parsedAccomplished / weight) * 100
+      : null;
+
+  // Same shared function getCostEstimate calls server-side, so this
+  // preview always matches what's shown on the Gantt chart after saving.
+  const breakdown = computeProgressBreakdown({
+    plannedStartDate,
+    plannedEndDate,
+    plannedMaterials,
+    plannedWorkerCount,
+    workingDays,
+    anchor: {
+      cumulativeMaterialUsage: liveMaterialUsage,
+      cumulativeLaborHeadcount: priorLabor + parsedLabor,
+      latestPercentCompleteOverride: overridePercent,
+    },
+    today: new Date(),
+  });
+
+  const accomplishedValue = ((breakdown.blendedPercent / 100) * weight).toFixed(2);
+
+  function handleMaterialChange(key: string, value: string) {
+    setMaterialInputs((prev) => ({ ...prev, [key]: value }));
+    setAccomplishedInput("");
   }
 
-  function removeMaterialRow(key: string) {
-    setMaterialRows((prev) => prev.filter((row) => row.key !== key));
+  function handleLaborChange(value: string) {
+    setLaborInput(value);
+    setAccomplishedInput("");
   }
-
-  const parsedQuantityToday = Number(quantityToday) || 0;
-  const newCumulative = priorCumulative + parsedQuantityToday;
-  // Exact fraction, not rounded — see computeAutoPercentComplete's own
-  // doc comment (lib/task-progress/calculate.ts) for why; formatted for
-  // display only at the point it's rendered below.
-  const previewPercent =
-    estimatedQuantity > 0
-      ? Math.min(100, Math.max(0, (newCumulative / estimatedQuantity) * 100))
-      : 0;
 
   async function handleSave() {
     setError(null);
-    if (parsedQuantityToday < 0) {
-      setError("Quantity completed can't be negative.");
+    if (parsedLabor < 0) {
+      setError("Workers can't be negative.");
       return;
     }
-    const headcount = Number(laborHeadcount) || 0;
-    if (headcount < 0) {
-      setError("Labor headcount can't be negative.");
+    const materialsUsed = plannedMaterials.map((material) => ({
+      name: material.name,
+      unit: material.unit,
+      quantity: Number(materialInputs[material.key]) || 0,
+    }));
+    if (materialsUsed.some((material) => material.quantity < 0)) {
+      setError("Material quantity used can't be negative.");
       return;
     }
-    const materialsUsed: { materialId: number; quantity: number }[] = [];
-    for (const row of materialRows) {
-      if (row.materialId === null) continue;
-      const quantity = Number(row.quantity) || 0;
-      if (quantity <= 0) continue;
-      materialsUsed.push({ materialId: row.materialId, quantity });
+    if (
+      trimmedAccomplished !== "" &&
+      (parsedAccomplished === null ||
+        !Number.isFinite(parsedAccomplished) ||
+        parsedAccomplished < 0 ||
+        parsedAccomplished > weight)
+    ) {
+      setError(`Accomplished weight must be between 0 and ${weight.toFixed(2)}.`);
+      return;
     }
 
     setPending(true);
     const result = await onSave({
-      quantityCompletedToday: parsedQuantityToday,
-      laborHeadcount: headcount,
+      laborHeadcount: parsedLabor,
       materialsUsed,
+      percentCompleteOverride: overridePercent,
     });
     setPending(false);
     if (result.error) {
@@ -156,121 +175,197 @@ export function ProgressTrackingModalContent({
 
   return (
     <div className="flex h-full min-h-full flex-col gap-5">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor="progress-quantity"
-            className="text-xs font-medium text-zinc-500"
-          >
-            Quantity completed today
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              id="progress-quantity"
-              type="number"
-              min={0}
-              value={quantityToday}
-              onChange={(e) => setQuantityToday(e.target.value)}
-              placeholder="0"
-              className="w-full min-w-0 rounded border border-zinc-200 px-2.5 py-1.5 text-sm"
-            />
-            {unit && <span className="shrink-0 text-sm text-zinc-400">{unit}</span>}
-          </div>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-zinc-600">Materials used today</p>
+          <span className="text-xs font-semibold text-zinc-900">
+            {formatPercent(breakdown.materialsPercent)}
+          </span>
         </div>
+        {plannedMaterials.length === 0 ? (
+          <div className="rounded border border-dashed border-zinc-200 px-3 py-2 text-xs text-zinc-400">
+            No materials assigned — add them in Material Breakdown to log
+            usage here.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-md border border-zinc-200">
+            <table className="w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col />
+                <col style={{ width: 96 }} />
+                <col style={{ width: 96 }} />
+                <col style={{ width: 132 }} />
+              </colgroup>
+              <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
+                <tr>
+                  <th className="border-r border-b border-zinc-200 px-3 py-2">
+                    Material
+                  </th>
+                  <th className="border-r border-b border-zinc-200 px-3 py-2 text-right">
+                    Planned
+                  </th>
+                  <th className="border-r border-b border-zinc-200 px-3 py-2 text-right">
+                    Total used
+                  </th>
+                  <th className="border-b border-zinc-200 px-3 py-2 text-right">
+                    Used today
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {plannedMaterials.map((material) => {
+                  const unitSuffix = material.unit ? ` ${material.unit}` : "";
+                  return (
+                    <tr
+                      key={material.key}
+                      className="border-b border-zinc-100 last:border-b-0"
+                    >
+                      <td
+                        className="truncate border-r border-zinc-200 px-3 py-1.5 text-xs text-zinc-700"
+                        title={material.name}
+                      >
+                        {material.name}
+                      </td>
+                      <td className="border-r border-zinc-200 px-3 py-1.5 text-right text-xs text-zinc-500">
+                        {formatQuantity(material.plannedQuantity)}
+                        {unitSuffix}
+                      </td>
+                      <td className="border-r border-zinc-200 px-3 py-1.5 text-right text-xs text-zinc-500">
+                        {formatQuantity(liveMaterialUsage[material.key] ?? 0)}
+                        {unitSuffix}
+                      </td>
+                      <td className="px-1.5 py-1">
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            value={materialInputs[material.key] ?? ""}
+                            onChange={(e) =>
+                              handleMaterialChange(material.key, e.target.value)
+                            }
+                            placeholder="0"
+                            aria-label={`${material.name} used today`}
+                            className="w-full min-w-0 rounded border border-zinc-200 px-2 py-1 text-right text-sm"
+                          />
+                          {material.unit && (
+                            <span className="shrink-0 text-xs text-zinc-400">
+                              {material.unit}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-zinc-600">Labor</p>
+            <span className="text-xs font-semibold text-zinc-900">
+              {formatPercent(breakdown.laborPercent)}
+            </span>
+          </div>
           <label
             htmlFor="progress-labor"
             className="text-xs font-medium text-zinc-500"
           >
-            Labor spent today
+            Workers today
           </label>
           <div className="flex items-center gap-2">
             <input
               id="progress-labor"
               type="number"
               min={0}
-              value={laborHeadcount}
-              onChange={(e) => setLaborHeadcount(e.target.value)}
+              value={laborInput}
+              onChange={(e) => handleLaborChange(e.target.value)}
               placeholder="0"
               className="w-full min-w-0 rounded border border-zinc-200 px-2.5 py-1.5 text-sm"
             />
             <span className="shrink-0 text-sm text-zinc-400">workers</span>
           </div>
         </div>
-      </div>
 
-      <div className="flex flex-col gap-2">
-        <p className="text-xs font-medium text-zinc-500">Materials consumed today</p>
-        {materialRows.length > 0 && (
-          <div className="flex flex-col gap-2">
-            {materialRows.map((row) => {
-              const material = row.materialId !== null ? materialById.get(row.materialId) : undefined;
-              return (
-                <div key={row.key} className="flex items-center gap-2">
-                  <select
-                    value={row.materialId ?? ""}
-                    onChange={(e) =>
-                      updateMaterialRow(row.key, {
-                        materialId: e.target.value ? Number(e.target.value) : null,
-                      })
-                    }
-                    className="min-w-0 flex-1 rounded border border-zinc-200 px-2.5 py-1.5 text-sm"
-                  >
-                    {materials.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.materialName}
-                      </option>
-                    ))}
-                  </select>
-                  <input
-                    type="number"
-                    min={0}
-                    value={row.quantity}
-                    onChange={(e) =>
-                      updateMaterialRow(row.key, { quantity: e.target.value })
-                    }
-                    placeholder="Qty"
-                    className="w-24 rounded border border-zinc-200 px-2.5 py-1.5 text-sm"
-                  />
-                  <span className="w-12 shrink-0 text-xs text-zinc-400">
-                    {material?.unit ?? ""}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeMaterialRow(row.key)}
-                    aria-label="Remove material"
-                    className="shrink-0 cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-              );
-            })}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-zinc-600">Time</p>
+            <span className="text-xs font-semibold text-zinc-900">
+              {formatPercent(breakdown.timePercent)}
+            </span>
           </div>
-        )}
-        {materials.length === 0 ? (
-          <p className="text-xs text-zinc-400">
-            No materials recorded for this project yet — add some from the
-            Materials Monitoring tab first.
+          <p className="text-xs font-medium text-zinc-500">
+            Elapsed (from schedule)
           </p>
-        ) : (
-          <button
-            type="button"
-            onClick={addMaterialRow}
-            className="flex cursor-pointer items-center gap-1 self-start text-xs font-medium text-zinc-500 transition hover:text-zinc-800"
-          >
-            <Plus className="size-3.5" />
-            Add material
-          </button>
-        )}
+          {breakdown.totalWorkingDays !== null ? (
+            <div className="rounded border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-600">
+              {breakdown.elapsedWorkingDays} of {breakdown.totalWorkingDays} days
+            </div>
+          ) : (
+            <div className="rounded border border-dashed border-zinc-200 px-2.5 py-1.5 text-xs text-zinc-400">
+              No planned dates yet
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex items-center justify-between rounded-md bg-zinc-50 px-3 py-2 text-sm">
-        <span className="font-medium text-zinc-500">New percent complete</span>
-        <span className="font-semibold text-zinc-900">
-          {previewPercent.toFixed(2)}%
-        </span>
+      <div className="flex flex-col gap-1.5 rounded-md bg-zinc-50 px-3 py-3 text-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5">
+            <label
+              htmlFor="progress-accomplished"
+              className="font-medium text-zinc-600"
+            >
+              Accomplished weight
+            </label>
+            {breakdown.isOverridden && (
+              <>
+                <span className="rounded bg-zinc-200 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600">
+                  manual
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAccomplishedInput("")}
+                  className="cursor-pointer text-[11px] font-medium text-zinc-400 underline-offset-2 transition hover:text-zinc-700 hover:underline"
+                >
+                  Reset
+                </button>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <input
+              id="progress-accomplished"
+              type="text"
+              inputMode="decimal"
+              disabled={weight <= 0}
+              value={
+                accomplishedFocused && accomplishedInput !== ""
+                  ? accomplishedInput
+                  : accomplishedValue
+              }
+              onFocus={() => setAccomplishedFocused(true)}
+              onBlur={() => setAccomplishedFocused(false)}
+              onChange={(e) => setAccomplishedInput(e.target.value)}
+              className="w-20 rounded border border-zinc-200 bg-white px-2 py-1 text-right text-sm font-semibold text-zinc-900 disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-zinc-400"
+            />
+            <span className="text-zinc-400">/ {weight.toFixed(2)}</span>
+          </div>
+        </div>
+        <div className="flex items-start justify-between gap-3 text-xs">
+          <span className="text-zinc-400">
+            {weight > 0
+              ? "Type a value to override, or leave it following Materials, Labor, and Time."
+              : "Assign this task a weight in the Gantt chart's Weight column first."}
+          </span>
+          <span className="shrink-0 font-semibold text-zinc-700">
+            {breakdown.blendedPercent.toFixed(2)}% complete
+          </span>
+        </div>
       </div>
 
       {error && (

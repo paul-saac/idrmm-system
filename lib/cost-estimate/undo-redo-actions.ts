@@ -1,8 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 import {
   restoreGanttSnapshot,
   getGanttUndoRedoState,
@@ -11,12 +11,6 @@ import {
 } from "@/lib/cost-estimate/undo-redo";
 import { getCostEstimate } from "@/lib/cost-estimate/data";
 import type { CostEstimateActionState } from "@/lib/cost-estimate/actions";
-
-async function requireAdmin() {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") return null;
-  return profile;
-}
 
 /**
  * Shared by undoGanttAction/redoGanttAction below — they only differ in
@@ -29,7 +23,7 @@ async function moveGanttHistory(
   projectId: number,
   direction: "undo" | "redo"
 ): Promise<CostEstimateActionState> {
-  const profile = await requireAdmin();
+  const profile = await requireProjectAccess(projectId);
   if (!profile) {
     return { error: "You are not authorized to manage cost estimates." };
   }
@@ -86,7 +80,7 @@ async function moveGanttHistory(
     .update({ gantt_undo_cursor_id: target.id })
     .eq("id", projectId);
 
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProjectPaths(projectId);
 
   // Fetched here, in the same round trip, so the Gantt Chart can show
   // the actual restored schedule the instant this action resolves —
@@ -178,7 +172,7 @@ export async function redoGanttAction(
  */
 export async function resetGanttHistory(projectId: number): Promise<void> {
   try {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) return;
 
     const supabase = await createClient();
@@ -210,7 +204,7 @@ export async function resetGanttHistory(projectId: number): Promise<void> {
       .update({ gantt_undo_cursor_id: cursorId })
       .eq("id", projectId);
 
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
   } catch (error) {
     console.error("[resetGanttHistory] unexpected error", error);
   }

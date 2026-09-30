@@ -8,9 +8,13 @@ import { Trash2, LayoutGrid, CircleDollarSign, CalendarDays, PiggyBank, ChevronD
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { LogoutButton } from "@/components/auth/logout-button";
+import { usePortal } from "@/components/portal/portal-context";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
-import { ImportBomModalContent } from "@/components/projects/cost-estimate/import-bom-modal-content";
+import {
+  ImportBomModalContent,
+  type ImportBomStep,
+} from "@/components/projects/cost-estimate/import-bom-modal-content";
 import { ProgressView } from "@/components/projects/progress/progress-view";
 // gantt-task-react renders its timeline as an SVG sized from
 // client-measured container layout, computed post-mount — loaded with
@@ -358,11 +362,19 @@ export function ProjectDetailView({
     ? (tabParam as MainTab)
     : "overview";
 
+  // In the foreman portal the project itself is read-only (no Edit/Delete
+  // Project), and — DAILY LOGS ON HOLD — the Daily Logs sub-tab is left out
+  // entirely, even for a deep link straight into it.
+  const { basePath, isAdmin } = usePortal();
+  const progressSubTabs = isAdmin
+    ? PROGRESS_SUB_TABS
+    : PROGRESS_SUB_TABS.filter((tab) => tab.value !== "daily-logs");
+
   const [activeTab, setActiveTab] = useState<MainTab>(initialTab);
   const [activeProgressSubTab, setActiveProgressSubTab] =
     useState<ProgressSubTab>(
       initialTab === "progress" &&
-        PROGRESS_SUB_TABS.some((tab) => tab.value === subtabParam)
+        progressSubTabs.some((tab) => tab.value === subtabParam)
         ? (subtabParam as ProgressSubTab)
         : "overview"
     );
@@ -418,6 +430,16 @@ export function ProjectDetailView({
   // user sees — a Bill of Materials just happens to be the first
   // document shape this was built for, not the only one it accepts.
   const [importBomModalOpen, setImportBomModalOpen] = useState(false);
+  // Which step ImportBomModalContent is currently showing — reported up
+  // via its own onStepChange so this Modal can widen itself (size=
+  // "large") only for "review" (a spreadsheet-sized draft genuinely
+  // needs the room) and stay at the ordinary default width for every
+  // other step (upload, a spinner, a done message), which would
+  // otherwise look lost stretched that wide. Reset to "upload" directly
+  // in each open-call below (not left to ImportBomModalContent's own
+  // mount-time report) so the dialog never opens one frame wide from a
+  // previous session's leftover "review" step.
+  const [importBomStep, setImportBomStep] = useState<ImportBomStep>("upload");
   // The Material Breakdown modal's own open state, lifted up here (same
   // reasoning as importBomModalOpen above) since the Gantt Chart's own
   // Edit Task form needs to open it too, from a completely different
@@ -467,7 +489,7 @@ export function ProjectDetailView({
       <header className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-8 py-5">
         <nav className="flex items-center gap-1.5 text-base">
           <Link
-            href="/admin/projects"
+            href={`${basePath}/projects`}
             className="text-zinc-500 transition hover:text-zinc-900"
           >
             Projects
@@ -509,15 +531,17 @@ export function ProjectDetailView({
             {/* Delete now lives inside the Edit Project modal instead of
                 sitting here as its own button — same "Delete lives inside
                 this modal" convention as the Gantt Chart's SubtaskForm. */}
-            <button
-              type="button"
-              onClick={() => setEditOpen(true)}
-              aria-label="Edit project"
-              title="Edit project"
-              className="flex flex-shrink-0 cursor-pointer items-center justify-center rounded border border-white/15 p-2 text-zinc-400 transition hover:border-white/25 hover:bg-white/10 hover:text-white"
-            >
-              <EditIcon className="size-4" />
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                aria-label="Edit project"
+                title="Edit project"
+                className="flex flex-shrink-0 cursor-pointer items-center justify-center rounded border border-white/15 p-2 text-zinc-400 transition hover:border-white/25 hover:bg-white/10 hover:text-white"
+              >
+                <EditIcon className="size-4" />
+              </button>
+            )}
           </div>
 
           <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm mx-8">
@@ -576,7 +600,7 @@ export function ProjectDetailView({
 
         {activeTab === "progress" && (
           <SubTabsRow
-            tabs={PROGRESS_SUB_TABS}
+            tabs={progressSubTabs}
             active={activeProgressSubTab}
             onChange={setActiveProgressSubTab}
             toolbarRef={setToolbarSlotEl}
@@ -761,6 +785,7 @@ export function ProjectDetailView({
                       // open/close state. Same non-stacking pattern as
                       // the Delete Project confirmation modal.
                       setMaterialBreakdownOpen(false);
+                      setImportBomStep("upload");
                       setImportBomModalOpen(true);
                     }}
                     materialBreakdownOpen={materialBreakdownOpen}
@@ -776,16 +801,19 @@ export function ProjectDetailView({
               projectId={project.id}
               categories={costEstimate.categories}
               projectStartDate={project.startDate}
+              workingDays={project.workingDays}
               canUndo={ganttCanUndo}
               canRedo={ganttCanRedo}
               workers={workers}
               taskWorkerAssignments={taskWorkerAssignments}
               categoryWorkerAssignments={categoryWorkerAssignments}
-              materials={materials}
               taskProgressToday={taskProgressToday}
               categoryProgressToday={categoryProgressToday}
               onOpenMaterialBreakdown={openMaterialBreakdown}
-              onImportBom={() => setImportBomModalOpen(true)}
+              onImportBom={() => {
+                setImportBomStep("upload");
+                setImportBomModalOpen(true);
+              }}
             />
           </div>
         )}
@@ -795,41 +823,50 @@ export function ProjectDetailView({
           onClose={() => setImportBomModalOpen(false)}
           title="Import with AI"
           variant="centered"
+          size={importBomStep === "review" ? "large" : "default"}
         >
-          <ImportBomModalContent onClose={() => setImportBomModalOpen(false)} />
+          <ImportBomModalContent
+            projectId={project.id}
+            onClose={() => setImportBomModalOpen(false)}
+            onStepChange={setImportBomStep}
+          />
         </Modal>
         </div>
       </main>
 
-      <Modal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        title="Edit Project"
-      >
-        <EditProjectForm
-          project={project}
-          projectManagers={projectManagers}
-          foremen={foremen}
-          onSuccess={() => setEditOpen(false)}
-          onRequestDelete={() => {
-            setEditOpen(false);
-            setDeleteProjectConfirmOpen(true);
-          }}
-        />
-      </Modal>
+      {isAdmin && (
+        <>
+          <Modal
+            open={editOpen}
+            onClose={() => setEditOpen(false)}
+            title="Edit Project"
+          >
+            <EditProjectForm
+              project={project}
+              projectManagers={projectManagers}
+              foremen={foremen}
+              onSuccess={() => setEditOpen(false)}
+              onRequestDelete={() => {
+                setEditOpen(false);
+                setDeleteProjectConfirmOpen(true);
+              }}
+            />
+          </Modal>
 
-      <Modal
-        open={deleteProjectConfirmOpen}
-        onClose={() => setDeleteProjectConfirmOpen(false)}
-        title="Delete Project"
-        variant="centered"
-      >
-        <DeleteProjectModalContent
-          projectId={project.id}
-          projectName={project.name}
-          onClose={() => setDeleteProjectConfirmOpen(false)}
-        />
-      </Modal>
+          <Modal
+            open={deleteProjectConfirmOpen}
+            onClose={() => setDeleteProjectConfirmOpen(false)}
+            title="Delete Project"
+            variant="centered"
+          >
+            <DeleteProjectModalContent
+              projectId={project.id}
+              projectName={project.name}
+              onClose={() => setDeleteProjectConfirmOpen(false)}
+            />
+          </Modal>
+        </>
+      )}
     </div>
   );
 }

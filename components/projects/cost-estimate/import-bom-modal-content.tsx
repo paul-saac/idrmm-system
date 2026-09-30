@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   FileText,
@@ -14,6 +15,7 @@ import {
   extractBomFromFile,
   type ExtractedCategory,
 } from "@/lib/bom-import/actions";
+import { applyBomImport } from "@/lib/cost-estimate/actions";
 
 /**
  * "Import with AI" — upload a document (a Bill of Materials is the
@@ -30,13 +32,16 @@ import {
  * calls it that anymore.
  *
  * "Process with AI" below calls extractBomFromFile (lib/bom-import/
- * actions.ts), which sends the uploaded PDF/photo straight to Gemini as
- * multimodal input — no separate PDF-text-extraction step, so it reads
- * table layout directly and works on a scanned/photographed document the
- * same way it works on a typed one. The final "write this to the
- * project" step is still NOT implemented — "Confirm" only shows what
- * *would* be created rather than calling any server action; nothing here
- * writes to the database yet.
+ * actions.ts), which sends the uploaded file straight to Gemini — a
+ * PDF/photo as multimodal input (no separate PDF-text-extraction step,
+ * so it reads table layout directly and works on a scanned/photographed
+ * document the same way it works on a typed one), or a CSV/.xlsx as
+ * plain text instead (see extractBomFromFile's own doc comment for why
+ * those need different handling). "Confirm & Create Tasks" then calls
+ * applyBomImport (lib/cost-estimate/actions.ts), which writes exactly
+ * what's in the draft at that point (Gemini's own extraction, corrected
+ * by hand as needed) to the project as real categories/tasks/material
+ * assignments — nothing before that click ever touches the database.
  *
  * Opened from the Material Breakdown modal's own footer (see
  * MaterialBreakdownModalContent) and the Gantt Chart's own toolbar (see
@@ -72,6 +77,14 @@ type DraftTask = {
 type DraftCategory = {
   id: string;
   name: string;
+  // Only meaningful (and only ever shown/editable — see the review
+  // step's own category header below) while `tasks` is empty — a
+  // standalone top-level line item the source document never broke
+  // down further, same "no tasks yet, own direct line" concept
+  // estimate_categories.material_direct_amount already models for a
+  // category created by hand. See applyBomImport's own doc comment
+  // (lib/cost-estimate/actions.ts) for how this gets saved.
+  amount: string;
   tasks: DraftTask[];
 };
 
@@ -88,6 +101,7 @@ function toDraftCategories(extracted: ExtractedCategory[]): DraftCategory[] {
   return extracted.map((category) => ({
     id: nextId(),
     name: category.name,
+    amount: category.amount,
     tasks: category.tasks.map((task) => ({
       id: nextId(),
       name: task.name,
@@ -104,57 +118,78 @@ function toDraftCategories(extracted: ExtractedCategory[]): DraftCategory[] {
   }));
 }
 
-function TaskQuantityField({
-  value,
-  onChange,
-  unit,
-  onUnitChange,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  unit: string;
-  onUnitChange: (value: string) => void;
-}) {
-  const missing = value.trim() === "";
-  return (
-    <div className="flex shrink-0 items-center gap-1.5">
-      {missing && (
-        <span title="The BOM didn't state a quantity for this task — confirm one.">
-          <AlertTriangle className="size-3.5 shrink-0 text-amber-500" />
-        </span>
-      )}
-      <input
-        type="number"
-        min={0}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Qty"
-        className={`w-16 rounded border px-1.5 py-1 text-xs ${
-          missing ? "border-amber-300 bg-amber-50" : "border-zinc-200"
-        }`}
-      />
-      <input
-        type="text"
-        value={unit}
-        onChange={(e) => onUnitChange(e.target.value)}
-        placeholder="Unit"
-        className={`w-16 rounded border px-1.5 py-1 text-xs ${
-          missing ? "border-amber-300 bg-amber-50" : "border-zinc-200"
-        }`}
-      />
-    </div>
-  );
+function formatCurrency(amount: number) {
+  return `₱${amount.toLocaleString("en-PH", { maximumFractionDigits: 0 })}`;
 }
 
-export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
-  const [step, setStep] = useState<"upload" | "processing" | "review" | "done">(
-    "upload"
-  );
+// Tolerant of thousands separators and stray whitespace, same reasoning
+// as material-breakdown-modal-content.tsx's own parseNumber — a pasted
+// or AI-extracted "20,000" still needs to compute correctly here.
+function parseNumber(value: string): number {
+  const n = Number(value.replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+function lineAmount(material: DraftMaterialLine) {
+  return parseNumber(material.quantity) * parseNumber(material.unitCost);
+}
+
+// A task's own Amount here is always a rollup of its material lines —
+// unlike CostTask in the real Material Breakdown, a draft task from an
+// import has no direct quantity/unit-cost line of its own to also
+// blend in (see DraftTask's own doc comment: a bare task-level
+// quantity/unit is just the source document's stated scope, not a
+// cost), so a task with no material lines has no Amount at all yet.
+function taskAmount(task: DraftTask) {
+  return task.materials.reduce((sum, m) => sum + lineAmount(m), 0);
+}
+
+// A category with tasks rolls theirs up, same as Material Breakdown's
+// own categoryAmount; a standalone category (no tasks) uses its own
+// typed-in amount instead — see DraftCategory.amount's own doc comment.
+function categoryAmount(category: DraftCategory) {
+  if (category.tasks.length === 0) return parseNumber(category.amount);
+  return category.tasks.reduce((sum, t) => sum + taskAmount(t), 0);
+}
+
+export type ImportBomStep =
+  | "upload"
+  | "processing"
+  | "review"
+  | "confirming"
+  | "done";
+
+export function ImportBomModalContent({
+  projectId,
+  onClose,
+  onStepChange,
+}: {
+  projectId: number;
+  onClose: () => void;
+  /** Reports the current step up to the Modal wrapper (project-detail-
+   * view.tsx) so it can widen itself only for "review" — a wide dialog
+   * only actually helps once there's a spreadsheet-sized draft to
+   * double-check; every other step (upload, a spinner, a done message)
+   * is a small, centered piece of content that looks lost at that
+   * width. See Modal's own `size` prop. */
+  onStepChange?: (step: ImportBomStep) => void;
+}) {
+  const router = useRouter();
+  const [step, setStep] = useState<ImportBomStep>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [categories, setCategories] = useState<DraftCategory[]>([]);
   const [processError, setProcessError] = useState<string | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onStepChange?.(step);
+    // onStepChange isn't a stable identity across the parent's own
+    // renders — only re-reporting when `step` itself actually changes
+    // (not on every parent re-render) is what matters here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
 
   function handleFilePicked(files: FileList | null) {
     const picked = files?.[0];
@@ -180,9 +215,32 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
     setStep("review");
   }
 
+  async function handleConfirm() {
+    setConfirmError(null);
+    setStep("confirming");
+    // Sends exactly what's currently in the draft (whatever the admin
+    // has corrected by hand) — the id fields on DraftCategory/DraftTask/
+    // DraftMaterialLine are harmless excess properties here, applyBomImport
+    // only reads name/quantity/unit/materials.
+    const result = await applyBomImport(projectId, categories);
+    if (result.error) {
+      setConfirmError(result.error);
+      setStep("review");
+      return;
+    }
+    router.refresh();
+    setStep("done");
+  }
+
   function updateCategoryName(categoryId: string, name: string) {
     setCategories((prev) =>
       prev.map((c) => (c.id === categoryId ? { ...c, name } : c))
+    );
+  }
+
+  function updateCategoryAmount(categoryId: string, amount: string) {
+    setCategories((prev) =>
+      prev.map((c) => (c.id === categoryId ? { ...c, amount } : c))
     );
   }
 
@@ -193,7 +251,7 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
   function addCategory() {
     setCategories((prev) => [
       ...prev,
-      { id: nextId(), name: "New Category", tasks: [] },
+      { id: nextId(), name: "New Category", amount: "", tasks: [] },
     ]);
   }
 
@@ -325,10 +383,10 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
     return (
       <div className="flex flex-col gap-4">
         <p className="text-sm text-zinc-500">
-          Upload a document (PDF or photo) — a Bill of Materials, a
-          quotation, or any similar cost estimate — and AI will draft the
-          phases, tasks, and material lists for you to review before
-          anything is added to the project.
+          Upload a document (PDF, photo, CSV, or Excel) — a Bill of
+          Materials, a quotation, or any similar cost estimate — and AI
+          will draft the phases, tasks, and material lists for you to
+          review before anything is added to the project.
         </p>
 
         <div
@@ -352,7 +410,7 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept="application/pdf,image/*"
+            accept="application/pdf,image/*,.csv,text/csv,application/vnd.ms-excel,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             className="hidden"
             onChange={(e) => handleFilePicked(e.target.files)}
           />
@@ -368,7 +426,7 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
               <p className="text-sm font-medium text-zinc-700">
                 Drop a file here, or click to browse
               </p>
-              <p className="text-xs text-zinc-400">PDF or image, up to a few pages</p>
+              <p className="text-xs text-zinc-400">PDF, image, CSV, or Excel</p>
             </>
           )}
         </div>
@@ -413,18 +471,31 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
     );
   }
 
+  if (step === "confirming") {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
+        <Loader2 className="size-6 animate-spin text-zinc-400" />
+        <p className="text-sm font-medium text-zinc-700">Saving to the project…</p>
+        <p className="text-xs text-zinc-400">
+          Creating {categories.length} categor
+          {categories.length === 1 ? "y" : "ies"}, {taskCount} task
+          {taskCount === 1 ? "" : "s"}, and {materialCount} material line
+          {materialCount === 1 ? "" : "s"}
+        </p>
+      </div>
+    );
+  }
+
   if (step === "done") {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
         <Sparkles className="size-6 text-zinc-400" />
-        <p className="text-sm font-medium text-zinc-700">Preview complete</p>
+        <p className="text-sm font-medium text-zinc-700">Added to the project</p>
         <p className="max-w-sm text-xs text-zinc-500">
-          This would create {categories.length} categor
+          Created {categories.length} categor
           {categories.length === 1 ? "y" : "ies"}, {taskCount} task
           {taskCount === 1 ? "" : "s"}, and {materialCount} material line
-          {materialCount === 1 ? "" : "s"}. Saving this to the project
-          isn&apos;t connected yet — this is a preview of what
-          &quot;Confirm &amp; Create Tasks&quot; will do.
+          {materialCount === 1 ? "" : "s"}.
         </p>
         <button
           type="button"
@@ -437,7 +508,19 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
     );
   }
 
-  // step === "review"
+  // step === "review" — laid out as one continuous table, deliberately
+  // recycling the Material Breakdown table's own design (see
+  // MaterialBreakdownModalContent's doc comment: category -> task ->
+  // material rows, vertical column-divider lines running through every
+  // row, category rows shaded bg-zinc-100, a material row indented
+  // further with its own border-l-2 accent) so a document that's really
+  // a small spreadsheet reads like one here too, instead of a stack of
+  // cards. Unlike that table, every row here is still fully mutable
+  // (add/remove category/task/material) since this is a draft still
+  // being corrected before anything is saved — Material Breakdown only
+  // ever edits existing rows in place.
+  const grandTotal = categories.reduce((sum, c) => sum + categoryAmount(c), 0);
+
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-zinc-500">
@@ -445,177 +528,312 @@ export function ImportBomModalContent({ onClose }: { onClose: () => void }) {
         project — nothing is saved until you confirm.
       </p>
 
-      <div className="flex flex-col gap-4">
-        {categories.map((category) => (
-          <div
-            key={category.id}
-            className="rounded-lg border border-zinc-200 bg-zinc-50/60"
-          >
-            <div className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2">
-              <input
-                type="text"
-                value={category.name}
-                onChange={(e) => updateCategoryName(category.id, e.target.value)}
-                className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1.5 py-1 text-sm font-semibold text-zinc-800 hover:border-zinc-200 focus:border-zinc-300 focus:bg-white focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => removeCategory(category.id)}
-                aria-label="Remove category"
-                className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-              >
-                <Trash2 className="size-3.5" />
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-3 px-3 py-3">
-              {category.tasks.map((task) => (
-                <div
-                  key={task.id}
-                  className="rounded-md border border-zinc-200 bg-white p-2.5"
-                >
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={task.name}
-                      onChange={(e) =>
-                        updateTask(category.id, task.id, { name: e.target.value })
-                      }
-                      className="min-w-0 flex-1 rounded border border-zinc-200 px-1.5 py-1 text-xs font-medium text-zinc-700"
-                    />
-                    <TaskQuantityField
-                      value={task.quantity}
-                      onChange={(value) =>
-                        updateTask(category.id, task.id, { quantity: value })
-                      }
-                      unit={task.unit}
-                      onUnitChange={(value) =>
-                        updateTask(category.id, task.id, { unit: value })
-                      }
-                    />
-                    <button
-                      type="button"
-                      onClick={() => removeTask(category.id, task.id)}
-                      aria-label="Remove task"
-                      className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
-
-                  {task.materials.length > 0 && (
-                    <ul className="mt-2 flex flex-col gap-1.5 border-t border-zinc-100 pt-2 pl-2">
-                      {task.materials.map((material) => (
-                        <li key={material.id} className="flex items-center gap-1.5">
-                          <input
-                            type="text"
-                            value={material.name}
-                            onChange={(e) =>
-                              updateMaterial(category.id, task.id, material.id, {
-                                name: e.target.value,
-                              })
-                            }
-                            placeholder="Material"
-                            className="min-w-0 flex-1 rounded border border-zinc-200 px-1.5 py-1 text-xs"
-                          />
+      <div className="overflow-hidden rounded-md border border-zinc-200">
+        <table className="w-full table-fixed text-left text-sm">
+          <colgroup>
+            <col />
+            <col style={{ width: 90 }} />
+            <col style={{ width: 70 }} />
+            <col style={{ width: 100 }} />
+            <col style={{ width: 100 }} />
+          </colgroup>
+          <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
+            <tr>
+              <th className="border-r border-b border-zinc-300 px-3 py-2">
+                Description
+              </th>
+              <th className="border-r border-b border-zinc-300 px-3 py-2 text-right">
+                Quantity
+              </th>
+              <th className="border-r border-b border-zinc-300 px-3 py-2 text-right">
+                Unit
+              </th>
+              <th className="border-r border-b border-zinc-300 px-3 py-2 text-right">
+                Unit Cost
+              </th>
+              <th className="border-b border-zinc-300 px-3 py-2 text-right">
+                Amount
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {categories.map((category) => (
+              <Fragment key={category.id}>
+                <tr className="border-y border-y-zinc-200 bg-zinc-100">
+                  <td className="border-r border-r-zinc-300">
+                    <div className="flex items-center gap-1.5 pr-2">
+                      <input
+                        type="text"
+                        value={category.name}
+                        onChange={(e) =>
+                          updateCategoryName(category.id, e.target.value)
+                        }
+                        className="min-w-0 flex-1 bg-transparent py-2.5 pl-3 text-xs font-semibold text-zinc-700 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeCategory(category.id)}
+                        aria-label="Remove category"
+                        className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                  <td className="border-r border-r-zinc-300 px-3 py-1.5 text-right text-xs text-zinc-300">
+                    —
+                  </td>
+                  <td className="border-r border-r-zinc-300 px-3 py-1.5 text-right text-xs text-zinc-300">
+                    —
+                  </td>
+                  <td className="border-r border-r-zinc-300 px-3 py-1.5 text-right text-xs text-zinc-300">
+                    —
+                  </td>
+                  <td>
+                    {/* Only while this category has no tasks — a
+                        standalone line item's own amount, same
+                        asymmetric rule Material Breakdown already
+                        applies to a task-less category's own direct
+                        cost line. Once a task is added below, this
+                        becomes a read-only rollup instead — see
+                        categoryAmount's own doc comment. */}
+                    {category.tasks.length === 0 ? (
+                      <input
+                        type="number"
+                        min={0}
+                        value={category.amount}
+                        onChange={(e) =>
+                          updateCategoryAmount(category.id, e.target.value)
+                        }
+                        placeholder="—"
+                        className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-semibold text-zinc-900 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-900"
+                      />
+                    ) : (
+                      <div className="px-3 py-1.5 text-right text-sm font-semibold whitespace-nowrap text-zinc-900">
+                        {formatCurrency(categoryAmount(category))}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+                {category.tasks.map((task) => {
+                  const missingQty = task.quantity.trim() === "";
+                  return (
+                    <Fragment key={task.id}>
+                      <tr className="border-b border-b-zinc-200">
+                        <td className="border-r border-r-zinc-300 py-1.5 pr-2 pl-6">
+                          <div className="flex items-center gap-1.5">
+                            {missingQty && (
+                              <span title="The document didn't state a quantity for this task — confirm one.">
+                                <AlertTriangle className="size-3.5 shrink-0 text-amber-500" />
+                              </span>
+                            )}
+                            <input
+                              type="text"
+                              value={task.name}
+                              onChange={(e) =>
+                                updateTask(category.id, task.id, {
+                                  name: e.target.value,
+                                })
+                              }
+                              className="min-w-0 flex-1 rounded bg-transparent px-1 py-1 text-xs font-semibold text-zinc-600 outline-none transition focus:bg-zinc-50"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => addMaterial(category.id, task.id)}
+                              className="shrink-0 cursor-pointer rounded border border-zinc-300 px-2 py-0.5 text-[11px] font-medium text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-800"
+                            >
+                              Add Material
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeTask(category.id, task.id)}
+                              aria-label="Remove task"
+                              className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                        <td
+                          className={`border-r border-r-zinc-300 ${missingQty ? "bg-amber-50" : ""}`}
+                        >
                           <input
                             type="number"
                             min={0}
-                            value={material.quantity}
+                            value={task.quantity}
                             onChange={(e) =>
-                              updateMaterial(category.id, task.id, material.id, {
+                              updateTask(category.id, task.id, {
                                 quantity: e.target.value,
                               })
                             }
-                            placeholder="Qty"
-                            className="w-14 shrink-0 rounded border border-zinc-200 px-1.5 py-1 text-xs"
+                            placeholder="—"
+                            className="w-full bg-transparent px-3 py-1.5 text-right text-sm text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
                           />
+                        </td>
+                        <td
+                          className={`border-r border-r-zinc-300 ${missingQty ? "bg-amber-50" : ""}`}
+                        >
                           <input
                             type="text"
-                            value={material.unit}
+                            value={task.unit}
                             onChange={(e) =>
-                              updateMaterial(category.id, task.id, material.id, {
+                              updateTask(category.id, task.id, {
                                 unit: e.target.value,
                               })
                             }
-                            placeholder="Unit"
-                            className="w-14 shrink-0 rounded border border-zinc-200 px-1.5 py-1 text-xs"
+                            placeholder="—"
+                            className="w-full bg-transparent px-3 py-1.5 text-right text-sm text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
                           />
-                          <span className="shrink-0 text-xs text-zinc-400">₱</span>
-                          <input
-                            type="number"
-                            min={0}
-                            value={material.unitCost}
-                            onChange={(e) =>
-                              updateMaterial(category.id, task.id, material.id, {
-                                unitCost: e.target.value,
-                              })
-                            }
-                            placeholder="Unit cost"
-                            className="w-16 shrink-0 rounded border border-zinc-200 px-1.5 py-1 text-xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              removeMaterial(category.id, task.id, material.id)
-                            }
-                            aria-label="Remove material"
-                            className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                          >
-                            <Trash2 className="size-3" />
-                          </button>
-                        </li>
+                        </td>
+                        <td className="border-r border-r-zinc-300 px-3 py-1.5 text-right text-xs text-zinc-300">
+                          —
+                        </td>
+                        <td>
+                          {task.materials.length > 0 ? (
+                            <div className="px-3 py-1.5 text-right text-sm font-semibold whitespace-nowrap text-zinc-900">
+                              {formatCurrency(taskAmount(task))}
+                            </div>
+                          ) : (
+                            <div className="px-3 py-1.5 text-right text-xs text-zinc-300">
+                              —
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                      {task.materials.map((material) => (
+                        <tr
+                          key={material.id}
+                          className="border-b border-b-zinc-200 border-l-2 border-l-zinc-900"
+                        >
+                          <td className="border-r border-r-zinc-300 py-1.5 pr-2 pl-9">
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="text"
+                                value={material.name}
+                                onChange={(e) =>
+                                  updateMaterial(category.id, task.id, material.id, {
+                                    name: e.target.value,
+                                  })
+                                }
+                                placeholder="Material"
+                                className="min-w-0 flex-1 bg-transparent py-1.5 text-xs font-semibold text-zinc-600 outline-none focus:bg-zinc-50"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  removeMaterial(category.id, task.id, material.id)
+                                }
+                                aria-label="Remove material"
+                                className="shrink-0 cursor-pointer rounded p-1 text-zinc-300 transition hover:bg-red-50 hover:text-red-600"
+                              >
+                                <Trash2 className="size-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                          <td className="border-r border-r-zinc-300">
+                            <input
+                              type="number"
+                              min={0}
+                              value={material.quantity}
+                              onChange={(e) =>
+                                updateMaterial(category.id, task.id, material.id, {
+                                  quantity: e.target.value,
+                                })
+                              }
+                              className="w-full bg-transparent px-3 py-1.5 text-right text-sm text-zinc-700 outline-none transition hover:bg-zinc-900 hover:text-white focus:bg-zinc-50 focus:text-zinc-700"
+                            />
+                          </td>
+                          <td className="border-r border-r-zinc-300">
+                            <input
+                              type="text"
+                              value={material.unit}
+                              onChange={(e) =>
+                                updateMaterial(category.id, task.id, material.id, {
+                                  unit: e.target.value,
+                                })
+                              }
+                              placeholder="—"
+                              className="w-full bg-transparent px-3 py-1.5 text-right text-sm text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-zinc-50 focus:text-zinc-700"
+                            />
+                          </td>
+                          <td className="border-r border-r-zinc-300">
+                            <input
+                              type="number"
+                              min={0}
+                              value={material.unitCost}
+                              onChange={(e) =>
+                                updateMaterial(category.id, task.id, material.id, {
+                                  unitCost: e.target.value,
+                                })
+                              }
+                              className="w-full bg-transparent px-3 py-1.5 text-right text-sm text-zinc-700 outline-none transition hover:bg-zinc-900 hover:text-white focus:bg-zinc-50 focus:text-zinc-700"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 text-right text-sm whitespace-nowrap text-zinc-700">
+                            {formatCurrency(lineAmount(material))}
+                          </td>
+                        </tr>
                       ))}
-                    </ul>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => addMaterial(category.id, task.id)}
-                    className="mt-2 flex cursor-pointer items-center gap-1 pl-2 text-xs font-medium text-zinc-500 transition hover:text-zinc-800"
-                  >
-                    <Plus className="size-3" />
-                    Add material
-                  </button>
-                </div>
-              ))}
-
-              <button
-                type="button"
-                onClick={() => addTask(category.id)}
-                className="flex cursor-pointer items-center gap-1 self-start text-xs font-medium text-zinc-500 transition hover:text-zinc-800"
-              >
-                <Plus className="size-3.5" />
-                Add task
-              </button>
-            </div>
-          </div>
-        ))}
-
-        <button
-          type="button"
-          onClick={addCategory}
-          className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-300 py-2.5 text-xs font-medium text-zinc-500 transition hover:border-zinc-400 hover:text-zinc-800"
-        >
-          <Plus className="size-3.5" />
-          Add category
-        </button>
+                    </Fragment>
+                  );
+                })}
+                <tr className="border-b border-b-zinc-200">
+                  <td colSpan={5} className="py-1.5 pr-3 pl-6">
+                    <button
+                      type="button"
+                      onClick={() => addTask(category.id)}
+                      className="flex cursor-pointer items-center gap-1 text-xs font-medium text-zinc-500 transition hover:text-zinc-800"
+                    >
+                      <Plus className="size-3.5" />
+                      Add task
+                    </button>
+                  </td>
+                </tr>
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      <div className="flex items-center justify-end gap-3 border-t border-zinc-200 pt-4">
-        <button
-          type="button"
-          onClick={() => setStep("upload")}
-          className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-        >
-          Back
-        </button>
-        <button
-          type="button"
-          onClick={() => setStep("done")}
-          className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
-        >
-          Confirm &amp; Create Tasks
-        </button>
+      <button
+        type="button"
+        onClick={addCategory}
+        className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-300 py-2.5 text-xs font-medium text-zinc-500 transition hover:border-zinc-400 hover:text-zinc-800"
+      >
+        <Plus className="size-3.5" />
+        Add category
+      </button>
+
+      {confirmError && (
+        <p role="alert" className="text-sm text-red-600">
+          {confirmError}
+        </p>
+      )}
+
+      <div className="flex items-center justify-between gap-3 border-t border-zinc-200 pt-4">
+        <div className="text-sm">
+          <span className="font-medium text-zinc-500">Estimated Total</span>{" "}
+          <span className="font-semibold text-zinc-900">
+            {formatCurrency(grandTotal)}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setStep("upload")}
+            className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+          >
+            Back
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={categories.length === 0}
+            className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Confirm &amp; Create Tasks
+          </button>
+        </div>
       </div>
     </div>
   );

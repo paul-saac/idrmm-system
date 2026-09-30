@@ -1,7 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import { listTaskProgressAnchors } from "@/lib/task-progress/data";
 import { listCategoryProgressAnchors } from "@/lib/category-progress/data";
-import { computeAutoPercentComplete } from "@/lib/task-progress/calculate";
+import {
+  computeAutoPercentComplete,
+  EMPTY_PROGRESS_ANCHOR,
+  groupPlannedMaterials,
+} from "@/lib/task-progress/calculate";
 
 export type OtherCostItem = {
   id: number;
@@ -360,19 +364,25 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       predecessorTaskId: row.predecessor_task_id,
       isMilestone: row.is_milestone ?? false,
       priority: toTaskPriority(row.priority),
-      // Live-computed (Automatic Progress Completion, anchored by the
-      // task's own latest Progress Tracking Override if one exists —
-      // see lib/task-progress/calculate.ts) rather than read from the
-      // stored percent_complete column, which this feature supersedes
-      // as the actual source of a task's own percent complete (see
-      // 0040_task_progress_tracking.sql's own comment on why that
-      // column is left in place but no longer read/written).
+      // Live-computed (Automatic Progress Completion — an equal-
+      // weighted Materials/Labor/Time blend, see lib/task-progress/
+      // calculate.ts) rather than read from the stored percent_complete
+      // column, which this feature supersedes as the actual source of a
+      // task's own percent complete (see 0040_task_progress_tracking.
+      // sql's own comment on why that column is left in place but no
+      // longer read/written).
       percentComplete: computeAutoPercentComplete({
         plannedStartDate: row.planned_start_date,
         plannedEndDate: row.planned_end_date,
-        estimatedQuantity: row.estimated_quantity ?? 0,
+        plannedMaterials: groupPlannedMaterials(
+          materialAssignmentsByTask.get(row.id) ?? []
+        ),
+        plannedWorkerCount: (laborAssignmentsByTask.get(row.id) ?? []).reduce(
+          (sum, a) => sum + a.plannedWorkerCount,
+          0
+        ),
         workingDays,
-        anchor: progressAnchorsByTask[row.id] ?? null,
+        anchor: progressAnchorsByTask[row.id] ?? EMPTY_PROGRESS_ANCHOR,
         today: new Date(),
       }),
       materialAssignments: materialAssignmentsByTask.get(row.id) ?? [],
@@ -407,9 +417,14 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     percentComplete: computeAutoPercentComplete({
       plannedStartDate: row.planned_start_date,
       plannedEndDate: row.planned_end_date,
-      estimatedQuantity: row.estimated_quantity ?? 0,
+      // A task-less category has no planned material list or
+      // estimate_task_labor_assignments of its own (both hang off a
+      // task) — Materials% and Labor% are simply excluded from its own
+      // blend rather than counted as 0%, same as any missing baseline.
+      plannedMaterials: [],
+      plannedWorkerCount: 0,
       workingDays,
-      anchor: progressAnchorsByCategory[row.id] ?? null,
+      anchor: progressAnchorsByCategory[row.id] ?? EMPTY_PROGRESS_ANCHOR,
       today: new Date(),
     }),
   }));

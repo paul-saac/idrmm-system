@@ -188,6 +188,7 @@ export function EquipmentTable({
   onSort,
   onEdit,
   onAssign,
+  readOnly = false,
 }: {
   equipment: EquipmentRow[];
   sortKey: SortKey;
@@ -195,6 +196,8 @@ export function EquipmentTable({
   onSort: (key: SortKey) => void;
   onEdit: (equipment: EquipmentRow) => void;
   onAssign: (equipment: EquipmentRow) => void;
+  /** Hides the Action column — the foreman portal's inventory is view-only. */
+  readOnly?: boolean;
 }) {
   return (
     <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
@@ -236,7 +239,7 @@ export function EquipmentTable({
                   dir={sortDir}
                   onSort={onSort}
                 />
-                <th className="px-4 py-2.5 text-right">Action</th>
+                {!readOnly && <th className="px-4 py-2.5 text-right">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
@@ -263,6 +266,7 @@ export function EquipmentTable({
                     <td className="px-4 py-2.5 text-zinc-500">
                       {lastActivity ? formatDateTime(lastActivity) : "—"}
                     </td>
+                    {!readOnly && (
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-end gap-1">
                         {item.status === "assigned" ? (
@@ -297,6 +301,7 @@ export function EquipmentTable({
                         />
                       </div>
                     </td>
+                    )}
                   </tr>
                 );
               })}

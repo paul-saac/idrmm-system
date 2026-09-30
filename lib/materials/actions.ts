@@ -1,8 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 import { nextMaterialCode } from "@/lib/materials/codes";
 import type { MaterialStatus } from "@/lib/materials/data";
 
@@ -38,8 +38,8 @@ export async function createProjectMaterial(
   _prevState: MaterialActionState,
   formData: FormData
 ): Promise<MaterialActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to add materials." };
   }
 
@@ -67,7 +67,7 @@ export async function createProjectMaterial(
     return { error: "Could not add the material. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -77,8 +77,8 @@ export async function updateProjectMaterial(
   _prevState: MaterialActionState,
   formData: FormData
 ): Promise<MaterialActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to edit materials." };
   }
 
@@ -104,7 +104,7 @@ export async function updateProjectMaterial(
     return { error: "Could not update the material. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -114,8 +114,8 @@ export async function deleteProjectMaterial(
   _prevState: MaterialActionState,
   _formData: FormData
 ): Promise<MaterialActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to delete materials." };
   }
 
@@ -130,6 +130,6 @@ export async function deleteProjectMaterial(
     return { error: "Could not delete the material. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProjectPaths(projectId);
   return { success: true };
 }

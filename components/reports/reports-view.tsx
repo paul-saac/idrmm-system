@@ -13,6 +13,7 @@ import { MonthlyExpenseChart } from "@/components/reports/monthly-expense-chart"
 import { TopMaterialsChart } from "@/components/reports/top-materials-chart";
 import { DonutChart } from "@/components/reports/donut-chart";
 import { DateRangeFilter } from "@/components/reports/date-range-filter";
+import { usePortal } from "@/components/portal/portal-context";
 import { ExportButtons } from "@/components/reports/export-buttons";
 import {
   MaterialExpenseTable,
@@ -51,6 +52,7 @@ export function ReportsView({
   range: DateRange;
 }) {
   const reportRef = useRef<HTMLDivElement>(null);
+  const { basePath } = usePortal();
 
   if (projects.length === 0) {
     return (
@@ -88,7 +90,7 @@ export function ReportsView({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-3">
-        <DateRangeFilter projectId={data.project.id} range={range} />
+        <DateRangeFilter basePath={basePath} projectId={data.project.id} range={range} />
         <ExportButtons data={data} reportRef={reportRef} />
       </div>
 

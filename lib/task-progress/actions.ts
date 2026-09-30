@@ -1,9 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 
 export type TaskProgressActionState = {
   error?: string;
@@ -30,12 +30,6 @@ async function safely(
   }
 }
 
-async function requireAdmin() {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") return null;
-  return profile;
-}
-
 function todayIso() {
   return new Date().toLocaleDateString("en-CA");
 }
@@ -49,34 +43,39 @@ function todayIso() {
  * creating a second one, via the DB's own unique(task_id, entry_date)
  * constraint.
  *
- * Materials consumed are a real project_materials.quantity deduction,
- * not just a logged number — the actual Gantt <-> Materials page
- * connection this feature exists for. Since re-saving today's entry can
- * change which materials (or how much of each) were used, this always
- * reverts whatever today's entry previously deducted before applying
- * the new amounts, rather than trying to diff old vs. new — simpler to
- * get right, and correct for every case (added, removed, or
- * re-quantified materials alike).
+ * Materials used are logged against the task's own planned material
+ * lines (task_progress_material_entries, see 0050_task_progress_
+ * material_entries.sql) — replaced wholesale for this day on every
+ * save, so correcting today's numbers never double-counts. No longer
+ * touches project_materials stock at all: the old "Materials consumed
+ * today" picker pulled from the project's whole stock roster with no
+ * connection to what was planned for this specific task.
+ * quantity_completed is no longer written either — the modal's own
+ * "Quantity completed" field was removed; a task's Materials% now comes
+ * from its materials used vs. planned instead.
+ *
+ * percentCompleteOverride (see 0049_progress_percent_override.sql) is
+ * written as-is, including null — null is what actually clears a
+ * previously-saved override rather than leaving a stale value in place.
  */
 export async function recordTaskProgress(
   taskId: number,
   projectId: number,
   input: {
-    quantityCompletedToday: number;
     laborHeadcount: number;
-    materialsUsed: { materialId: number; quantity: number }[];
+    materialsUsed: { name: string; unit: string | null; quantity: number }[];
+    percentCompleteOverride: number | null;
   }
 ): Promise<TaskProgressActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to record task progress." };
     }
-    if (
-      !Number.isFinite(input.quantityCompletedToday) ||
-      input.quantityCompletedToday < 0
-    ) {
-      return { error: "Quantity completed can't be negative." };
+    for (const material of input.materialsUsed) {
+      if (!Number.isFinite(material.quantity) || material.quantity < 0) {
+        return { error: "Material quantity used can't be negative." };
+      }
     }
     if (
       !Number.isFinite(input.laborHeadcount) ||
@@ -84,65 +83,17 @@ export async function recordTaskProgress(
     ) {
       return { error: "Labor headcount can't be negative." };
     }
-    for (const item of input.materialsUsed) {
-      if (!Number.isFinite(item.quantity) || item.quantity < 0) {
-        return { error: "Material quantity can't be negative." };
-      }
+    if (
+      input.percentCompleteOverride !== null &&
+      (!Number.isFinite(input.percentCompleteOverride) ||
+        input.percentCompleteOverride < 0 ||
+        input.percentCompleteOverride > 100)
+    ) {
+      return { error: "Percent complete must be a number between 0 and 100." };
     }
 
     const supabase = await createClient();
     const entryDate = todayIso();
-
-    const { data: existingEntry } = await supabase
-      .from("task_progress_entries")
-      .select("id")
-      .eq("task_id", taskId)
-      .eq("entry_date", entryDate)
-      .maybeSingle();
-
-    // Reverse whatever today's entry previously deducted from stock,
-    // before applying the new amounts below — see this function's own
-    // doc comment for why this is simplest done as "revert everything,
-    // then reapply" rather than diffing old vs. new material lists.
-    if (existingEntry) {
-      const { data: oldUsage } = await supabase
-        .from("task_progress_material_usage")
-        .select("material_id, quantity")
-        .eq("progress_entry_id", existingEntry.id);
-
-      for (const usage of oldUsage ?? []) {
-        const { data: material } = await supabase
-          .from("project_materials")
-          .select("quantity")
-          .eq("id", usage.material_id)
-          .maybeSingle();
-        if (material) {
-          const { error: restoreError } = await supabase
-            .from("project_materials")
-            .update({ quantity: (material.quantity ?? 0) + (usage.quantity ?? 0) })
-            .eq("id", usage.material_id);
-          if (restoreError) {
-            logSupabaseError(
-              "[recordTaskProgress] Supabase stock-restore failed",
-              restoreError
-            );
-            return { error: "Could not save progress. Please try again." };
-          }
-        }
-      }
-
-      const { error: deleteUsageError } = await supabase
-        .from("task_progress_material_usage")
-        .delete()
-        .eq("progress_entry_id", existingEntry.id);
-      if (deleteUsageError) {
-        logSupabaseError(
-          "[recordTaskProgress] Supabase old-usage delete failed",
-          deleteUsageError
-        );
-        return { error: "Could not save progress. Please try again." };
-      }
-    }
 
     const { data: savedEntry, error: upsertError } = await supabase
       .from("task_progress_entries")
@@ -150,8 +101,8 @@ export async function recordTaskProgress(
         {
           task_id: taskId,
           entry_date: entryDate,
-          quantity_completed: input.quantityCompletedToday,
           labor_headcount: Math.round(input.laborHeadcount),
+          percent_complete_override: input.percentCompleteOverride,
           recorded_by: profile.id,
         },
         { onConflict: "task_id,entry_date" }
@@ -160,58 +111,52 @@ export async function recordTaskProgress(
       .single();
 
     if (upsertError || !savedEntry) {
-      logSupabaseError(
-        "[recordTaskProgress] Supabase entry upsert failed",
-        upsertError!
-      );
+      if (upsertError) {
+        logSupabaseError(
+          "[recordTaskProgress] Supabase entry upsert failed",
+          upsertError
+        );
+      }
       return { error: "Could not save progress. Please try again." };
     }
 
-    const materialsUsed = input.materialsUsed.filter((item) => item.quantity > 0);
+    const { error: deleteError } = await supabase
+      .from("task_progress_material_entries")
+      .delete()
+      .eq("progress_entry_id", savedEntry.id);
 
-    if (materialsUsed.length > 0) {
-      const { error: insertUsageError } = await supabase
-        .from("task_progress_material_usage")
-        .insert(
-          materialsUsed.map((item) => ({
-            progress_entry_id: savedEntry.id,
-            material_id: item.materialId,
-            quantity: item.quantity,
-          }))
-        );
-      if (insertUsageError) {
+    if (deleteError) {
+      logSupabaseError(
+        "[recordTaskProgress] Supabase old material entries delete failed",
+        deleteError
+      );
+      return { error: "Could not save materials used. Please try again." };
+    }
+
+    const materialRows = input.materialsUsed
+      .filter((material) => material.quantity > 0 && material.name.trim())
+      .map((material) => ({
+        progress_entry_id: savedEntry.id,
+        material_name: material.name.trim(),
+        unit: material.unit?.trim() || null,
+        quantity_used: material.quantity,
+      }));
+
+    if (materialRows.length > 0) {
+      const { error: insertError } = await supabase
+        .from("task_progress_material_entries")
+        .insert(materialRows);
+
+      if (insertError) {
         logSupabaseError(
-          "[recordTaskProgress] Supabase new-usage insert failed",
-          insertUsageError
+          "[recordTaskProgress] Supabase material entries insert failed",
+          insertError
         );
-        return { error: "Could not save progress. Please try again." };
-      }
-
-      for (const item of materialsUsed) {
-        const { data: material } = await supabase
-          .from("project_materials")
-          .select("quantity")
-          .eq("id", item.materialId)
-          .maybeSingle();
-        if (material) {
-          const { error: deductError } = await supabase
-            .from("project_materials")
-            .update({
-              quantity: Math.max(0, (material.quantity ?? 0) - item.quantity),
-            })
-            .eq("id", item.materialId);
-          if (deductError) {
-            logSupabaseError(
-              "[recordTaskProgress] Supabase stock-deduct failed",
-              deductError
-            );
-            return { error: "Could not save progress. Please try again." };
-          }
-        }
+        return { error: "Could not save materials used. Please try again." };
       }
     }
 
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { DateRange } from "@/lib/reports/data";
+import type { PortalBasePath } from "@/components/portal/portal-context";
 
 /**
  * Plain GET form — no client JS needed, submitting just re-navigates
@@ -10,9 +11,11 @@ import type { DateRange } from "@/lib/reports/data";
  * lib/reports/data.ts's buildMonthlySeries).
  */
 export function DateRangeFilter({
+  basePath,
   projectId,
   range,
 }: {
+  basePath: PortalBasePath;
   projectId: number;
   range: DateRange;
 }) {
@@ -20,7 +23,7 @@ export function DateRangeFilter({
 
   return (
     <form
-      action="/admin/reports"
+      action={`${basePath}/reports`}
       className="flex flex-wrap items-center gap-2 text-sm"
     >
       <input type="hidden" name="projectId" value={projectId} />
@@ -50,7 +53,7 @@ export function DateRangeFilter({
       </button>
       {hasFilter && (
         <Link
-          href={`/admin/reports?projectId=${projectId}`}
+          href={`${basePath}/reports?projectId=${projectId}`}
           className="text-xs font-medium text-zinc-400 transition hover:text-zinc-700"
         >
           Clear

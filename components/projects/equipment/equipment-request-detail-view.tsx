@@ -6,6 +6,7 @@ import { ChevronLeft } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { EquipmentRequestEditForm } from "@/components/projects/equipment/equipment-request-edit-form";
+import { usePortal, type PortalBasePath } from "@/components/portal/portal-context";
 import {
   approveEquipmentRequest,
   cancelEquipmentRequest,
@@ -20,8 +21,8 @@ import type {
 
 // Where the back chevron returns to — the Equipment tab's Requests
 // sub-tab specifically, not just the project root.
-function equipmentRequestsListHref(projectId: number) {
-  return `/admin/projects/${projectId}?tab=equipment&subtab=requests`;
+function equipmentRequestsListHref(basePath: PortalBasePath, projectId: number) {
+  return `${basePath}/projects/${projectId}?tab=equipment&subtab=requests`;
 }
 
 function StatusBadge({ status }: { status: EquipmentRequestStatus }) {
@@ -172,27 +173,28 @@ export function EquipmentRequestDetailView({
   const [editOpen, setEditOpen] = useState(false);
   const isTerminal = request.status === "fulfilled" || request.status === "canceled";
   const projectId = request.projectId;
+  const { basePath } = usePortal();
 
   return (
     <>
       <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-8 py-5">
         <nav className="flex items-center gap-1.5 text-sm">
           <Link
-            href="/admin/projects"
+            href={`${basePath}/projects`}
             className="text-zinc-500 transition hover:text-zinc-900"
           >
             Projects
           </Link>
           <span className="text-zinc-300">/</span>
           <Link
-            href={equipmentRequestsListHref(projectId)}
+            href={equipmentRequestsListHref(basePath, projectId)}
             className="text-zinc-500 transition hover:text-zinc-900"
           >
             Equipment
           </Link>
           <span className="text-zinc-300">/</span>
           <Link
-            href={equipmentRequestsListHref(projectId)}
+            href={equipmentRequestsListHref(basePath, projectId)}
             className="text-zinc-500 transition hover:text-zinc-900"
           >
             Equipment Requests
@@ -208,7 +210,7 @@ export function EquipmentRequestDetailView({
           <div className="rounded-lg border border-zinc-200 bg-white p-6">
             <div className="flex items-center justify-between">
               <Link
-                href={equipmentRequestsListHref(projectId)}
+                href={equipmentRequestsListHref(basePath, projectId)}
                 className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 transition hover:text-zinc-600"
               >
                 <ChevronLeft className="size-4" />

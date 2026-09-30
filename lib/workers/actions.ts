@@ -1,9 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 
 export type WorkerActionState = {
   error?: string;
@@ -35,19 +35,13 @@ async function safely(
   }
 }
 
-async function requireAdmin() {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") return null;
-  return profile;
-}
-
 export async function createWorker(
   projectId: number,
   _prevState: WorkerActionState,
   formData: FormData
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage the manpower roster." };
     }
@@ -71,7 +65,7 @@ export async function createWorker(
       return { error: "Could not add worker. Please try again." };
     }
 
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -83,7 +77,7 @@ export async function updateWorker(
   formData: FormData
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage the manpower roster." };
     }
@@ -106,7 +100,7 @@ export async function updateWorker(
       return { error: "Could not save changes. Please try again." };
     }
 
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -118,7 +112,7 @@ export async function deleteWorker(
   _formData: FormData
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage the manpower roster." };
     }
@@ -139,7 +133,7 @@ export async function deleteWorker(
       return { error: "Could not remove worker. Please try again." };
     }
 
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -158,7 +152,7 @@ export async function setTaskWorkers(
   workerIds: number[]
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage task assignments." };
     }
@@ -192,7 +186,7 @@ export async function setTaskWorkers(
       }
     }
 
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -207,7 +201,7 @@ export async function setCategoryWorkers(
   workerIds: number[]
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage task assignments." };
     }
@@ -246,7 +240,7 @@ export async function setCategoryWorkers(
       }
     }
 
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }

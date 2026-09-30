@@ -1,8 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 import { deriveEquipmentRequestStatus } from "@/lib/equipment-requests/status";
 import type { EquipmentRequestPriority } from "@/lib/equipment-requests/data";
 
@@ -96,7 +96,7 @@ export async function createEquipmentRequest(
   _prevState: EquipmentRequestActionState,
   formData: FormData
 ): Promise<EquipmentRequestActionState> {
-  const profile = await getSessionProfile();
+  const profile = await requireProjectAccess(projectId);
   if (!profile) {
     return { error: "You are not authorized to submit equipment requests." };
   }
@@ -150,7 +150,7 @@ export async function createEquipmentRequest(
     return { error: "Could not submit the equipment request. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -160,8 +160,8 @@ export async function updateEquipmentRequest(
   _prevState: EquipmentRequestActionState,
   formData: FormData
 ): Promise<EquipmentRequestActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to edit this equipment request." };
   }
 
@@ -271,8 +271,8 @@ export async function updateEquipmentRequest(
     return { error: "Could not update the equipment request. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
-  revalidatePath(`/admin/projects/${projectId}/equipment/requests/${requestId}`);
+  revalidateProjectPaths(projectId);
+  revalidateProjectPaths(projectId, `/equipment/requests/${requestId}`);
   return { success: true };
 }
 
@@ -282,8 +282,8 @@ export async function approveEquipmentRequest(
   _prevState: EquipmentRequestActionState,
   _formData: FormData
 ): Promise<EquipmentRequestActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to approve equipment requests." };
   }
 
@@ -303,8 +303,8 @@ export async function approveEquipmentRequest(
     return { error: "Could not approve the equipment request. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
-  revalidatePath(`/admin/projects/${projectId}/equipment/requests/${requestId}`);
+  revalidateProjectPaths(projectId);
+  revalidateProjectPaths(projectId, `/equipment/requests/${requestId}`);
   return { success: true };
 }
 
@@ -314,8 +314,8 @@ export async function cancelEquipmentRequest(
   _prevState: EquipmentRequestActionState,
   _formData: FormData
 ): Promise<EquipmentRequestActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to cancel equipment requests." };
   }
 
@@ -330,7 +330,7 @@ export async function cancelEquipmentRequest(
     return { error: "Could not cancel the equipment request. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
-  revalidatePath(`/admin/projects/${projectId}/equipment/requests/${requestId}`);
+  revalidateProjectPaths(projectId);
+  revalidateProjectPaths(projectId, `/equipment/requests/${requestId}`);
   return { success: true };
 }

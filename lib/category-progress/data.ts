@@ -6,42 +6,40 @@ import type { TaskProgressToday } from "@/lib/task-progress/data";
  * doc comment. Keyed by category id; a category with no Progress
  * Tracking Override recorded yet (which, in practice, is every category
  * that still has tasks — see 0048_category_progress_tracking.sql's own
- * comment) is simply absent. */
+ * comment) is simply absent.
+ *
+ * cumulativeMaterialUsage is always empty here — a task-less category
+ * has no planned material list of its own to log usage against (just
+ * its single direct line, see CostCategory.materialDirectQuantity), so
+ * its own Materials% is always excluded from its blend. */
 export type CategoryProgressAnchors = Record<number, ProgressAnchor>;
 
-/**
- * Same idea as listTaskProgressAnchors, one level up — see that
- * function's own doc comment.
- */
 export async function listCategoryProgressAnchors(
   categoryIds: number[]
 ): Promise<CategoryProgressAnchors> {
   if (categoryIds.length === 0) return {};
   const supabase = await createClient();
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("category_progress_entries")
-    .select("category_id, entry_date, quantity_completed")
-    .in("category_id", categoryIds);
+    .select("category_id, labor_headcount, percent_complete_override")
+    .in("category_id", categoryIds)
+    // Oldest first, so the last row seen per category below is the
+    // latest one — what latestPercentCompleteOverride is read from.
+    .order("entry_date", { ascending: true });
 
-  const sums = new Map<number, number>();
-  const latestDates = new Map<number, string>();
-  for (const row of data ?? []) {
-    sums.set(
-      row.category_id,
-      (sums.get(row.category_id) ?? 0) + (row.quantity_completed ?? 0)
-    );
-    const current = latestDates.get(row.category_id);
-    if (!current || row.entry_date > current) {
-      latestDates.set(row.category_id, row.entry_date);
-    }
+  if (error) {
+    console.error("[category-progress] entries query failed:", error.message);
   }
 
   const result: CategoryProgressAnchors = {};
-  for (const [categoryId, entryDate] of latestDates) {
-    result[categoryId] = {
-      entryDate,
-      cumulativeQuantityCompleted: sums.get(categoryId) ?? 0,
+  for (const row of data ?? []) {
+    const existing = result[row.category_id];
+    result[row.category_id] = {
+      cumulativeMaterialUsage: {},
+      cumulativeLaborHeadcount:
+        (existing?.cumulativeLaborHeadcount ?? 0) + (row.labor_headcount ?? 0),
+      latestPercentCompleteOverride: row.percent_complete_override,
     };
   }
   return result;
@@ -57,9 +55,7 @@ function todayIso() {
  * Same idea as listTaskProgressToday, one level up — see that
  * function's own doc comment. Fetched for every category regardless of
  * whether it has tasks (a category with tasks simply never has any
- * entries, harmless) rather than filtering here, same "fetch broadly,
- * let the UI decide what's reachable" shape the rest of this app's own
- * category/task lookups already use.
+ * entries, harmless).
  */
 export async function listCategoryProgressToday(
   projectId: number
@@ -75,62 +71,34 @@ export async function listCategoryProgressToday(
 
   const today = todayIso();
 
-  const { data: entries } = await supabase
+  const { data: entries, error } = await supabase
     .from("category_progress_entries")
-    .select("id, category_id, entry_date, quantity_completed, labor_headcount")
+    .select("category_id, entry_date, labor_headcount, percent_complete_override")
     .in("category_id", categoryIds);
 
-  const cumulative = new Map<number, number>();
-  const todayEntryByCategory = new Map<
-    number,
-    { id: number; quantityCompleted: number; laborHeadcount: number }
-  >();
-  for (const row of entries ?? []) {
-    cumulative.set(
-      row.category_id,
-      (cumulative.get(row.category_id) ?? 0) + (row.quantity_completed ?? 0)
-    );
-    if (row.entry_date === today) {
-      todayEntryByCategory.set(row.category_id, {
-        id: row.id,
-        quantityCompleted: row.quantity_completed ?? 0,
-        laborHeadcount: row.labor_headcount ?? 0,
-      });
-    }
-  }
-
-  const todayEntryIds = Array.from(todayEntryByCategory.values()).map(
-    (e) => e.id
-  );
-  const materialsByEntryId = new Map<
-    number,
-    { materialId: number; quantity: number }[]
-  >();
-  if (todayEntryIds.length > 0) {
-    const { data: usageRows } = await supabase
-      .from("category_progress_material_usage")
-      .select("progress_entry_id, material_id, quantity")
-      .in("progress_entry_id", todayEntryIds);
-    for (const row of usageRows ?? []) {
-      const list = materialsByEntryId.get(row.progress_entry_id) ?? [];
-      list.push({ materialId: row.material_id, quantity: row.quantity ?? 0 });
-      materialsByEntryId.set(row.progress_entry_id, list);
-    }
+  if (error) {
+    console.error("[category-progress] entries query failed:", error.message);
   }
 
   const result: Record<number, TaskProgressToday> = {};
   for (const categoryId of categoryIds) {
-    const todayEntry = todayEntryByCategory.get(categoryId);
     result[categoryId] = {
-      cumulativeQuantityCompleted: cumulative.get(categoryId) ?? 0,
-      today: todayEntry
-        ? {
-            quantityCompleted: todayEntry.quantityCompleted,
-            laborHeadcount: todayEntry.laborHeadcount,
-            materials: materialsByEntryId.get(todayEntry.id) ?? [],
-          }
-        : null,
+      cumulativeMaterialUsage: {},
+      cumulativeLaborHeadcount: 0,
+      today: null,
     };
+  }
+  for (const row of entries ?? []) {
+    const progress = result[row.category_id];
+    if (!progress) continue;
+    progress.cumulativeLaborHeadcount += row.labor_headcount ?? 0;
+    if (row.entry_date === today) {
+      progress.today = {
+        laborHeadcount: row.labor_headcount ?? 0,
+        materialUsage: {},
+        percentCompleteOverride: row.percent_complete_override,
+      };
+    }
   }
   return result;
 }

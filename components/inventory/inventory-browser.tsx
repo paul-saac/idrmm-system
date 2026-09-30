@@ -10,6 +10,7 @@ import {
   type SortDir,
   type SortKey,
 } from "@/components/inventory/equipment-table";
+import { usePortal } from "@/components/portal/portal-context";
 import type { EquipmentRow, EquipmentStatus } from "@/lib/equipment/data";
 
 const STATUS_FILTERS: { value: EquipmentStatus | "all"; label: string }[] = [
@@ -37,6 +38,8 @@ export function InventoryBrowser({
     { mode: "add" } | { mode: "edit"; equipment: EquipmentRow } | null
   >(null);
   const [assignTarget, setAssignTarget] = useState<EquipmentRow | null>(null);
+  // The company-wide inventory is view-only in the foreman portal.
+  const { isAdmin } = usePortal();
 
   function handleSort(key: SortKey) {
     if (key === sortKey) {
@@ -108,14 +111,16 @@ export function InventoryBrowser({
           <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
         </div>
 
-        <button
-          type="button"
-          onClick={() => setFormModal({ mode: "add" })}
-          className="ml-auto flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white hover:shadow-md active:translate-y-0"
-        >
-          <Plus className="size-4" />
-          Add Equipment
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => setFormModal({ mode: "add" })}
+            className="ml-auto flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white hover:shadow-md active:translate-y-0"
+          >
+            <Plus className="size-4" />
+            Add Equipment
+          </button>
+        )}
       </div>
 
       <p className="text-sm text-zinc-500">
@@ -130,8 +135,11 @@ export function InventoryBrowser({
         onSort={handleSort}
         onEdit={(item) => setFormModal({ mode: "edit", equipment: item })}
         onAssign={(item) => setAssignTarget(item)}
+        readOnly={!isAdmin}
       />
 
+      {isAdmin && (
+      <>
       <Modal
         open={formModal !== null}
         onClose={() => setFormModal(null)}
@@ -163,6 +171,8 @@ export function InventoryBrowser({
           />
         )}
       </Modal>
+      </>
+      )}
     </div>
   );
 }

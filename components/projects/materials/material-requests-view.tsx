@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react";
 import { MaterialRequestEditForm } from "@/components/projects/materials/material-request-edit-form";
+import { usePortal } from "@/components/portal/portal-context";
 import type {
   MaterialRequestListItem,
   MaterialRequestStatus,
@@ -83,6 +84,7 @@ export function MaterialRequestsView({
   const [requestOpen, setRequestOpen] = useState(false);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const router = useRouter();
+  const { basePath } = usePortal();
 
   const grouped = useMemo(() => {
     const map = new Map<MaterialRequestStatus, MaterialRequestListItem[]>();
@@ -192,7 +194,7 @@ export function MaterialRequestsView({
                     </tr>
                     {isOpen &&
                       rows.map((request) => {
-                        const href = `/admin/projects/${projectId}/materials/requests/${request.id}`;
+                        const href = `${basePath}/projects/${projectId}/materials/requests/${request.id}`;
                         return (
                           <tr
                             key={request.id}

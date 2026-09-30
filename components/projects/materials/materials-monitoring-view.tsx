@@ -162,13 +162,11 @@ export function MaterialsMonitoringView({
       if (row.kind === "stock") {
         return (
           row.material.materialName.toLowerCase().includes(q) ||
-          row.material.materialCode.toLowerCase().includes(q) ||
-          (row.material.specification ?? "").toLowerCase().includes(q)
+          row.material.materialCode.toLowerCase().includes(q)
         );
       }
       return (
         row.entry.materialName.toLowerCase().includes(q) ||
-        (row.entry.specification ?? "").toLowerCase().includes(q) ||
         row.entry.taskName.toLowerCase().includes(q) ||
         row.entry.categoryName.toLowerCase().includes(q)
       );
@@ -218,7 +216,7 @@ export function MaterialsMonitoringView({
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search Material Name, Id, Specification..."
+                placeholder="Search Material Name, Id..."
                 className="w-full rounded-md border border-zinc-200 py-2 pl-3 pr-9 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
               />
               <Search className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
@@ -238,7 +236,6 @@ export function MaterialsMonitoringView({
               <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
                 <tr>
                   <th className="px-4 py-2.5">Material Name</th>
-                  <th className="px-4 py-2.5">Specification / Size</th>
                   <th className="px-4 py-2.5">Quantity</th>
                   <th className="px-4 py-2.5">Unit</th>
                   <th className="px-4 py-2.5">Material Status</th>
@@ -255,9 +252,6 @@ export function MaterialsMonitoringView({
                     >
                       <td className="px-4 py-2.5 font-medium text-zinc-900">
                         {row.material.materialName}
-                      </td>
-                      <td className="px-4 py-2.5 text-zinc-600">
-                        {row.material.specification || "—"}
                       </td>
                       <td className="px-4 py-2.5 text-zinc-600">
                         {String(row.material.quantity).padStart(2, "0")}
@@ -308,9 +302,6 @@ export function MaterialsMonitoringView({
                         <p className="text-xs text-zinc-400">
                           {row.entry.categoryName} → {row.entry.taskName}
                         </p>
-                      </td>
-                      <td className="px-4 py-2.5 text-zinc-600">
-                        {row.entry.specification || "—"}
                       </td>
                       <td className="px-4 py-2.5 text-zinc-600">
                         {String(row.entry.plannedQuantity).padStart(2, "0")}

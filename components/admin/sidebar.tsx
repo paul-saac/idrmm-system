@@ -4,24 +4,31 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutGrid, Folder, Users, BarChart3, Wrench } from "lucide-react";
+import type { PortalBasePath } from "@/components/portal/portal-context";
 
+// Paths are relative to the portal's own base path. Accounts is admin-only
+// — a foreman only manages the projects assigned to them, not users.
 const NAV_ITEMS = [
-  { href: "/admin", label: "Dashboard", icon: LayoutGrid },
-  { href: "/admin/projects", label: "Projects", icon: Folder },
-  { href: "/admin/accounts", label: "Accounts", icon: Users },
-  { href: "/admin/reports", label: "Reports", icon: BarChart3 },
-  { href: "/admin/inventory", label: "Inventory", icon: Wrench },
+  { path: "", label: "Dashboard", icon: LayoutGrid, adminOnly: false },
+  { path: "/projects", label: "Projects", icon: Folder, adminOnly: false },
+  { path: "/accounts", label: "Accounts", icon: Users, adminOnly: true },
+  { path: "/reports", label: "Reports", icon: BarChart3, adminOnly: false },
+  { path: "/inventory", label: "Inventory", icon: Wrench, adminOnly: false },
 ];
 
-export function AdminSidebar({
+export function PortalSidebar({
+  basePath,
   name,
   email,
 }: {
+  basePath: PortalBasePath;
   name: string;
   email: string | null;
 }) {
   const pathname = usePathname();
   const initials = getInitials(name, email);
+  const isAdmin = basePath === "/admin";
+  const navItems = NAV_ITEMS.filter((item) => isAdmin || !item.adminOnly);
 
   // Sits collapsed (icon rail) at rest, expands on hover. No
   // localStorage here — unlike a click-to-toggle preference, "currently
@@ -69,18 +76,17 @@ export function AdminSidebar({
           }`}
         >
           <p className="truncate text-sm font-semibold text-white">
-            {name || "Admin"}
+            {name || (isAdmin ? "Admin" : "Foreman")}
           </p>
           <p className="truncate text-xs text-zinc-400">{email}</p>
         </div>
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-3">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ path, label, icon: Icon }) => {
+          const href = `${basePath}${path}`;
           const active =
-            href === "/admin"
-              ? pathname === "/admin"
-              : pathname.startsWith(href);
+            path === "" ? pathname === basePath : pathname.startsWith(href);
           return (
             <Link
               key={href}

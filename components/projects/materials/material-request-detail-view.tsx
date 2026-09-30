@@ -6,6 +6,7 @@ import { ChevronLeft } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { MaterialRequestEditForm } from "@/components/projects/materials/material-request-edit-form";
+import { usePortal, type PortalBasePath } from "@/components/portal/portal-context";
 import {
   approveMaterialRequest,
   cancelMaterialRequest,
@@ -20,8 +21,8 @@ import type {
 
 // Where the back chevron returns to — the Materials tab's Material
 // Requests sub-tab specifically, not just the project root.
-function materialRequestsListHref(projectId: number) {
-  return `/admin/projects/${projectId}?tab=materials&subtab=requests`;
+function materialRequestsListHref(basePath: PortalBasePath, projectId: number) {
+  return `${basePath}/projects/${projectId}?tab=materials&subtab=requests`;
 }
 
 function StatusBadge({ status }: { status: MaterialRequestStatus }) {
@@ -172,27 +173,28 @@ export function MaterialRequestDetailView({
   const [editOpen, setEditOpen] = useState(false);
   const isTerminal = request.status === "fulfilled" || request.status === "canceled";
   const projectId = request.projectId;
+  const { basePath } = usePortal();
 
   return (
     <>
       <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-8 py-5">
         <nav className="flex items-center gap-1.5 text-sm">
           <Link
-            href="/admin/projects"
+            href={`${basePath}/projects`}
             className="text-zinc-500 transition hover:text-zinc-900"
           >
             Projects
           </Link>
           <span className="text-zinc-300">/</span>
           <Link
-            href={materialRequestsListHref(projectId)}
+            href={materialRequestsListHref(basePath, projectId)}
             className="text-zinc-500 transition hover:text-zinc-900"
           >
             Materials
           </Link>
           <span className="text-zinc-300">/</span>
           <Link
-            href={materialRequestsListHref(projectId)}
+            href={materialRequestsListHref(basePath, projectId)}
             className="text-zinc-500 transition hover:text-zinc-900"
           >
             Material Requests
@@ -208,7 +210,7 @@ export function MaterialRequestDetailView({
           <div className="rounded-lg border border-zinc-200 bg-white p-6">
             <div className="flex items-center justify-between">
               <Link
-                href={materialRequestsListHref(projectId)}
+                href={materialRequestsListHref(basePath, projectId)}
                 className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 transition hover:text-zinc-600"
               >
                 <ChevronLeft className="size-4" />

@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Search } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import { usePortal } from "@/components/portal/portal-context";
 
 export type ProjectOption = { id: number; name: string };
 
@@ -16,6 +17,7 @@ export function ProjectPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const { basePath } = usePortal();
 
   const filtered = projects.filter((p) =>
     p.name.toLowerCase().includes(query.trim().toLowerCase())
@@ -50,7 +52,7 @@ export function ProjectPicker({
             filtered.map((project) => (
               <Link
                 key={project.id}
-                href={`/admin/reports?projectId=${project.id}`}
+                href={`${basePath}/reports?projectId=${project.id}`}
                 onClick={() => setOpen(false)}
                 className={`flex items-center justify-between gap-3 px-1 py-2.5 text-sm transition hover:bg-zinc-50 ${
                   project.id === selectedProjectId

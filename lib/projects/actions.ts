@@ -1,9 +1,10 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateProjectLists, revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 import { seedDefaultSurveyQuestions } from "@/lib/daily-logs/actions";
 
 export type ProjectActionState = {
@@ -89,7 +90,7 @@ export async function createProject(
   // question (see seedDefaultSurveyQuestions's own doc comment).
   await seedDefaultSurveyQuestions(supabase, project.id);
 
-  revalidatePath("/admin/projects");
+  revalidateProjectLists();
   return { success: true };
 }
 
@@ -148,8 +149,8 @@ export async function updateProject(
     return { error: "Could not save changes. Please try again." };
   }
 
-  revalidatePath("/admin/projects");
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProjectLists();
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -166,21 +167,24 @@ export async function updateProjectDefaultLaborCostPercent(
   projectId: number,
   percent: number | null
 ): Promise<ProjectActionState> {
-  const profile = await getSessionProfile();
+  const profile = await requireProjectAccess(projectId);
 
-  if (!profile || profile.role !== "admin") {
-    return { error: "You are not authorized to edit projects." };
+  if (!profile) {
+    return { error: "You are not authorized to edit this project's labor rate." };
   }
 
   if (percent != null && (!Number.isFinite(percent) || percent < 0 || percent > 100)) {
     return { error: "Enter a percentage between 0 and 100." };
   }
 
+  // Through a column-scoped database function rather than a direct
+  // update, so a foreman can set this without write access to the rest of
+  // the project row — see 0051_foreman_project_access.sql.
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("projects")
-    .update({ default_labor_cost_percent: percent })
-    .eq("id", projectId);
+  const { error } = await supabase.rpc("set_project_default_labor_cost_percent", {
+    p_project_id: projectId,
+    p_percent: percent,
+  });
 
   if (error) {
     console.error(
@@ -190,7 +194,7 @@ export async function updateProjectDefaultLaborCostPercent(
     return { error: "Could not save changes. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -216,6 +220,6 @@ export async function deleteProject(
     return { error: "Could not delete project. Please try again." };
   }
 
-  revalidatePath("/admin/projects");
+  revalidateProjectLists();
   redirect("/admin/projects");
 }

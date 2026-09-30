@@ -5,6 +5,7 @@ import { Search, Plus } from "lucide-react";
 import { ProjectCard } from "@/components/projects/project-card";
 import { Modal } from "@/components/ui/modal";
 import { CreateProjectForm } from "@/components/projects/create-project-form";
+import { usePortal } from "@/components/portal/portal-context";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { ProjectStatus } from "@/lib/supabase/types";
 import type { AccountRow } from "@/lib/accounts/data";
@@ -30,6 +31,9 @@ export function ProjectsBrowser({
     "all"
   );
   const [addOpen, setAddOpen] = useState(false);
+  // Foremen only see the projects assigned to them (row-level security
+  // already filters `projects`) and can't create new ones.
+  const { basePath, isAdmin } = usePortal();
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -75,41 +79,47 @@ export function ProjectsBrowser({
           ))}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setAddOpen(true)}
-          className="ml-auto flex items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
-        >
-          <Plus className="size-4" />
-          Add Project
-        </button>
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="ml-auto flex items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
+          >
+            <Plus className="size-4" />
+            Add Project
+          </button>
+        )}
       </div>
 
       {filtered.length === 0 ? (
         <p className="py-12 text-center text-sm text-zinc-500">
           {projects.length === 0
-            ? "No projects yet — create the first one."
+            ? isAdmin
+              ? "No projects yet — create the first one."
+              : "No projects are assigned to you yet."
             : "No projects match your search/filter."}
         </p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((project) => (
-            <ProjectCard key={project.id} project={project} />
+            <ProjectCard key={project.id} project={project} basePath={basePath} />
           ))}
         </div>
       )}
 
-      <Modal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        title="Add Project"
-      >
-        <CreateProjectForm
-          projectManagers={projectManagers}
-          foremen={foremen}
-          onSuccess={() => setAddOpen(false)}
-        />
-      </Modal>
+      {isAdmin && (
+        <Modal
+          open={addOpen}
+          onClose={() => setAddOpen(false)}
+          title="Add Project"
+        >
+          <CreateProjectForm
+            projectManagers={projectManagers}
+            foremen={foremen}
+            onSuccess={() => setAddOpen(false)}
+          />
+        </Modal>
+      )}
     </div>
   );
 }

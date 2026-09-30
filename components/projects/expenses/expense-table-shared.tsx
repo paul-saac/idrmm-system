@@ -62,6 +62,9 @@ export function GroupHeaderRow({
               {count}
             </span>
           </button>
+          {/* DAILY LOGS — ON HOLD for the foreman portal: expense rows come
+              from daily logs, which foremen can't read yet (so they never
+              see a row with this link), and the detail page is /admin-only. */}
           <Link
             href={`/admin/projects/${projectId}/daily-logs/${dailyLogId}`}
             onClick={(e) => e.stopPropagation()}

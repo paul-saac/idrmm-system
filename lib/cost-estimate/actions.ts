@@ -1,9 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 import { recordGanttCheckpoint } from "@/lib/cost-estimate/undo-redo";
 import type { CostCategory } from "@/lib/cost-estimate/data";
 
@@ -94,12 +94,6 @@ async function safely(
   }
 }
 
-async function requireAdmin() {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") return null;
-  return profile;
-}
-
 function parseNumber(value: FormDataEntryValue | null) {
   const num = Number(String(value ?? "0").trim());
   return Number.isFinite(num) ? num : 0;
@@ -157,64 +151,6 @@ async function validatePredecessor(
   return null;
 }
 
-/**
- * Recomputes every task's weight (its share of the project's total
- * estimated cost) and every category's weight (the sum of its tasks'
- * weights) for a project. Called after any task create/update/delete,
- * since adding or changing one task shifts the project total and
- * therefore every other task's percentage too.
- *
- * Weight is stored, not just computed for display, so a future
- * progress-tracking feature can read it directly instead of re-deriving
- * it from every task's cost on every request.
- */
-async function recomputeWeights(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  projectId: number
-) {
-  const { data: tasks } = await supabase
-    .from("estimate_tasks")
-    .select("id, category_id, total_estimate_cost")
-    .eq("project_id", projectId);
-
-  const rows = tasks ?? [];
-  const projectTotal = rows.reduce(
-    (sum, row) => sum + (row.total_estimate_cost ?? 0),
-    0
-  );
-
-  const categoryWeights = new Map<number, number>();
-
-  await Promise.all(
-    rows.map(async (row) => {
-      const weight =
-        projectTotal > 0
-          ? Math.round(((row.total_estimate_cost ?? 0) / projectTotal) * 10000) /
-            100
-          : 0;
-      categoryWeights.set(
-        row.category_id,
-        (categoryWeights.get(row.category_id) ?? 0) + weight
-      );
-      await supabase.from("estimate_tasks").update({ weight }).eq("id", row.id);
-    })
-  );
-
-  const { data: categories } = await supabase
-    .from("estimate_categories")
-    .select("id")
-    .eq("project_id", projectId);
-
-  await Promise.all(
-    (categories ?? []).map((category) =>
-      supabase
-        .from("estimate_categories")
-        .update({ weight: categoryWeights.get(category.id) ?? 0 })
-        .eq("id", category.id)
-    )
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Categories
 // ---------------------------------------------------------------------------
@@ -225,7 +161,7 @@ export async function createCategory(
   formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -253,7 +189,7 @@ export async function createCategory(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true, categoryId: data.id };
   });
 }
@@ -265,7 +201,7 @@ export async function updateCategory(
   formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -287,7 +223,7 @@ export async function updateCategory(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -299,7 +235,7 @@ export async function deleteCategory(
   _formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -331,7 +267,7 @@ export async function deleteCategory(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -473,7 +409,7 @@ export async function createTask(
   formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -625,10 +561,8 @@ export async function createTask(
       }
     }
 
-    await recomputeWeights(supabase, projectId);
-
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true, taskId: task.id };
   });
 }
@@ -637,6 +571,213 @@ export async function createTask(
 // here — removed as dead code once task-form.tsx (its sole caller) was
 // deleted along with that tab's own editing capability. Gantt's own
 // updateSubtask below is the one real task-edit path now.
+
+// ---------------------------------------------------------------------------
+// Import with AI
+// ---------------------------------------------------------------------------
+
+export type BomImportMaterialInput = {
+  name: string;
+  quantity: string;
+  unit: string;
+  unitCost: string;
+};
+
+export type BomImportTaskInput = {
+  name: string;
+  quantity: string;
+  unit: string;
+  materials: BomImportMaterialInput[];
+};
+
+export type BomImportCategoryInput = {
+  name: string;
+  /** This category's own direct amount — only meaningful (and only
+   * ever applied below) while `tasks` is empty. See ExtractedCategory's
+   * own doc comment (lib/bom-import/actions.ts) for where this comes
+   * from. */
+  amount: string;
+  tasks: BomImportTaskInput[];
+};
+
+/**
+ * Writes an admin-reviewed "Import with AI" draft to the project —
+ * every category becomes a real estimate_categories row, every task a
+ * real estimate_tasks row under it, every material line a real
+ * estimate_task_material_assignments row under that. Called once, from
+ * the review step's own "Confirm & Create Tasks" button, with whatever
+ * the admin has at that point (Gemini's own extraction from
+ * extractBomFromFile in lib/bom-import/actions.ts, corrected by hand as
+ * needed) — nothing before this point ever touches the database.
+ *
+ * Rows are created sequentially, not as one batch insert per table —
+ * each category/task needs its own id back before the next level can
+ * reference it as a foreign key, and a multi-row INSERT isn't
+ * guaranteed to return its rows in the same order they were given, so
+ * batching them and matching ids back up by array index would be a
+ * real (if rare) correctness risk — a task silently attached to the
+ * wrong category. Materials are the one exception: they have no
+ * children of their own to need an id back for, so each task's own
+ * material lines go in as a single batch insert.
+ *
+ * A task's own material_estimate/total_estimate_cost are computed here
+ * from its material lines' own (quantity * unitCost) sum — the same
+ * formula updateTaskMaterialAssignments already uses for the same two
+ * columns — so an imported task's own cost total is correct immediately,
+ * not left at 0 until someone happens to reopen Material Breakdown and
+ * resave it. A category with no tasks of its own instead gets its own
+ * `amount` written straight to material_direct_amount/
+ * category_material_estimate (the same two columns
+ * updateCategoryMaterialDirect uses for a category created by hand) —
+ * this is the standalone-line-item case (e.g. a BOM's own "MOBILIZATION"
+ * row with a peso amount and nothing broken out underneath it); a
+ * category that does have tasks leaves those two columns at their
+ * defaults, since its own total is already a rollup of its tasks.
+ *
+ * recordGanttCheckpoint runs once at the very end (or as soon as
+ * something fails), not per row — this reads as one single undo step,
+ * matching what a bulk import actually is to the admin, not dozens of
+ * separate ones. An imported task/category's own weight is left at its
+ * default (0) either way — see updateTaskWeight's own doc comment for
+ * why weight is never derived automatically anymore; the PM assigns it
+ * by hand afterward, the same as any other task.
+ */
+export async function applyBomImport(
+  projectId: number,
+  categories: BomImportCategoryInput[]
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const cleanCategories = categories
+      .map((category) => ({
+        name: category.name.trim(),
+        amount: parseNumber(category.amount),
+        tasks: category.tasks
+          .map((task) => ({
+            name: task.name.trim(),
+            quantity: parseNumber(task.quantity),
+            unit: task.unit.trim(),
+            materials: task.materials
+              .map((material) => ({
+                name: material.name.trim(),
+                quantity: parseNumber(material.quantity),
+                unit: material.unit.trim(),
+                unitCost: parseNumber(material.unitCost),
+              }))
+              .filter((material) => material.name.length > 0),
+          }))
+          .filter((task) => task.name.length > 0),
+      }))
+      .filter((category) => category.name.length > 0);
+
+    if (cleanCategories.length === 0) {
+      return {
+        error: "There's nothing to import — add at least one category with a name.",
+      };
+    }
+
+    const supabase = await createClient();
+
+    for (const category of cleanCategories) {
+      const isStandalone = category.tasks.length === 0 && category.amount > 0;
+
+      const { data: categoryRow, error: categoryError } = await supabase
+        .from("estimate_categories")
+        .insert({
+          project_id: projectId,
+          category_name: category.name,
+          ...(isStandalone && {
+            material_direct_amount: category.amount,
+            category_material_estimate: category.amount,
+          }),
+        })
+        .select("id")
+        .single();
+
+      if (categoryError || !categoryRow) {
+        if (categoryError) {
+          logSupabaseError(
+            "[applyBomImport] Supabase category insert failed",
+            categoryError
+          );
+        }
+        await recordGanttCheckpoint(supabase, projectId, profile.id);
+        revalidateProjectPaths(projectId);
+        return {
+          error: `Could not create "${category.name}" — the import stopped partway through; whatever was already created is still saved. Please try again for the rest.`,
+        };
+      }
+
+      for (const task of category.tasks) {
+        const materialEstimate = task.materials.reduce(
+          (sum, material) => sum + material.quantity * material.unitCost,
+          0
+        );
+
+        const { data: taskRow, error: taskError } = await supabase
+          .from("estimate_tasks")
+          .insert({
+            project_id: projectId,
+            category_id: categoryRow.id,
+            task_name: task.name,
+            estimated_quantity: task.quantity,
+            unit: task.unit || null,
+            material_estimate: materialEstimate,
+            total_estimate_cost: materialEstimate,
+            priority: "medium",
+          })
+          .select("id")
+          .single();
+
+        if (taskError || !taskRow) {
+          if (taskError) {
+            logSupabaseError("[applyBomImport] Supabase task insert failed", taskError);
+          }
+          await recordGanttCheckpoint(supabase, projectId, profile.id);
+          revalidateProjectPaths(projectId);
+          return {
+            error: `Could not create "${task.name}" under "${category.name}" — the import stopped partway through; whatever was already created is still saved. Please try again for the rest.`,
+          };
+        }
+
+        if (task.materials.length > 0) {
+          const { error: materialError } = await supabase
+            .from("estimate_task_material_assignments")
+            .insert(
+              task.materials.map((material) => ({
+                task_id: taskRow.id,
+                material_name: material.name,
+                planned_quantity: material.quantity,
+                unit: material.unit || null,
+                unit_cost: material.unitCost,
+              }))
+            );
+
+          if (materialError) {
+            // Doesn't abort the import — the task row itself already
+            // saved correctly, same "a partial failure is still real
+            // DB state, not nothing" reasoning createTask's own material-
+            // assignment error path above already uses. Only this one
+            // task's own material breakdown is affected; it can always
+            // be re-added by hand from Material Breakdown afterward.
+            logSupabaseError(
+              "[applyBomImport] Supabase material-assignment insert failed",
+              materialError
+            );
+          }
+        }
+      }
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
 
 /**
  * Persists a drag-move or drag-resize on the Gantt Chart view — just
@@ -652,7 +793,7 @@ export async function updateTaskSchedule(
   plannedEndDate: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -689,7 +830,7 @@ export async function updateTaskSchedule(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -708,7 +849,7 @@ export async function updateCategorySchedule(
   plannedEndDate: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -737,7 +878,7 @@ export async function updateCategorySchedule(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -756,7 +897,7 @@ export async function updateTaskPriority(
   priority: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -776,7 +917,7 @@ export async function updateTaskPriority(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -792,7 +933,7 @@ export async function updateCategoryPriority(
   priority: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -815,7 +956,101 @@ export async function updateCategoryPriority(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
+/**
+ * A task's own weight — its share of effort/importance within the
+ * project (0-100), assigned by hand by the PM, deliberately NOT derived
+ * from cost (see this file's own former recomputeWeights, removed in
+ * favor of this — a task's weight used to be its share of the project's
+ * total estimated cost, recomputed automatically after every task
+ * create/update/delete; the PM's own judgment of how much a task
+ * matters replaces that entirely now, per an explicit request). Nothing
+ * here enforces every task's weight summing to exactly 100 across the
+ * project — the Gantt Chart's own toolbar shows how much of the 100 is
+ * still unassigned as a live running total instead, the same "guide,
+ * don't hard-block" role that total already plays elsewhere in this
+ * app for a similar reason (e.g. cost estimate totals).
+ *
+ * This is what getProjectProgress (lib/progress/data.ts) reads for its
+ * own Earned Value rollup: a task's contribution to the project's
+ * overall percent complete is `weight * percentComplete / 100`.
+ */
+export async function updateTaskWeight(
+  taskId: number,
+  projectId: number,
+  weight: number
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
+      return { error: "Weight must be a number between 0 and 100." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({ weight })
+      .eq("id", taskId);
+
+    if (error) {
+      logSupabaseError("[updateTaskWeight] Supabase update failed", error);
+      return { error: "Could not save the new weight. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
+/**
+ * Same idea as updateTaskWeight above, one level up — but only ever
+ * meaningful for a category with no tasks of its own yet (the same
+ * asymmetric "task-less category gets its own direct value" rule
+ * already used for its own material line and percent complete — see
+ * CostCategory.materialDirectAmountOverride's own doc comment). A
+ * category WITH tasks never has its own weight set directly here — its
+ * effective weight is always just the live sum of its tasks' own
+ * weights instead (computed where it's read, e.g. the Gantt Chart's own
+ * category row and getProjectProgress's own category rollup), the same
+ * "has tasks -> live rollup, no tasks -> own stored value" split
+ * categoryAmount (material-breakdown-modal-content.tsx) already uses
+ * for the identical reason.
+ */
+export async function updateCategoryWeight(
+  categoryId: number,
+  projectId: number,
+  weight: number
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
+      return { error: "Weight must be a number between 0 and 100." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_categories")
+      .update({ weight })
+      .eq("id", categoryId);
+
+    if (error) {
+      logSupabaseError("[updateCategoryWeight] Supabase update failed", error);
+      return { error: "Could not save the new weight. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -835,7 +1070,7 @@ export async function renameTask(
   name: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -855,7 +1090,7 @@ export async function renameTask(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -944,7 +1179,7 @@ export async function updateSubtask(
   formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1033,7 +1268,7 @@ export async function updateSubtask(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -1045,7 +1280,7 @@ export async function deleteTask(
   _formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1061,10 +1296,8 @@ export async function deleteTask(
       return { error: "Could not delete task item. Please try again." };
     }
 
-    await recomputeWeights(supabase, projectId);
-
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -1105,7 +1338,7 @@ export async function updateTaskMaterialAssignments(
   }[]
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1227,7 +1460,7 @@ export async function updateTaskMaterialAssignments(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -1249,7 +1482,7 @@ export async function updateTaskLaborEstimate(
   laborEstimate: number
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1289,7 +1522,7 @@ export async function updateTaskLaborEstimate(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -1322,7 +1555,7 @@ export async function applyLaborRateProjectWide(
   percent: number
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1420,7 +1653,7 @@ export async function applyLaborRateProjectWide(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -1442,7 +1675,7 @@ export async function updateCategoryLaborEstimate(
   laborEstimate: number
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1459,7 +1692,7 @@ export async function updateCategoryLaborEstimate(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }
@@ -1486,7 +1719,7 @@ export async function updateCategoryMaterialDirect(
   }
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireAdmin();
+    const profile = await requireProjectAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1526,7 +1759,7 @@ export async function updateCategoryMaterialDirect(
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidatePath(`/admin/projects/${projectId}`);
+    revalidateProjectPaths(projectId);
     return { success: true };
   });
 }

@@ -1,8 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateInventory, revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 import type { EquipmentStatus } from "@/lib/equipment/data";
 
 export type EquipmentActionState = {
@@ -82,7 +83,7 @@ export async function createEquipment(
     return { error: "Could not add the equipment. Please try again." };
   }
 
-  revalidatePath("/admin/inventory");
+  revalidateInventory();
   return { success: true };
 }
 
@@ -168,7 +169,7 @@ export async function updateEquipment(
     return { error: "Could not update the equipment. Please try again." };
   }
 
-  revalidatePath("/admin/inventory");
+  revalidateInventory();
   return { success: true };
 }
 
@@ -190,7 +191,7 @@ export async function deleteEquipment(
     return { error: "Could not delete the equipment. Please try again." };
   }
 
-  revalidatePath("/admin/inventory");
+  revalidateInventory();
   return { success: true };
 }
 
@@ -265,8 +266,8 @@ export async function assignEquipment(
     return { error: "Could not assign the equipment. Please try again." };
   }
 
-  revalidatePath("/admin/inventory");
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateInventory();
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -282,13 +283,12 @@ export async function returnEquipment(
   _prevState: EquipmentActionState,
   _formData: FormData
 ): Promise<EquipmentActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to return equipment." };
   }
 
   const supabase = await createClient();
-  const now = new Date().toISOString();
 
   const { data: activeAssignment } = await supabase
     .from("equipment_assignments")
@@ -302,26 +302,17 @@ export async function returnEquipment(
   if (activeAssignment) {
     await supabase
       .from("equipment_assignments")
-      .update({ returned_at: now })
+      .update({ returned_at: new Date().toISOString() })
       .eq("id", activeAssignment.id);
   }
 
-  const { error } = await supabase
-    .from("equipment")
-    .update({
-      status: "available",
-      current_project_id: null,
-      last_returned_at: now,
-    })
-    .eq("id", equipmentId);
-
-  if (error) {
-    console.error("[returnEquipment] Supabase update failed:", error.message);
+  const syncError = await syncEquipmentStatus(supabase, equipmentId);
+  if (syncError) {
     return { error: "Could not mark the equipment as returned. Please try again." };
   }
 
-  revalidatePath("/admin/inventory");
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateInventory();
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -337,55 +328,19 @@ export async function returnEquipment(
 async function syncEquipmentStatus(
   supabase: Awaited<ReturnType<typeof createClient>>,
   equipmentId: number
-) {
-  const { data: current } = await supabase
-    .from("equipment")
-    .select("status")
-    .eq("id", equipmentId)
-    .single();
-
-  if (current?.status === "maintenance" || current?.status === "retired") {
-    return;
+): Promise<string | null> {
+  // Done in the database (sync_equipment_status, see
+  // 0051_foreman_project_access.sql) so a foreman working from their own
+  // project's Equipment tab can keep the inventory row in sync without
+  // having write access to the inventory itself.
+  const { error } = await supabase.rpc("sync_equipment_status", {
+    p_equipment_id: equipmentId,
+  });
+  if (error) {
+    console.error("[syncEquipmentStatus] Supabase rpc failed:", error.message);
+    return error.message;
   }
-
-  const { data: activeAssignment } = await supabase
-    .from("equipment_assignments")
-    .select("project_id, assigned_at")
-    .eq("equipment_id", equipmentId)
-    .is("returned_at", null)
-    .order("assigned_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (activeAssignment) {
-    await supabase
-      .from("equipment")
-      .update({
-        status: "assigned",
-        current_project_id: activeAssignment.project_id,
-        last_assigned_at: activeAssignment.assigned_at,
-      })
-      .eq("id", equipmentId);
-    return;
-  }
-
-  const { data: lastReturned } = await supabase
-    .from("equipment_assignments")
-    .select("returned_at")
-    .eq("equipment_id", equipmentId)
-    .not("returned_at", "is", null)
-    .order("returned_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  await supabase
-    .from("equipment")
-    .update({
-      status: "available",
-      current_project_id: null,
-      last_returned_at: lastReturned?.returned_at ?? null,
-    })
-    .eq("id", equipmentId);
+  return null;
 }
 
 /**
@@ -402,8 +357,8 @@ export async function updateEquipmentAssignment(
   _prevState: EquipmentActionState,
   formData: FormData
 ): Promise<EquipmentActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to edit this assignment." };
   }
 
@@ -451,8 +406,8 @@ export async function updateEquipmentAssignment(
 
   await syncEquipmentStatus(supabase, equipmentId);
 
-  revalidatePath("/admin/inventory");
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateInventory();
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -468,8 +423,8 @@ export async function deleteEquipmentAssignment(
   _prevState: EquipmentActionState,
   _formData: FormData
 ): Promise<EquipmentActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to delete this assignment." };
   }
 
@@ -489,7 +444,7 @@ export async function deleteEquipmentAssignment(
 
   await syncEquipmentStatus(supabase, equipmentId);
 
-  revalidatePath("/admin/inventory");
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateInventory();
+  revalidateProjectPaths(projectId);
   return { success: true };
 }

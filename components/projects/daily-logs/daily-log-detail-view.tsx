@@ -76,6 +76,9 @@ function formatCurrency(amount: number) {
 // Where the back button (and the delete redirect) return to — the
 // Daily Logs list specifically, not just the project root, which
 // defaults to the Overview tab.
+// DAILY LOGS — ON HOLD for the foreman portal: this page only exists under
+// /admin (no foreman daily-log route yet), so its links stay /admin-only.
+// Switch them to usePortal().basePath when daily logs reach foremen.
 function dailyLogsListHref(projectId: number) {
   return `/admin/projects/${projectId}?tab=progress&subtab=daily-logs`;
 }

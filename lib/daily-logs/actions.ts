@@ -1,5 +1,12 @@
 "use server";
 
+// DAILY LOGS — ON HOLD for the foreman portal: every action here stays
+// admin-only and only refreshes /admin paths, and no daily_log_* table has
+// a foreman RLS policy yet (see 0051_foreman_project_access.sql). When
+// daily logs are picked back up, swap these checks to requireProjectAccess
+// (lib/auth/project-access.ts) and revalidatePath to revalidateProjectPaths
+// (lib/projects/revalidate.ts), same as every other project action.
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";

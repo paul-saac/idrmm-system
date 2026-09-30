@@ -1,8 +1,8 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { createClient } from "@/lib/supabase/server";
-import { getSessionProfile } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 import { deriveMaterialRequestStatus } from "@/lib/material-requests/status";
 import type { MaterialRequestPriority } from "@/lib/material-requests/data";
 
@@ -99,7 +99,7 @@ export async function createMaterialRequest(
   _prevState: MaterialRequestActionState,
   formData: FormData
 ): Promise<MaterialRequestActionState> {
-  const profile = await getSessionProfile();
+  const profile = await requireProjectAccess(projectId);
   if (!profile) {
     return { error: "You are not authorized to submit material requests." };
   }
@@ -153,7 +153,7 @@ export async function createMaterialRequest(
     return { error: "Could not submit the material request. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
 
@@ -163,8 +163,8 @@ export async function updateMaterialRequest(
   _prevState: MaterialRequestActionState,
   formData: FormData
 ): Promise<MaterialRequestActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to edit this material request." };
   }
 
@@ -274,8 +274,8 @@ export async function updateMaterialRequest(
     return { error: "Could not update the material request. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
-  revalidatePath(`/admin/projects/${projectId}/materials/requests/${requestId}`);
+  revalidateProjectPaths(projectId);
+  revalidateProjectPaths(projectId, `/materials/requests/${requestId}`);
   return { success: true };
 }
 
@@ -285,8 +285,8 @@ export async function approveMaterialRequest(
   _prevState: MaterialRequestActionState,
   _formData: FormData
 ): Promise<MaterialRequestActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to approve material requests." };
   }
 
@@ -306,8 +306,8 @@ export async function approveMaterialRequest(
     return { error: "Could not approve the material request. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
-  revalidatePath(`/admin/projects/${projectId}/materials/requests/${requestId}`);
+  revalidateProjectPaths(projectId);
+  revalidateProjectPaths(projectId, `/materials/requests/${requestId}`);
   return { success: true };
 }
 
@@ -317,8 +317,8 @@ export async function cancelMaterialRequest(
   _prevState: MaterialRequestActionState,
   _formData: FormData
 ): Promise<MaterialRequestActionState> {
-  const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
     return { error: "You are not authorized to cancel material requests." };
   }
 
@@ -333,7 +333,7 @@ export async function cancelMaterialRequest(
     return { error: "Could not cancel the material request. Please try again." };
   }
 
-  revalidatePath(`/admin/projects/${projectId}`);
-  revalidatePath(`/admin/projects/${projectId}/materials/requests/${requestId}`);
+  revalidateProjectPaths(projectId);
+  revalidateProjectPaths(projectId, `/materials/requests/${requestId}`);
   return { success: true };
 }

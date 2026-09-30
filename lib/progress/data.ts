@@ -1,6 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
 import type { CostCategory } from "@/lib/cost-estimate/data";
-import { listFlaggedEntryIds } from "@/lib/daily-logs/data";
 
 export type TaskStatus = "completed" | "in_progress" | "not_started";
 
@@ -37,70 +35,55 @@ function statusFor(percent: number): TaskStatus {
   return "not_started";
 }
 
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 /**
- * Computes each task's current completion % and rolls it up into
- * category and project-wide progress. Takes the Cost Estimate
- * Breakdown's categories/tasks (already fetched by the caller for the
- * Overview tab — no need to re-query estimate_categories/estimate_tasks
- * here) and layers actual progress data on top.
+ * Rolls each task/category's own live percentComplete (Automatic
+ * Progress Completion — computeAutoPercentComplete, already computed
+ * server-side in getCostEstimate for every CostTask/CostCategory, see
+ * lib/cost-estimate/data.ts) up into category and project-wide
+ * progress: Earned Value Management. A task/category's own contribution
+ * to the project's overall percent is its own weight (0-100, PM-
+ * assigned effort — see updateTaskWeight's own doc comment, lib/cost-
+ * estimate/actions.ts) times its own percentComplete.
  *
- * A task's percent_complete is the sum of "Quantity Completed" logged
- * against it across every APPROVED daily log's Work Log entries,
- * divided by the task's estimated_quantity from the Cost Estimate
- * Breakdown — e.g. 30 of 50 m² logged across two approved days is 60%.
- * This reads daily_log_work_items (what the Add Daily Log modal's Work
- * Log form actually writes), not the separate daily_log_progress table
- * — that table was part of an earlier progress-tracking design that
- * predates Work Logs and nothing ever wrote to it, so it stayed at 0%
- * forever regardless of approvals. On a project with no approved logs
- * yet this correctly comes back as 0% / not started for every task, not
- * an error.
+ * Deliberately does NOT re-derive percentComplete from daily logs the
+ * way this function used to (summing daily_log_work_items' own
+ * quantity per task, divided by estimated_quantity) — that was a
+ * second, competing definition of "done" that ignored a task's own
+ * Progress Tracking Override entirely, per an explicit request to stop
+ * computing progress from quantity/daily logs. `categories` already
+ * carries the correct, single source of truth for both fields (the
+ * same one the Gantt Chart itself reads), so this just reads it back
+ * instead of re-querying daily_logs/daily_log_work_items at all.
  *
- * Project-wide % is the weighted sum of every task's percentComplete by
- * its estimate_tasks.weight (already a % of the project total, see
- * lib/cost-estimate/actions.ts). Category % re-normalizes each task's
- * weight against just that category's total weight, so it reads 0-100
- * relative to the category rather than the whole project.
+ * A task-less category (see CostCategory.percentComplete's own doc
+ * comment) contributes its own percentComplete/weight directly to the
+ * project total — same asymmetric "task-less category gets its own
+ * direct value" rule already used everywhere else in this app (its own
+ * material line, its own priority, ...). The previous version of this
+ * function silently excluded a task-less category from overallPercent
+ * entirely (its weightedSum contribution only ever accumulated inside
+ * the per-task loop, which a category with zero tasks never runs) — a
+ * standalone category's own Progress Tracking Override never moved the
+ * project-wide number at all. Fixed here as part of the same rollup
+ * work, not a separate change.
+ *
+ * A category's own effective weight is the live sum of its tasks' own
+ * weights while it has any — never its own stored estimate_categories.
+ * weight column in that case, since nothing keeps that column in sync
+ * anymore now that weight is assigned by hand per task instead of
+ * recomputed from cost (see updateCategoryWeight's own doc comment) —
+ * or its own stored value while task-less. Same "has tasks -> live
+ * rollup, no tasks -> own value" split gantt-chart-view.tsx's own
+ * categoryById already uses for the identical cell.
  */
 export async function getProjectProgress(
   projectId: number,
   categories: CostCategory[]
 ): Promise<ProjectProgress> {
-  const supabase = await createClient();
-
-  const { data: approvedLogs } = await supabase
-    .from("daily_logs")
-    .select("id")
-    .eq("project_id", projectId)
-    .eq("status", "approved");
-
-  const approvedLogIds = (approvedLogs ?? []).map((log) => log.id);
-
-  const [{ data: workItemRows }, flaggedWorkItemIds] = await Promise.all([
-    approvedLogIds.length > 0
-      ? supabase
-          .from("daily_log_work_items")
-          .select("id, task_id, quantity_completed")
-          .in("daily_log_id", approvedLogIds)
-      : Promise.resolve({ data: [] as never[] }),
-    listFlaggedEntryIds(supabase, "work_item", approvedLogIds),
-  ]);
-
-  // Sum every approved Work Log entry's quantity per task — a task
-  // logged on several different days accumulates toward its estimate,
-  // it isn't just whichever entry happened most recently. An entry an
-  // admin flagged as wrong during review doesn't count, even though its
-  // log was still approved as a whole (see lib/daily-logs/actions.ts's
-  // flagDailyLogEntry).
-  const quantityDoneByTask = new Map<number, number>();
-  for (const row of workItemRows ?? []) {
-    if (flaggedWorkItemIds.has(row.id)) continue;
-    quantityDoneByTask.set(
-      row.task_id,
-      (quantityDoneByTask.get(row.task_id) ?? 0) + (row.quantity_completed ?? 0)
-    );
-  }
-
   let totalTasks = 0;
   let completed = 0;
   let inProgress = 0;
@@ -108,22 +91,28 @@ export async function getProjectProgress(
   let weightedSum = 0;
 
   const categoryProgress: CategoryProgress[] = categories.map((category) => {
+    if (category.tasks.length === 0) {
+      const percentComplete = round2(category.percentComplete);
+      weightedSum += (category.percentComplete * category.weight) / 100;
+      return {
+        id: category.id,
+        name: category.name,
+        weight: category.weight,
+        percentComplete,
+        status: statusFor(percentComplete),
+        tasks: [],
+      };
+    }
+
     const tasks: TaskProgress[] = category.tasks.map((task) => {
-      const quantityDone = quantityDoneByTask.get(task.id) ?? 0;
-      const percentComplete =
-        task.estimatedQuantity > 0
-          ? Math.min(
-              100,
-              Math.round((quantityDone / task.estimatedQuantity) * 10000) / 100
-            )
-          : 0;
+      const percentComplete = round2(task.percentComplete);
       const status = statusFor(percentComplete);
 
       totalTasks += 1;
       if (status === "completed") completed += 1;
       else if (status === "in_progress") inProgress += 1;
       else notStarted += 1;
-      weightedSum += (percentComplete * task.weight) / 100;
+      weightedSum += (task.percentComplete * task.weight) / 100;
 
       return {
         id: task.id,
@@ -135,28 +124,29 @@ export async function getProjectProgress(
       };
     });
 
+    const categoryWeight = tasks.reduce((sum, task) => sum + task.weight, 0);
     const categoryPercent =
-      category.weight > 0
+      categoryWeight > 0
         ? tasks.reduce(
-            (sum, task) => sum + (task.percentComplete * task.weight) / category.weight,
+            (sum, task) =>
+              sum + (task.percentComplete * task.weight) / categoryWeight,
             0
           )
-        : tasks.length > 0
-          ? tasks.reduce((sum, task) => sum + task.percentComplete, 0) / tasks.length
-          : 0;
+        : tasks.reduce((sum, task) => sum + task.percentComplete, 0) /
+          tasks.length;
 
     return {
       id: category.id,
       name: category.name,
-      weight: category.weight,
-      percentComplete: Math.round(categoryPercent * 100) / 100,
+      weight: categoryWeight,
+      percentComplete: round2(categoryPercent),
       status: statusFor(categoryPercent),
       tasks,
     };
   });
 
   return {
-    overallPercent: Math.round(weightedSum * 100) / 100,
+    overallPercent: round2(weightedSum),
     totalTasks,
     completed,
     inProgress,

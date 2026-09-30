@@ -1,8 +1,11 @@
 import Link from "next/link";
+import type { PortalBasePath } from "@/components/portal/portal-context";
 
 export function RecentActivityCard({
+  basePath,
   items,
 }: {
+  basePath: PortalBasePath;
   items: { id: string; message: string; meta: string }[];
 }) {
   return (
@@ -12,7 +15,7 @@ export function RecentActivityCard({
           Recent Activity
         </h2>
         <Link
-          href="/admin/reports"
+          href={`${basePath}/reports`}
           className="text-xs font-medium text-zinc-500 hover:text-zinc-900"
         >
           See all

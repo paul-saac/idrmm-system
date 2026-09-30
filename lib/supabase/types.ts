@@ -436,6 +436,9 @@ export interface Database {
           entry_date: string;
           quantity_completed: number;
           labor_headcount: number;
+          // See 0049_progress_percent_override.sql's own comment — null
+          // means "no override, use the live Materials/Labor/Time blend."
+          percent_complete_override: number | null;
           recorded_by: string | null;
           created_at: string;
         };
@@ -444,12 +447,35 @@ export interface Database {
           entry_date: string;
           quantity_completed?: number;
           labor_headcount?: number;
+          percent_complete_override?: number | null;
           recorded_by?: string | null;
         };
         Update: {
           quantity_completed?: number;
           labor_headcount?: number;
+          percent_complete_override?: number | null;
         };
+        Relationships: [];
+      };
+      task_progress_material_entries: {
+        // Materials actually used on one task_progress_entries row's own
+        // day, matched to the task's planned lines by name + unit — see
+        // 0050_task_progress_material_entries.sql for why not by id.
+        Row: {
+          id: number;
+          progress_entry_id: number;
+          material_name: string;
+          unit: string | null;
+          quantity_used: number;
+          created_at: string;
+        };
+        Insert: {
+          progress_entry_id: number;
+          material_name: string;
+          unit?: string | null;
+          quantity_used?: number;
+        };
+        Update: never;
         Relationships: [];
       };
       task_progress_material_usage: {
@@ -479,6 +505,9 @@ export interface Database {
           entry_date: string;
           quantity_completed: number;
           labor_headcount: number;
+          // See 0049_progress_percent_override.sql's own comment — null
+          // means "no override, use the live Materials/Labor/Time blend."
+          percent_complete_override: number | null;
           recorded_by: string | null;
           created_at: string;
         };
@@ -487,11 +516,13 @@ export interface Database {
           entry_date: string;
           quantity_completed?: number;
           labor_headcount?: number;
+          percent_complete_override?: number | null;
           recorded_by?: string | null;
         };
         Update: {
           quantity_completed?: number;
           labor_headcount?: number;
+          percent_complete_override?: number | null;
         };
         Relationships: [];
       };
@@ -1131,7 +1162,17 @@ export interface Database {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    // See 0051_foreman_project_access.sql.
+    Functions: {
+      set_project_default_labor_cost_percent: {
+        Args: { p_project_id: number; p_percent: number | null };
+        Returns: undefined;
+      };
+      sync_equipment_status: {
+        Args: { p_equipment_id: number };
+        Returns: undefined;
+      };
+    };
     Enums: {
       user_role: UserRole;
     };

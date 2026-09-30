@@ -161,6 +161,9 @@ export function DailyLogsTable({
                                 </span>
                               </span>
                             )}
+                            {/* DAILY LOGS — ON HOLD for the foreman portal:
+                                the detail page is /admin-only for now, and
+                                this table's tab is hidden from foremen. */}
                             <Link
                               href={`/admin/projects/${projectId}/daily-logs/${log.id}`}
                               className="inline-flex cursor-pointer items-center rounded-sm border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
