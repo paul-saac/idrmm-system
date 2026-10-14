@@ -62,7 +62,7 @@ export function MaterialForm({
         // never collected as input. Add mode has nothing to show yet, so
         // Material Name below takes the full row there instead.
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-800">
+          <label className="text-sm font-medium text-zinc-900">
             Material ID
           </label>
           <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">
@@ -74,7 +74,7 @@ export function MaterialForm({
       <div className={`flex flex-col gap-1.5 ${material ? "" : "sm:col-span-2"}`}>
         <label
           htmlFor={`${formId}-materialName`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Material Name
         </label>
@@ -91,7 +91,7 @@ export function MaterialForm({
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor={`${formId}-specification`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Specification / Size
         </label>
@@ -107,7 +107,7 @@ export function MaterialForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-quantity`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Quantity
         </label>
@@ -126,7 +126,7 @@ export function MaterialForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-unit`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Unit
         </label>
@@ -161,7 +161,7 @@ export function MaterialForm({
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor={`${formId}-status`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Material Status
         </label>

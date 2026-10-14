@@ -3,30 +3,23 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutGrid, Folder, Users, BarChart3, Wrench } from "lucide-react";
+import { LayoutGrid, Folder, HardHat, Users, BarChart3, Wrench } from "lucide-react";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 
-// Paths are relative to the portal's own base path. Accounts is admin-only
-// — a foreman only manages the projects assigned to them, not users.
+// Paths are relative to the portal's own base path. Team and Accounts are
+// admin-only — a foreman only manages the projects assigned to them, not
+// the company's people or users.
 const NAV_ITEMS = [
   { path: "", label: "Dashboard", icon: LayoutGrid, adminOnly: false },
   { path: "/projects", label: "Projects", icon: Folder, adminOnly: false },
+  { path: "/team", label: "Team", icon: HardHat, adminOnly: true },
   { path: "/accounts", label: "Accounts", icon: Users, adminOnly: true },
   { path: "/reports", label: "Reports", icon: BarChart3, adminOnly: false },
   { path: "/inventory", label: "Inventory", icon: Wrench, adminOnly: false },
 ];
 
-export function PortalSidebar({
-  basePath,
-  name,
-  email,
-}: {
-  basePath: PortalBasePath;
-  name: string;
-  email: string | null;
-}) {
+export function PortalSidebar({ basePath }: { basePath: PortalBasePath }) {
   const pathname = usePathname();
-  const initials = getInitials(name, email);
   const isAdmin = basePath === "/admin";
   const navItems = NAV_ITEMS.filter((item) => isAdmin || !item.adminOnly);
 
@@ -55,31 +48,28 @@ export function PortalSidebar({
     <aside
       onMouseEnter={() => setCollapsed(false)}
       onMouseLeave={() => setCollapsed(true)}
-      // border-zinc-950 — the app's own slightly-darker warm black (see
-      // globals.css), reads as a clean, visible edge against the
-      // sidebar's own zinc-900 without introducing an unrelated color.
-      className={`flex h-full shrink-0 flex-col border-r-2 border-zinc-950 bg-zinc-900 transition-[width] duration-300 ease-in-out ${
+      // border-black/20 — its own black a shade darker along the edge, so
+      // it stays apart from the content even beside a dark header (the
+      // project page's) of the very same black.
+      className={`flex h-full shrink-0 flex-col border-r-2 border-black/20 bg-zinc-900 transition-[width] duration-300 ease-in-out ${
         collapsed ? "w-20" : "w-64"
       }`}
     >
+      {/* The company's own name — who's signed in lives in the page
+          header's profile menu now; same serif as the login page. The
+          whole row folds away (height, padding, border) along with the
+          sidebar's own width, so the nav slides up into its space while
+          collapsed and back down once hovered. */}
       <div
-        className={`flex items-center gap-3 border-b border-white/10 px-5 py-5 ${
-          collapsed ? "justify-center px-0" : ""
+        className={`flex items-center overflow-hidden border-b px-5 transition-all duration-300 ease-in-out ${
+          collapsed
+            ? "max-h-0 border-transparent py-0 opacity-0"
+            : "max-h-24 border-white/10 py-5 opacity-100"
         }`}
       >
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-sm font-semibold text-white">
-          {initials}
-        </div>
-        <div
-          className={`min-w-0 overflow-hidden transition-all duration-300 ease-in-out ${
-            collapsed ? "max-w-0 opacity-0" : "max-w-40 opacity-100"
-          }`}
-        >
-          <p className="truncate text-sm font-semibold text-white">
-            {name || (isAdmin ? "Admin" : "Foreman")}
-          </p>
-          <p className="truncate text-xs text-zinc-400">{email}</p>
-        </div>
+        <p className="flex h-9 min-w-0 items-center truncate font-serif text-xl whitespace-nowrap text-white">
+          IDR M&amp;M
+        </p>
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-3">
@@ -96,7 +86,7 @@ export function PortalSidebar({
                 collapsed ? "justify-center px-0" : ""
               } ${
                 active
-                  ? "bg-zinc-800 font-semibold text-white"
+                  ? "bg-white/10 font-semibold text-white"
                   : "font-medium text-zinc-400 hover:bg-white/5 hover:text-zinc-200"
               }`}
             >
@@ -114,17 +104,4 @@ export function PortalSidebar({
       </nav>
     </aside>
   );
-}
-
-function getInitials(name: string, email: string | null) {
-  const trimmed = name.trim();
-  if (trimmed) {
-    return trimmed
-      .split(/\s+/)
-      .map((part) => part[0])
-      .slice(0, 2)
-      .join("")
-      .toUpperCase();
-  }
-  return email ? email[0]!.toUpperCase() : "A";
 }

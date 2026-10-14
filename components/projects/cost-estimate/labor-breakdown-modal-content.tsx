@@ -9,6 +9,13 @@ import {
   updateTaskLaborEstimate,
 } from "@/lib/cost-estimate/actions";
 import type { CostCategory, CostTask } from "@/lib/cost-estimate/data";
+import {
+  DIVIDER,
+  GROUP_ROW,
+  GroupLabel,
+  MAIN_TASK_ROW,
+  STICKY_FOOTER,
+} from "@/components/projects/cost-estimate/breakdown-table-shared";
 
 function formatCurrency(amount: number | null | undefined) {
   return `₱${(amount ?? 0).toLocaleString("en-PH", { maximumFractionDigits: 0 })}`;
@@ -36,7 +43,13 @@ function projectLaborBase(categories: CostCategory[]) {
       (s, t) => s + t.materialEstimate + t.equipmentEstimate + t.otherCostEstimate,
       0
     );
-    return sum + category.categoryMaterialEstimate + tasksSum;
+    return (
+      sum +
+      category.categoryMaterialEstimate +
+      category.categoryEquipmentEstimate +
+      category.categoryOtherEstimate +
+      tasksSum
+    );
   }, 0);
 }
 
@@ -46,6 +59,44 @@ function taskLaborPercent(task: CostTask, projectBase: number) {
 
 function categoryLaborPercent(category: CostCategory, projectBase: number) {
   return projectBase > 0 ? (category.categoryLaborEstimate / projectBase) * 100 : 0;
+}
+
+// A subtask's dark left accent, as an inset shadow rather than a border:
+// on the table's own left edge, a collapsed border makes the whole first
+// column reserve its width, leaving a gap beside every other row.
+const SUBTASK_NAME_CELL = `${DIVIDER} px-4 shadow-[inset_3px_0_0_var(--color-zinc-900)]`;
+
+// Never hoverable — Amount is always computed from Labor Percentage,
+// never itself typed into (unlike Material Breakdown's own Amount cell).
+const AMOUNT_CELL =
+  "px-4 py-2.5 text-right text-xs font-medium whitespace-nowrap text-zinc-700";
+
+/** A row's own typable Labor Percentage, with a trailing "%" — the
+ * Material Breakdown's cell inputs' own hover (dark) and focus (the row's
+ * own fill) states. A standalone top-level component, so typing never
+ * remounts it. */
+function PercentCell({
+  value,
+  onChange,
+  label,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+}) {
+  return (
+    <div className="group/cell flex h-9 items-center justify-end gap-1 px-4 transition hover:not-focus-within:bg-zinc-900">
+      <input
+        type="text"
+        inputMode="decimal"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={label}
+        className="w-full min-w-0 bg-transparent text-right text-xs font-medium text-zinc-700 outline-none transition group-hover/cell:not-focus:text-white"
+      />
+      <span className="shrink-0 text-xs text-zinc-400">%</span>
+    </div>
+  );
 }
 
 /**
@@ -256,150 +307,91 @@ export function LaborBreakdownModalContent({
   );
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-zinc-500">
-          Labor cost planned across every task in this project.
-        </p>
-        <div className="flex shrink-0 items-center gap-2">
-          <label
-            htmlFor="defaultLaborRatePercent"
-            className="text-sm font-medium text-zinc-700"
-          >
-            Labor Rate %
-          </label>
-          <input
-            id="defaultLaborRatePercent"
-            type="number"
-            min={0}
-            max={100}
-            step="0.01"
-            value={ratePercentInput}
-            onChange={(e) => {
-              setRatePercentInput(e.target.value);
-              setRateDirty(true);
-            }}
-            placeholder="—"
-            className="w-20 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-          />
-        </div>
+    <div className="flex min-h-full flex-col gap-5">
+      <div className="flex items-center justify-end gap-2">
+        <label
+          htmlFor="defaultLaborRatePercent"
+          className="text-sm font-medium text-zinc-700"
+        >
+          Labor Rate %
+        </label>
+        <input
+          id="defaultLaborRatePercent"
+          type="number"
+          min={0}
+          max={100}
+          step="0.01"
+          value={ratePercentInput}
+          onChange={(e) => {
+            setRatePercentInput(e.target.value);
+            setRateDirty(true);
+          }}
+          placeholder="—"
+          className="w-20 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+        />
       </div>
 
-      <div className="overflow-hidden rounded-md border border-zinc-200">
-        <table className="w-full table-fixed text-left text-sm">
+      <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
+        <table className="w-full table-fixed text-left text-xs">
           <colgroup>
             <col />
-            <col style={{ width: 120 }} />
-            <col style={{ width: 130 }} />
+            <col className="w-36" />
+            <col className="w-32" />
           </colgroup>
           <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
             <tr>
-              <th className="border-r border-b border-zinc-300 px-3 py-2">
-                Description
-              </th>
-              <th className="border-r border-b border-zinc-300 px-3 py-2 text-right">
+              <th className="border-r border-b border-zinc-200 px-4 py-2.5">Task</th>
+              <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">
                 Labor Percentage
               </th>
-              <th className="border-b border-zinc-300 px-3 py-2 text-right">
-                Amount
-              </th>
+              <th className="border-b border-zinc-200 px-4 py-2.5 text-right">Amount</th>
             </tr>
           </thead>
           <tbody>
             {categories.map((category) => {
-              const hasTasks = category.tasks.length > 0;
+              const tasks = category.tasks;
+              const hasTasks = tasks.length > 0;
               const categoryTotal = hasTasks
-                ? category.tasks.reduce((sum, t) => sum + liveTaskAmount(t), 0)
+                ? tasks.reduce((sum, t) => sum + liveTaskAmount(t), 0)
                 : liveCategoryAmount(category);
               return (
                 <Fragment key={category.id}>
-                  <tr className="border-y border-y-zinc-200 bg-zinc-100">
-                    <td className="border-r border-r-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-600">
-                      {category.name}
+                  <tr className={MAIN_TASK_ROW}>
+                    {/* With subtasks, its name spans Labor Percentage too —
+                        its Amount is just their subtotal. */}
+                    <td colSpan={hasTasks ? 2 : 1} className={`${DIVIDER} px-4`}>
+                      <GroupLabel label={category.name} />
                     </td>
-                    <td className="border-r border-r-zinc-300">
-                      {hasTasks ? (
-                        // Never hoverable — unlike the empty-category
-                        // branch below, this cell is never itself
-                        // editable (a category with subtasks always
-                        // shows a rollup here; the actual editable
-                        // Labor Percentage cells are its own subtasks'
-                        // rows underneath), so it shouldn't look
-                        // interactive on hover the way an editable cell
-                        // does.
-                        <div className="px-3 py-2 text-right text-sm text-zinc-400">
-                          —
-                        </div>
-                      ) : (
-                        <div className="group flex items-center justify-end gap-1 px-3 py-2 transition hover:bg-zinc-900 focus-within:bg-white">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={
-                              categoryPercentDraft[category.id] ??
-                              formatPercent(
-                                categoryLaborPercent(category, projectBase)
-                              )
-                            }
-                            onChange={(e) =>
-                              updateCategoryDraft(category.id, e.target.value)
-                            }
-                            aria-label={`${category.name} labor percentage`}
-                            className="w-full min-w-0 bg-transparent text-right text-sm text-zinc-700 outline-none transition group-hover:text-white group-focus-within:text-zinc-700"
-                          />
-                          <span className="shrink-0 text-xs text-zinc-400">
-                            %
-                          </span>
-                        </div>
-                      )}
-                    </td>
-                    {/* Never hoverable — Amount is always computed from
-                        Labor Percentage, never itself directly typed
-                        into (unlike Material Breakdown's own Amount
-                        cell, which genuinely is editable there), so it
-                        stays a plain view-only cell regardless of
-                        whether this category has tasks. */}
-                    <td className="px-3 py-2 text-right text-sm font-semibold whitespace-nowrap text-zinc-900">
-                      {formatCurrency(categoryTotal)}
-                    </td>
+                    {!hasTasks && (
+                      <td className={DIVIDER}>
+                        <PercentCell
+                          value={
+                            categoryPercentDraft[category.id] ??
+                            formatPercent(categoryLaborPercent(category, projectBase))
+                          }
+                          onChange={(value) => updateCategoryDraft(category.id, value)}
+                          label={`${category.name} labor percentage`}
+                        />
+                      </td>
+                    )}
+                    <td className={AMOUNT_CELL}>{formatCurrency(categoryTotal)}</td>
                   </tr>
-                  {category.tasks.map((task, index) => (
-                    <tr
-                      key={task.id}
-                      className={
-                        index !== category.tasks.length - 1
-                          ? "border-b border-b-zinc-200"
-                          : ""
-                      }
-                    >
-                      <td className="border-r border-r-zinc-300 py-1.5 pr-3 pl-6 text-xs font-semibold text-zinc-600">
-                        {task.name}
+                  {tasks.map((task) => (
+                    <tr key={task.id} className={`${GROUP_ROW} bg-white`}>
+                      <td className={SUBTASK_NAME_CELL}>
+                        <GroupLabel label={task.name} />
                       </td>
-                      <td className="border-r border-r-zinc-300">
-                        <div className="group flex items-center justify-end gap-1 px-3 py-1.5 transition hover:bg-zinc-900 focus-within:bg-white">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={
-                              taskPercentDraft[task.id] ??
-                              formatPercent(taskLaborPercent(task, projectBase))
-                            }
-                            onChange={(e) =>
-                              updateTaskDraft(task.id, e.target.value)
-                            }
-                            aria-label={`${task.name} labor percentage`}
-                            className="w-full min-w-0 bg-transparent text-right text-sm text-zinc-700 outline-none transition group-hover:text-white group-focus-within:text-zinc-700"
-                          />
-                          <span className="shrink-0 text-xs text-zinc-400">
-                            %
-                          </span>
-                        </div>
+                      <td className={DIVIDER}>
+                        <PercentCell
+                          value={
+                            taskPercentDraft[task.id] ??
+                            formatPercent(taskLaborPercent(task, projectBase))
+                          }
+                          onChange={(value) => updateTaskDraft(task.id, value)}
+                          label={`${task.name} labor percentage`}
+                        />
                       </td>
-                      {/* Never hoverable — see the matching comment on
-                          the category's own Amount cell above. */}
-                      <td className="px-3 py-1.5 text-right text-sm font-semibold text-zinc-900">
-                        {formatCurrency(liveTaskAmount(task))}
-                      </td>
+                      <td className={AMOUNT_CELL}>{formatCurrency(liveTaskAmount(task))}</td>
                     </tr>
                   ))}
                 </Fragment>
@@ -409,42 +401,44 @@ export function LaborBreakdownModalContent({
         </table>
       </div>
 
-      {error && (
-        <p role="alert" className="text-sm text-red-600">
-          {error}
-        </p>
-      )}
+      <div className={STICKY_FOOTER}>
+        {error && (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        )}
 
-      <div className="flex items-center justify-between gap-3 border-t border-zinc-200 pt-4">
-        <div className="text-sm">
-          <span className="font-medium text-zinc-500">
-            Total Labor Cost (Project)
-          </span>{" "}
-          <span className="font-semibold text-zinc-900">
-            {formatCurrency(grandTotal)}
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={
-              pending ||
-              (!rateDirty &&
-                dirtyTaskIds.size === 0 &&
-                dirtyCategoryIds.size === 0)
-            }
-            className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {pending ? "Saving..." : "Save Changes"}
-          </button>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm">
+            <span className="font-medium text-zinc-500">
+              Total Labor Cost (Project)
+            </span>{" "}
+            <span className="font-semibold text-zinc-900">
+              {formatCurrency(grandTotal)}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={
+                pending ||
+                (!rateDirty &&
+                  dirtyTaskIds.size === 0 &&
+                  dirtyCategoryIds.size === 0)
+              }
+              className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pending ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

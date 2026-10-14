@@ -18,7 +18,7 @@ export function LoginForm({ initialError }: { initialError?: string }) {
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="email"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Username
         </label>
@@ -37,13 +37,13 @@ export function LoginForm({ initialError }: { initialError?: string }) {
         <div className="flex items-center justify-between">
           <label
             htmlFor="password"
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Password
           </label>
           <Link
             href="/forgot-password"
-            className="text-sm font-medium text-zinc-800 hover:text-zinc-950 hover:underline"
+            className="text-sm font-medium text-zinc-900 hover:underline"
           >
             Forgot password?
           </Link>

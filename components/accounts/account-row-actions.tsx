@@ -1,30 +1,32 @@
 "use client";
 
 import { useActionState } from "react";
+import { UserCheck, UserX } from "lucide-react";
+import { ICON_BUTTON } from "@/components/ui/list-table";
 import { setAccountStatus, type AccountActionState } from "@/lib/accounts/actions";
 import type { AccountRow } from "@/lib/accounts/data";
 
 const initialState: AccountActionState = {};
 
+/** A row's own Activate/Deactivate — an icon, like the Team table's
+ * row actions. */
 export function AccountRowActions({ account }: { account: AccountRow }) {
-  const nextStatus = account.status === "active" ? "inactive" : "active";
-  const toggleAction = setAccountStatus.bind(null, account.id, nextStatus);
-  const [state, formAction, pending] = useActionState(
-    toggleAction,
-    initialState
-  );
+  const active = account.status === "active";
+  const toggleAction = setAccountStatus.bind(null, account.id, active ? "inactive" : "active");
+  const [state, formAction, pending] = useActionState(toggleAction, initialState);
 
   const fullName = `${account.firstName} ${account.lastName}`.trim();
+  const label = active ? "Deactivate" : "Activate";
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex flex-col items-start gap-1">
       <form
         action={formAction}
         onSubmit={(e) => {
           // Deactivating locks the person out immediately — confirm first.
           // Re-activating is low-risk, so it submits straight away.
           if (
-            account.status === "active" &&
+            active &&
             !window.confirm(
               `Deactivate ${fullName || account.email}? They won't be able to sign in until reactivated.`
             )
@@ -36,17 +38,15 @@ export function AccountRowActions({ account }: { account: AccountRow }) {
         <button
           type="submit"
           disabled={pending}
-          className={`cursor-pointer rounded border px-3 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
-            account.status === "active"
-              ? "border-amber-200 text-amber-700 hover:bg-amber-50"
-              : "border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+          title={label}
+          aria-label={`${label} ${fullName || account.email}`}
+          className={`${ICON_BUTTON} ${
+            active
+              ? "hover:bg-red-50 hover:text-red-600"
+              : "hover:bg-emerald-50 hover:text-emerald-600"
           }`}
         >
-          {pending
-            ? "..."
-            : account.status === "active"
-              ? "Deactivate"
-              : "Activate"}
+          {active ? <UserX className="size-3.5" /> : <UserCheck className="size-3.5" />}
         </button>
       </form>
       {state?.error && (

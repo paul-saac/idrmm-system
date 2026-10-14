@@ -1,9 +1,13 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
+import { getSessionProfile } from "@/lib/auth/session";
+import { isMemberCategory } from "@/lib/workers/presets";
+import { isAdminRole } from "@/lib/auth/roles";
 
 export type WorkerActionState = {
   error?: string;
@@ -35,105 +39,167 @@ async function safely(
   }
 }
 
+// A member's own fields from the Team page's form — First/Last Name are
+// stored as one full_name, Title as trade. An error message instead when
+// something can't be saved as typed.
+function readMemberFields(formData: FormData) {
+  const text = (key: string) => String(formData.get(key) ?? "").trim();
+  const fullName = [text("firstName"), text("lastName")].filter(Boolean).join(" ");
+  if (!fullName) return { error: "Name is required." };
+  const contactNumber = text("contactNumber");
+  if (contactNumber && !/^[0-9+()\-\s]{7,20}$/.test(contactNumber)) {
+    return { error: "Enter a valid contact number." };
+  }
+  const dateHired = text("dateHired");
+  if (dateHired && !/^\d{4}-\d{2}-\d{2}$/.test(dateHired)) {
+    return { error: "Enter a valid date hired." };
+  }
+  const category = text("category");
+  if (!isMemberCategory(category)) return { error: "Pick a category." };
+  const subcontractor = text("employmentType") === "subcontractor";
+  const company = text("subcontractorCompany");
+  if (subcontractor && !company) return { error: "Enter the subcontractor's company." };
+  return {
+    fields: {
+      full_name: fullName,
+      trade: text("title") || null,
+      contact_number: contactNumber || null,
+      date_hired: dateHired || null,
+      category,
+      employment_type: subcontractor ? ("subcontractor" as const) : ("employee" as const),
+      subcontractor_company: subcontractor ? company : null,
+      profile_id: text("profileId") || null,
+    },
+  };
+}
+
+// The one login account per member rule (0063's unique index).
+function linkConflict(error: PostgrestError) {
+  return error.code === "23505" && error.message.includes("profile_id");
+}
+
+// The Team itself is the admin's to manage (its own page); foremen only
+// assign members to tasks on their projects.
+async function requireAdmin() {
+  const profile = await getSessionProfile();
+  return profile && isAdminRole(profile.role) ? profile : null;
+}
+
+// A member's name shows on every project's Gantt chart (both portals),
+// and their availability on the Team page.
+function revalidateTeam() {
+  revalidatePath("/admin", "layout");
+  revalidatePath("/foreman", "layout");
+}
+
 export async function createWorker(
-  projectId: number,
   _prevState: WorkerActionState,
   formData: FormData
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireAdmin();
     if (!profile) {
-      return { error: "You are not authorized to manage the manpower roster." };
+      return { error: "You are not authorized to manage the team." };
     }
 
-    const fullName = String(formData.get("fullName") ?? "").trim();
-    if (!fullName) {
-      return { error: "Name is required." };
+    const member = readMemberFields(formData);
+    if (!member.fields) {
+      return { error: member.error };
     }
-    const trade = String(formData.get("trade") ?? "").trim();
 
     const supabase = await createClient();
-    const { error } = await supabase.from("workers").insert({
-      project_id: projectId,
-      full_name: fullName,
-      trade: trade || null,
-      created_by: profile.id,
-    });
+    const { error } = await supabase
+      .from("workers")
+      .insert({ ...member.fields, created_by: profile.id });
 
     if (error) {
       logSupabaseError("[createWorker] Supabase insert failed", error);
-      return { error: "Could not add worker. Please try again." };
+      if (linkConflict(error)) {
+        return { error: "That login account is already linked to another team member." };
+      }
+      return { error: "Could not add the member. Please try again." };
     }
 
-    revalidateProjectPaths(projectId);
+    revalidateTeam();
     return { success: true };
   });
 }
 
 export async function updateWorker(
   workerId: number,
-  projectId: number,
   _prevState: WorkerActionState,
   formData: FormData
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireAdmin();
     if (!profile) {
-      return { error: "You are not authorized to manage the manpower roster." };
+      return { error: "You are not authorized to manage the team." };
     }
 
-    const fullName = String(formData.get("fullName") ?? "").trim();
-    if (!fullName) {
-      return { error: "Name is required." };
+    const member = readMemberFields(formData);
+    if (!member.fields) {
+      return { error: member.error };
     }
-    const trade = String(formData.get("trade") ?? "").trim();
 
     const supabase = await createClient();
     const { error } = await supabase
       .from("workers")
-      .update({ full_name: fullName, trade: trade || null })
-      .eq("id", workerId)
-      .eq("project_id", projectId);
+      .update(member.fields)
+      .eq("id", workerId);
 
     if (error) {
       logSupabaseError("[updateWorker] Supabase update failed", error);
+      if (linkConflict(error)) {
+        return { error: "That login account is already linked to another team member." };
+      }
       return { error: "Could not save changes. Please try again." };
     }
 
-    revalidateProjectPaths(projectId);
+    revalidateTeam();
     return { success: true };
   });
 }
 
-export async function deleteWorker(
-  workerId: number,
-  projectId: number,
-  _prevState: WorkerActionState,
-  _formData: FormData
-): Promise<WorkerActionState> {
+/** Removes one member or several (the Team table's checked rows). */
+export async function deleteWorkers(workerIds: number[]): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireAdmin();
     if (!profile) {
-      return { error: "You are not authorized to manage the manpower roster." };
+      return { error: "You are not authorized to manage the team." };
+    }
+
+    const ids = Array.isArray(workerIds)
+      ? workerIds.filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+    if (ids.length === 0) {
+      return { error: "Select at least one member." };
     }
 
     const supabase = await createClient();
-    // task_worker_assignments.worker_id -> workers(id) on delete cascade
-    // — removing a worker from the roster also removes them from
-    // whatever tasks they were assigned to, deliberately (there's no
-    // "orphaned assignment" state to reconcile).
-    const { error } = await supabase
-      .from("workers")
-      .delete()
-      .eq("id", workerId)
-      .eq("project_id", projectId);
 
-    if (error) {
-      logSupabaseError("[deleteWorker] Supabase delete failed", error);
-      return { error: "Could not remove worker. Please try again." };
+    // Someone with a login account (a project manager or foreman) is
+    // managed in Accounts, never removed from the Team here. "*" so this
+    // still reads before 0063 has added profile_id.
+    const { data: rows } = await supabase.from("workers").select("*").in("id", ids);
+    if ((rows ?? []).some((row) => row.profile_id)) {
+      return {
+        error: "Project managers and foremen are managed in Accounts — they can't be removed here.",
+      };
     }
 
-    revalidateProjectPaths(projectId);
+    // task/category_worker_assignments.worker_id -> workers(id) on delete
+    // cascade — removing a member also takes them off every task and
+    // phase they were on, deliberately (no orphaned assignment to clean).
+    const { error } = await supabase.from("workers").delete().in("id", ids);
+
+    if (error) {
+      logSupabaseError("[deleteWorkers] Supabase delete failed", error);
+      return {
+        error: `Could not remove the member${ids.length === 1 ? "" : "s"}. Please try again.`,
+      };
+    }
+
+    revalidateTeam();
     return { success: true };
   });
 }
@@ -187,6 +253,7 @@ export async function setTaskWorkers(
     }
 
     revalidateProjectPaths(projectId);
+    revalidatePath("/admin/team");
     return { success: true };
   });
 }
@@ -241,6 +308,7 @@ export async function setCategoryWorkers(
     }
 
     revalidateProjectPaths(projectId);
+    revalidatePath("/admin/team");
     return { success: true };
   });
 }

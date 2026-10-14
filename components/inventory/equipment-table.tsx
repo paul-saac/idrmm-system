@@ -1,15 +1,21 @@
 "use client";
 
 import { useActionState } from "react";
-import {
-  ChevronDown,
-  ChevronUp,
-  ChevronsUpDown,
-  Send,
-  Trash2,
-  Undo2,
-} from "lucide-react";
+import { Send, Trash2, Undo2 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
+import {
+  BLANK,
+  BODY,
+  CELL,
+  HEAD_CELL,
+  HEAD_ROW,
+  ICON_BUTTON,
+  SelectAllCell,
+  SelectCell,
+  TABLE,
+  TABLE_FRAME,
+  rowClass,
+} from "@/components/ui/list-table";
 import {
   deleteEquipment,
   returnEquipment,
@@ -17,8 +23,7 @@ import {
 } from "@/lib/equipment/actions";
 import type { EquipmentRow } from "@/lib/equipment/data";
 
-export type SortKey = "name" | "status" | "lastActivity";
-export type SortDir = "asc" | "desc";
+const NEUTRAL_BUTTON = `${ICON_BUTTON} hover:bg-zinc-100 hover:text-zinc-700`;
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString("en-US", {
@@ -32,66 +37,35 @@ function formatDateTime(iso: string) {
 }
 
 function StatusBadge({ equipment }: { equipment: EquipmentRow }) {
-  if (equipment.status === "assigned") {
-    return (
-      <span className="rounded-sm bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-        Assigned
-      </span>
-    );
-  }
-  if (equipment.status === "maintenance") {
-    return (
-      <span className="rounded-sm bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
-        Maintenance
-      </span>
-    );
-  }
-  if (equipment.status === "retired") {
-    return (
-      <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500">
-        Retired
-      </span>
-    );
-  }
-  // "available" reads as "Returned" once it has assignment history — the
-  // same green end-state as a fresh, never-assigned item, just a more
-  // informative label.
+  const { label, className } =
+    equipment.status === "assigned"
+      ? { label: "Assigned", className: "bg-amber-50 text-amber-700" }
+      : equipment.status === "maintenance"
+        ? { label: "Maintenance", className: "bg-red-50 text-red-700" }
+        : equipment.status === "retired"
+          ? { label: "Retired", className: "bg-zinc-100 text-zinc-500" }
+          : // "available" reads as "Returned" once it has assignment
+            // history — the same green end-state, a more informative label.
+            {
+              label: equipment.lastReturnedAt ? "Returned" : "Available",
+              className: "bg-emerald-50 text-emerald-700",
+            };
   return (
-    <span className="rounded-sm bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-      {equipment.lastReturnedAt ? "Returned" : "Available"}
+    <span className={`rounded-sm px-2 py-0.5 text-xs font-medium whitespace-nowrap ${className}`}>
+      {label}
     </span>
   );
 }
 
-function SortableHeader({
-  label,
-  sortKey,
-  activeKey,
-  dir,
-  onSort,
-}: {
-  label: string;
-  sortKey: SortKey;
-  activeKey: SortKey;
-  dir: SortDir;
-  onSort: (key: SortKey) => void;
-}) {
-  const active = sortKey === activeKey;
-  const Icon = !active ? ChevronsUpDown : dir === "asc" ? ChevronUp : ChevronDown;
-
+/** A row action's own error, just under it. */
+function ActionError({ message }: { message: string }) {
   return (
-    <th className="px-4 py-2.5 font-medium">
-      <button
-        type="button"
-        onClick={() => onSort(sortKey)}
-        className={`flex cursor-pointer items-center gap-1 transition-colors hover:text-zinc-900 ${
-          active ? "text-zinc-900" : ""
-        }`}
-      >
-        {label}
-        <Icon className="size-3.5" />
-      </button>
-    </th>
+    <span
+      role="alert"
+      className="absolute top-full left-0 z-10 mt-1 w-48 rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-normal text-red-600 shadow-sm"
+    >
+      {message}
+    </span>
   );
 }
 
@@ -105,10 +79,7 @@ function DeleteEquipmentButton({
   equipmentName: string;
 }) {
   const boundAction = deleteEquipment.bind(null, equipmentId);
-  const [state, formAction, pending] = useActionState(
-    boundAction,
-    deleteInitialState
-  );
+  const [state, formAction, pending] = useActionState(boundAction, deleteInitialState);
 
   return (
     <span className="relative inline-flex">
@@ -123,20 +94,14 @@ function DeleteEquipmentButton({
         <button
           type="submit"
           disabled={pending}
-          aria-label="Delete equipment"
-          className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+          title="Delete"
+          aria-label={`Delete ${equipmentName}`}
+          className={`${ICON_BUTTON} hover:bg-red-50 hover:text-red-600`}
         >
           <Trash2 className="size-3.5" />
         </button>
       </form>
-      {state?.error && (
-        <span
-          role="alert"
-          className="absolute top-full right-0 z-10 mt-1 w-48 rounded-md border border-red-200 bg-white px-2 py-1 text-right text-xs font-normal text-red-600 shadow-sm"
-        >
-          {state.error}
-        </span>
-      )}
+      {state?.error && <ActionError message={state.error} />}
     </span>
   );
 }
@@ -151,10 +116,7 @@ function ReturnEquipmentButton({
   projectId: number;
 }) {
   const boundAction = returnEquipment.bind(null, equipmentId, projectId);
-  const [state, formAction, pending] = useActionState(
-    boundAction,
-    returnInitialState
-  );
+  const [state, formAction, pending] = useActionState(boundAction, returnInitialState);
 
   return (
     <span className="relative inline-flex">
@@ -162,153 +124,131 @@ function ReturnEquipmentButton({
         <button
           type="submit"
           disabled={pending}
-          aria-label="Return equipment"
           title="Mark as returned"
-          className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
+          aria-label="Return equipment"
+          className={NEUTRAL_BUTTON}
         >
           <Undo2 className="size-3.5" />
         </button>
       </form>
-      {state?.error && (
-        <span
-          role="alert"
-          className="absolute top-full right-0 z-10 mt-1 w-48 rounded-md border border-red-200 bg-white px-2 py-1 text-right text-xs font-normal text-red-600 shadow-sm"
-        >
-          {state.error}
-        </span>
-      )}
+      {state?.error && <ActionError message={state.error} />}
     </span>
   );
 }
 
+/** The company's tools and equipment, in the Team table's own style (see
+ * list-table) — checkboxes and the Actions column only where it's
+ * editable (not the foreman portal's view-only copy). */
 export function EquipmentTable({
   equipment,
-  sortKey,
-  sortDir,
-  onSort,
+  selected,
+  onCheck,
   onEdit,
   onAssign,
   readOnly = false,
 }: {
   equipment: EquipmentRow[];
-  sortKey: SortKey;
-  sortDir: SortDir;
-  onSort: (key: SortKey) => void;
+  /** Checked item ids. */
+  selected: ReadonlySet<number>;
+  onCheck: (ids: number[], checked: boolean) => void;
   onEdit: (equipment: EquipmentRow) => void;
   onAssign: (equipment: EquipmentRow) => void;
-  /** Hides the Action column — the foreman portal's inventory is view-only. */
   readOnly?: boolean;
 }) {
-  return (
-    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-      <div className="border-b border-zinc-200 px-4 py-3">
-        <h3 className="text-sm font-semibold text-zinc-900">Available Tools</h3>
-      </div>
+  const ids = equipment.map((item) => item.id);
+  const checkedCount = ids.filter((id) => selected.has(id)).length;
+  const allChecked = checkedCount === ids.length;
 
-      {equipment.length === 0 ? (
-        <p className="py-10 text-center text-sm text-zinc-400">
-          No equipment recorded yet.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
-              <tr>
-                <th className="px-4 py-2.5">Asset Tag</th>
-                <SortableHeader
-                  label="Name"
-                  sortKey="name"
-                  activeKey={sortKey}
-                  dir={sortDir}
-                  onSort={onSort}
-                />
-                <th className="px-4 py-2.5">Category</th>
-                <th className="px-4 py-2.5">Description</th>
-                <SortableHeader
-                  label="Status"
-                  sortKey="status"
-                  activeKey={sortKey}
-                  dir={sortDir}
-                  onSort={onSort}
-                />
-                <th className="px-4 py-2.5">Assigned Project</th>
-                <SortableHeader
-                  label="Last Activity"
-                  sortKey="lastActivity"
-                  activeKey={sortKey}
-                  dir={sortDir}
-                  onSort={onSort}
-                />
-                {!readOnly && <th className="px-4 py-2.5 text-right">Action</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {equipment.map((item) => {
-                const lastActivity = item.lastAssignedAt ?? item.lastReturnedAt;
-                return (
-                  <tr key={item.id} className="transition-colors hover:bg-zinc-50">
-                    <td className="px-4 py-2.5 font-medium text-zinc-900">
-                      {item.assetTag}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-800">{item.name}</td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {item.category || "—"}
-                    </td>
-                    <td className="max-w-64 truncate px-4 py-2.5 text-zinc-600" title={item.description ?? undefined}>
-                      {item.description || "—"}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <StatusBadge equipment={item} />
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {item.currentProjectName ?? "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-500">
-                      {lastActivity ? formatDateTime(lastActivity) : "—"}
-                    </td>
-                    {!readOnly && (
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center justify-end gap-1">
-                        {item.status === "assigned" ? (
-                          item.currentProjectId != null && (
-                            <ReturnEquipmentButton
-                              equipmentId={item.id}
-                              projectId={item.currentProjectId}
-                            />
-                          )
-                        ) : item.status === "available" ? (
-                          <button
-                            type="button"
-                            onClick={() => onAssign(item)}
-                            aria-label="Assign equipment"
-                            title="Assign to a project"
-                            className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
-                          >
-                            <Send className="size-3.5" />
-                          </button>
-                        ) : null}
+  return (
+    <div className={TABLE_FRAME}>
+      <table className={TABLE}>
+        <thead>
+          <tr className={HEAD_ROW}>
+            {!readOnly && (
+              <SelectAllCell
+                checked={allChecked}
+                indeterminate={checkedCount > 0 && !allChecked}
+                onChange={() => onCheck(ids, !allChecked)}
+                label="Select all equipment"
+              />
+            )}
+            <th className={HEAD_CELL}>Asset Tag</th>
+            <th className={HEAD_CELL}>Name</th>
+            <th className={HEAD_CELL}>Category</th>
+            <th className={HEAD_CELL}>Description</th>
+            <th className={HEAD_CELL}>Status</th>
+            <th className={HEAD_CELL}>Assigned Project</th>
+            <th className={HEAD_CELL}>Last Activity</th>
+            {!readOnly && <th className={HEAD_CELL}>Actions</th>}
+          </tr>
+        </thead>
+        <tbody className={BODY}>
+          {equipment.map((item) => {
+            const lastActivity = item.lastAssignedAt ?? item.lastReturnedAt;
+            const checked = selected.has(item.id);
+            return (
+              <tr key={item.id} className={rowClass(checked)}>
+                {!readOnly && (
+                  <SelectCell
+                    checked={checked}
+                    onChange={() => onCheck([item.id], !checked)}
+                    label={`Select ${item.name}`}
+                  />
+                )}
+                <td className={`${CELL} font-medium whitespace-nowrap text-zinc-900`}>
+                  {item.assetTag}
+                </td>
+                <td className={`${CELL} font-medium text-zinc-900`}>{item.name}</td>
+                <td className={CELL}>{item.category || BLANK}</td>
+                <td className={`${CELL} max-w-64 truncate`} title={item.description ?? undefined}>
+                  {item.description || BLANK}
+                </td>
+                <td className={CELL}>
+                  <StatusBadge equipment={item} />
+                </td>
+                <td className={CELL}>{item.currentProjectName ?? BLANK}</td>
+                <td className={`${CELL} whitespace-nowrap text-zinc-500`}>
+                  {lastActivity ? formatDateTime(lastActivity) : BLANK}
+                </td>
+                {!readOnly && (
+                  <td className={CELL}>
+                    <div className="flex items-center gap-1">
+                      {item.status === "assigned" ? (
+                        item.currentProjectId != null && (
+                          <ReturnEquipmentButton
+                            equipmentId={item.id}
+                            projectId={item.currentProjectId}
+                          />
+                        )
+                      ) : item.status === "available" ? (
                         <button
                           type="button"
-                          onClick={() => onEdit(item)}
-                          aria-label="Edit equipment"
-                          className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                          onClick={() => onAssign(item)}
+                          title="Assign to a project"
+                          aria-label={`Assign ${item.name}`}
+                          className={NEUTRAL_BUTTON}
                         >
-                          <EditIcon className="size-3.5" />
+                          <Send className="size-3.5" />
                         </button>
-                        <DeleteEquipmentButton
-                          equipmentId={item.id}
-                          equipmentName={item.name}
-                        />
-                      </div>
-                    </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => onEdit(item)}
+                        title="Edit"
+                        aria-label={`Edit ${item.name}`}
+                        className={NEUTRAL_BUTTON}
+                      >
+                        <EditIcon className="size-3.5" />
+                      </button>
+                      <DeleteEquipmentButton equipmentId={item.id} equipmentName={item.name} />
+                    </div>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

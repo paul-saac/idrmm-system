@@ -18,7 +18,7 @@ import type { ProjectMaterial } from "@/lib/materials/data";
 const initialState: FlagActionState = {};
 const fieldInput =
   "rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
-const fieldLabel = "text-sm font-medium text-zinc-800";
+const fieldLabel = "text-sm font-medium text-zinc-900";
 
 /**
  * The stand-in for a foreman-facing edit form — today only an admin can

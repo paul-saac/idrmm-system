@@ -1,9 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/lib/auth/roles";
+import type { AccountEventAction } from "@/lib/supabase/types";
 
 export type AssignedProject = {
   id: number;
   name: string;
+  /** Done — so its PM and foreman are free for another project (see
+   * lib/accounts/availability.ts). */
+  completed: boolean;
 };
 
 export type AccountRow = {
@@ -15,7 +19,54 @@ export type AccountRow = {
   status: "active" | "inactive";
   createdAt: string;
   assignedProjects: AssignedProject[];
+  /** Null before their first sign-in (or before 0066 has run). */
+  lastSignInAt: string | null;
 };
+
+/** One project someone runs or ran, for their account's detail window. */
+export type AccountProject = {
+  id: number;
+  name: string;
+  status: "planning" | "ongoing" | "completed";
+  as: "Project Manager" | "Foreman";
+  startDate: string | null;
+  endDate: string | null;
+};
+
+/** Something they did in the app — a progress update, a daily log, a
+ * material request. */
+export type AccountActivity = {
+  kind: "progress" | "daily_log" | "material_request";
+  label: string;
+  projectName: string | null;
+  at: string;
+};
+
+/** One entry of the account change log (super admins only). */
+export type AccountLogEntry = {
+  id: number;
+  actorName: string;
+  action: AccountEventAction;
+  details: string | null;
+  createdAt: string;
+};
+
+/** Everything the detail window shows past the row itself. */
+export type AccountDetail = {
+  projects: AccountProject[];
+  activity: AccountActivity[];
+  /** Empty for anyone but a super admin. */
+  log: AccountLogEntry[];
+  /** Anything in the app points at them — so no deleting for good. */
+  hasHistory: boolean;
+};
+
+/** When each account last signed in — empty before 0066 has run. */
+async function lastSignIns(supabase: Awaited<ReturnType<typeof createClient>>) {
+  const { data, error } = await supabase.rpc("account_last_sign_ins");
+  if (error) return new Map<string, string | null>();
+  return new Map((data ?? []).map((row) => [row.profile_id, row.last_sign_in_at]));
+}
 
 /**
  * Maps each profile id to the projects that reference them as either
@@ -29,11 +80,15 @@ async function mapAssignedProjects(
 ) {
   const { data } = await supabase
     .from("projects")
-    .select("id, project_name, project_manager_id, foreman_id");
+    .select("id, project_name, project_manager_id, foreman_id, status");
 
   const byAccount = new Map<string, AssignedProject[]>();
   for (const row of data ?? []) {
-    const project = { id: row.id, name: row.project_name };
+    const project = {
+      id: row.id,
+      name: row.project_name,
+      completed: row.status === "completed",
+    };
     for (const accountId of [row.project_manager_id, row.foreman_id]) {
       const existing = byAccount.get(accountId) ?? [];
       existing.push(project);
@@ -61,7 +116,10 @@ export async function listAccountsByRole(
 
   if (error || !data) return [];
 
-  const assignedByAccount = await mapAssignedProjects(supabase);
+  const [assignedByAccount, signIns] = await Promise.all([
+    mapAssignedProjects(supabase),
+    lastSignIns(supabase),
+  ]);
 
   return data.map((row) => ({
     id: row.id,
@@ -72,5 +130,6 @@ export async function listAccountsByRole(
     status: row.status,
     createdAt: row.created_at,
     assignedProjects: assignedByAccount.get(row.id) ?? [],
+    lastSignInAt: signIns.get(row.id) ?? null,
   }));
 }

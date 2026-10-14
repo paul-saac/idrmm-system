@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile, type SessionProfile } from "@/lib/auth/session";
+import { isAdminRole } from "@/lib/auth/roles";
 
 /**
  * The signed-in profile if they may work inside this project — any admin,
@@ -15,7 +16,7 @@ export async function requireProjectAccess(
 ): Promise<SessionProfile | null> {
   const profile = await getSessionProfile();
   if (!profile) return null;
-  if (profile.role === "admin") return profile;
+  if (isAdminRole(profile.role)) return profile;
   if (profile.role !== "foreman" || !Number.isFinite(projectId)) return null;
 
   const supabase = await createClient();
@@ -34,5 +35,5 @@ export async function requireProjectAccess(
 export async function requireAdminOrForeman(): Promise<SessionProfile | null> {
   const profile = await getSessionProfile();
   if (!profile) return null;
-  return profile.role === "admin" || profile.role === "foreman" ? profile : null;
+  return isAdminRole(profile.role) || profile.role === "foreman" ? profile : null;
 }

@@ -78,7 +78,7 @@ export function CategoryForm({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-categoryName`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Category Name
           </label>

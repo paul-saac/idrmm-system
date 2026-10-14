@@ -45,9 +45,9 @@ function round2(value: number): number {
  * server-side in getCostEstimate for every CostTask/CostCategory, see
  * lib/cost-estimate/data.ts) up into category and project-wide
  * progress: Earned Value Management. A task/category's own contribution
- * to the project's overall percent is its own weight (0-100, PM-
- * assigned effort — see updateTaskWeight's own doc comment, lib/cost-
- * estimate/actions.ts) times its own percentComplete.
+ * to the project's overall percent is its own weight (0-100, its share
+ * of the estimated cost unless set by hand — see lib/cost-estimate/
+ * weights.ts) times its own percentComplete.
  *
  * Deliberately does NOT re-derive percentComplete from daily logs the
  * way this function used to (summing daily_log_work_items' own
@@ -71,14 +71,9 @@ function round2(value: number): number {
  * project-wide number at all. Fixed here as part of the same rollup
  * work, not a separate change.
  *
- * A category's own effective weight is the live sum of its tasks' own
- * weights while it has any — never its own stored estimate_categories.
- * weight column in that case, since nothing keeps that column in sync
- * anymore now that weight is assigned by hand per task instead of
- * recomputed from cost (see updateCategoryWeight's own doc comment) —
- * or its own stored value while task-less. Same "has tasks -> live
- * rollup, no tasks -> own value" split gantt-chart-view.tsx's own
- * categoryById already uses for the identical cell.
+ * A category's own weight is the sum of its tasks' weights while it
+ * has any, or its own while task-less — both already computed by
+ * getCostEstimate (lib/cost-estimate/weights.ts).
  */
 export async function getProjectProgress(
   projectId: number,

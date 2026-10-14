@@ -95,7 +95,7 @@ export function ReportsView({
       </div>
 
       <div ref={reportRef} className="flex flex-col gap-4">
-      <div className="rounded-lg bg-zinc-800 p-5 text-white">
+      <div className="rounded-lg bg-zinc-900 p-5 text-white">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">

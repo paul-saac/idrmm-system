@@ -1,7 +1,27 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, X } from "lucide-react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { ChevronLeft, MoreVertical, X } from "lucide-react";
+
+// The header's spot right after the title, for whatever a modal's own
+// content wants to show there (see ModalHeaderAddon).
+const HeaderSlotContext = createContext<HTMLElement | null>(null);
+
+/** Renders its children beside the modal's title — e.g. a live status
+ * badge the content itself computes. */
+export function ModalHeaderAddon({ children }: { children: React.ReactNode }) {
+  const slot = useContext(HeaderSlotContext);
+  return slot ? createPortal(children, slot) : null;
+}
+
+/** One action in a modal's ⋮ menu (beside its close button) — e.g.
+ * Delete, for a modal that edits one deletable thing. */
+export type ModalMenuItem = {
+  label: string;
+  onSelect: () => void;
+  destructive?: boolean;
+};
 
 // max-w-2xl (the original, and every other modal in this app) is too
 // narrow for a screen that's really a small spreadsheet — several
@@ -23,8 +43,11 @@ const SIZE_CLASS = {
 // trick, capped at 85dvh so a tall step still scrolls internally
 // rather than growing past the viewport.
 const VARIANT_CLASS = {
-  panel: "fixed top-4 right-4 left-auto m-0 h-[calc(100dvh-2rem)] max-h-none",
-  centered: "fixed inset-0 m-auto h-fit max-h-[85dvh]",
+  // Edge to edge on the top, right and bottom — only its left side,
+  // facing the page, gets a border.
+  panel:
+    "fixed top-0 right-0 left-auto m-0 h-dvh max-h-none rounded-none border-l border-zinc-200",
+  centered: "fixed inset-0 m-auto h-fit max-h-[85dvh] rounded-lg border border-zinc-200",
 } as const;
 
 export function Modal({
@@ -34,6 +57,7 @@ export function Modal({
   title,
   size = "default",
   variant = "panel",
+  menuItems,
   children,
 }: {
   open: boolean;
@@ -48,6 +72,8 @@ export function Modal({
   /** See VARIANT_CLASS's own doc comment above. Defaults to "panel" so
    * every existing call site keeps its current look unchanged. */
   variant?: keyof typeof VARIANT_CLASS;
+  /** Shows a ⋮ menu beside the close button with these actions. */
+  menuItems?: ModalMenuItem[];
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -66,6 +92,19 @@ export function Modal({
   // open starts genuinely fresh, matching how every Add/Edit form in
   // this app is already built to re-derive its fields from props.
   const [hasOpened, setHasOpened] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // A click anywhere outside the open menu closes it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [menuOpen]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -77,15 +116,34 @@ export function Modal({
     } else if (!open && dialog.open) {
       dialog.close();
       setHasOpened(false);
+      setMenuOpen(false);
     }
   }, [open]);
 
   return (
     <dialog
       ref={dialogRef}
-      onClose={onClose}
-      onCancel={onClose}
+      // React bubbles a <dialog>'s close/cancel up the component tree
+      // (it only keeps scroll events to their target), so a modal
+      // stacked on top of this one closing would otherwise close this
+      // one too — e.g. Holidays, opened from inside Edit Project.
+      onClose={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      onCancel={(e) => {
+        if (e.target !== e.currentTarget) return;
+        // Escape with the ⋮ menu open closes just the menu.
+        if (menuOpen) {
+          e.preventDefault();
+          setMenuOpen(false);
+          return;
+        }
+        onClose();
+      }}
       onMouseDown={(e) => {
+        // Same reason: a click inside a stacked modal (or on its own
+        // backdrop) belongs to that modal, not this one.
+        if ((e.target as Element).closest("dialog") !== e.currentTarget) return;
         // `e.target === dialog` (the usual trick for detecting a backdrop
         // click) isn't reliable for a <dialog>'s ::backdrop pseudo-element
         // across browsers. Checking whether the click coordinates fall
@@ -118,7 +176,7 @@ export function Modal({
       // than the viewport) to center itself, sized to fit its own
       // content up to max-h-[85dvh]. rounded-lg is this app's own 5px
       // token (see globals.css), not Tailwind's default 8px.
-      className={`${VARIANT_CLASS[variant]} w-full ${SIZE_CLASS[size]} overflow-hidden rounded-lg border border-zinc-200 bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col`}
+      className={`${VARIANT_CLASS[variant]} w-full ${SIZE_CLASS[size]} overflow-hidden bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col`}
     >
       <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
         <div className="flex items-center gap-1">
@@ -133,20 +191,69 @@ export function Modal({
             </button>
           )}
           <h2 className="text-lg font-semibold text-zinc-900">{title}</h2>
+          <div ref={setHeaderSlot} className="ml-2 flex items-center empty:hidden" />
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
-        >
-          <X className="size-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          {menuItems && menuItems.length > 0 && (
+            <>
+              <div ref={menuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((isOpen) => !isOpen)}
+                  aria-label="More actions"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  className={`cursor-pointer rounded p-1 transition hover:bg-zinc-100 hover:text-zinc-600 ${
+                    menuOpen ? "bg-zinc-100 text-zinc-600" : "text-zinc-400"
+                  }`}
+                >
+                  <MoreVertical className="size-5" />
+                </button>
+                {menuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute top-full right-0 z-20 mt-1 min-w-44 overflow-hidden rounded border border-zinc-200 bg-white py-1 shadow-lg"
+                  >
+                    {menuItems.map((item) => (
+                      <button
+                        key={item.label}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          item.onSelect();
+                        }}
+                        className={`block w-full cursor-pointer px-3 py-2 text-left text-sm transition ${
+                          item.destructive
+                            ? "text-red-600 hover:bg-red-50"
+                            : "text-zinc-700 hover:bg-zinc-50"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="mx-1 h-5 w-px bg-zinc-200" />
+            </>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
       </div>
       {/* Grows to fit its content; only scrolls once the dialog would
           otherwise run off the top/bottom of the viewport. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-        {hasOpened && children}
+        <HeaderSlotContext.Provider value={headerSlot}>
+          {hasOpened && children}
+        </HeaderSlotContext.Provider>
       </div>
     </dialog>
   );

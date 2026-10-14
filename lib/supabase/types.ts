@@ -2,6 +2,19 @@ import type { UserRole } from "@/lib/auth/roles";
 
 export type ProjectStatus = "planning" | "ongoing" | "completed";
 
+/** What happened to an account — see 0066_account_management.sql. */
+export type AccountEventAction =
+  | "created"
+  | "edited"
+  | "role_changed"
+  | "activated"
+  | "deactivated"
+  | "password_reset_sent"
+  | "password_set"
+  | "signed_out"
+  | "handed_over"
+  | "deleted";
+
 /**
  * Hand-written subset of the generated Supabase database types, covering
  * just what the auth feature needs. Once the schema grows, replace this
@@ -63,6 +76,9 @@ export interface Database {
            * Automatic Progress Completion's own working-day math — see
            * 0040_task_progress_tracking.sql. */
           working_days: number[];
+          /** ISO dates (YYYY-MM-DD) the site is off on top of its
+           * non-working weekdays — see 0053_project_holidays.sql. */
+          holidays: string[];
         };
         Insert: {
           project_name: string;
@@ -77,6 +93,7 @@ export interface Database {
           foreman_id: string;
           created_by: string;
           working_days?: number[];
+          holidays?: string[];
         };
         Update: {
           project_name?: string;
@@ -91,6 +108,39 @@ export interface Database {
           foreman_id?: string;
           gantt_undo_cursor_id?: number | null;
           working_days?: number[];
+          holidays?: string[];
+        };
+        Relationships: [];
+      };
+      /** A project's calendar events — see 0055_project_events.sql. */
+      project_events: {
+        Row: {
+          id: number;
+          project_id: number;
+          event_type: string;
+          name: string;
+          event_date: string;
+          /** "HH:MM:SS"; meetings only, null for every other type. */
+          start_time: string | null;
+          end_time: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: {
+          project_id: number;
+          event_type: string;
+          name: string;
+          event_date: string;
+          start_time?: string | null;
+          end_time?: string | null;
+          created_by?: string | null;
+        };
+        Update: {
+          event_type?: string;
+          name?: string;
+          event_date?: string;
+          start_time?: string | null;
+          end_time?: string | null;
         };
         Relationships: [];
       };
@@ -104,7 +154,6 @@ export interface Database {
           id: number;
           project_id: number;
           category_name: string;
-          weight: number | null;
           /** See 0042_category_direct_cost.sql's own comment — a
            * category's own direct BOM line, same reasoning as a task's
            * own material_direct_quantity/unit/material_unit_cost. */
@@ -131,6 +180,10 @@ export interface Database {
            * the Labor Breakdown modal shows their rolled-up total
            * instead (see LaborBreakdownModalContent's own doc comment). */
           category_labor_estimate: number | null;
+          /** A category's own Equipment / Other cost — see
+           * 0056_category_equipment_other.sql. */
+          category_equipment_estimate: number | null;
+          category_other_estimate: number | null;
           /** See 0048_category_progress_tracking.sql's own comment —
            * only used while this category has no tasks yet, same
            * asymmetric rule as planned_start_date/category_labor_estimate
@@ -149,7 +202,6 @@ export interface Database {
           id?: number;
           project_id: number;
           category_name: string;
-          weight?: number;
           material_direct_quantity?: number;
           material_direct_unit?: string | null;
           material_unit_cost?: number;
@@ -159,12 +211,13 @@ export interface Database {
           planned_end_date?: string | null;
           priority?: string;
           category_labor_estimate?: number;
+          category_equipment_estimate?: number;
+          category_other_estimate?: number;
           estimated_quantity?: number | null;
           unit?: string | null;
         };
         Update: {
           category_name?: string;
-          weight?: number;
           material_direct_quantity?: number;
           material_direct_unit?: string | null;
           material_unit_cost?: number;
@@ -174,6 +227,8 @@ export interface Database {
           planned_end_date?: string | null;
           priority?: string;
           category_labor_estimate?: number;
+          category_equipment_estimate?: number;
+          category_other_estimate?: number;
           estimated_quantity?: number | null;
           unit?: string | null;
         };
@@ -194,13 +249,11 @@ export interface Database {
           equipment_estimate: number | null;
           other_cost_estimate: number | null;
           total_estimate_cost: number | null;
-          weight: number | null;
           planned_start_date: string | null;
           planned_end_date: string | null;
           predecessor_task_id: number | null;
           is_milestone: boolean;
           priority: string;
-          percent_complete: number;
           /** See 0041_material_line_costs.sql's own comment — a task's
            * own direct BOM line (no material breakdown), deliberately
            * separate from estimated_quantity/unit above. */
@@ -225,13 +278,11 @@ export interface Database {
           equipment_estimate?: number;
           other_cost_estimate?: number;
           total_estimate_cost?: number;
-          weight?: number;
           planned_start_date?: string | null;
           planned_end_date?: string | null;
           predecessor_task_id?: number | null;
           is_milestone?: boolean;
           priority?: string;
-          percent_complete?: number;
           material_direct_quantity?: number;
           material_direct_unit?: string | null;
           material_unit_cost?: number;
@@ -247,13 +298,11 @@ export interface Database {
           equipment_estimate?: number;
           other_cost_estimate?: number;
           total_estimate_cost?: number;
-          weight?: number;
           planned_start_date?: string | null;
           planned_end_date?: string | null;
           predecessor_task_id?: number | null;
           is_milestone?: boolean;
           priority?: string;
-          percent_complete?: number;
           material_direct_quantity?: number;
           material_direct_unit?: string | null;
           material_unit_cost?: number;
@@ -299,24 +348,97 @@ export interface Database {
         };
         Relationships: [];
       };
-      estimate_task_labor_assignments: {
+      /** The bell's notifications — written only by triggers. See
+       * 0061_notifications.sql. */
+      notifications: {
         Row: {
           id: number;
-          task_id: number;
-          worker_role: string;
-          planned_worker_count: number;
+          recipient_id: string;
+          actor_id: string | null;
+          actor_name: string | null;
+          kind: "progress_override";
+          project_id: number;
+          project_name: string;
+          item_kind: "task" | "category";
+          item_id: number;
+          item_name: string;
+          entry_date: string;
+          read_at: string | null;
           created_at: string;
         };
         Insert: {
-          // See estimate_categories.Insert's own comment on `id` above.
-          id?: number;
-          task_id: number;
-          worker_role: string;
-          planned_worker_count?: number;
+          recipient_id: string;
+          actor_id?: string | null;
+          actor_name?: string | null;
+          kind?: "progress_override";
+          project_id: number;
+          project_name: string;
+          item_kind: "task" | "category";
+          item_id: number;
+          item_name: string;
+          entry_date: string;
+          read_at?: string | null;
         };
         Update: {
-          worker_role?: string;
-          planned_worker_count?: number;
+          read_at?: string | null;
+        };
+        Relationships: [];
+      };
+      /** See 0066_account_management.sql. */
+      account_events: {
+        Row: {
+          id: number;
+          actor_id: string;
+          actor_name: string;
+          target_id: string;
+          target_name: string;
+          action: AccountEventAction;
+          details: string | null;
+          created_at: string;
+        };
+        Insert: {
+          actor_id: string;
+          actor_name: string;
+          target_id: string;
+          target_name: string;
+          action: AccountEventAction;
+          details?: string | null;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      /** A main task's (category's) own itemized materials — the same
+       * lines as estimate_task_material_assignments, one level up. See
+       * 0058_category_material_lines.sql. */
+      estimate_category_material_assignments: {
+        Row: {
+          id: number;
+          category_id: number;
+          material_name: string;
+          specification: string | null;
+          planned_quantity: number;
+          unit: string | null;
+          unit_cost: number;
+          amount: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          category_id: number;
+          material_name: string;
+          specification?: string | null;
+          planned_quantity?: number;
+          unit?: string | null;
+          unit_cost?: number;
+          amount?: number | null;
+        };
+        Update: {
+          material_name?: string;
+          specification?: string | null;
+          planned_quantity?: number;
+          unit?: string | null;
+          unit_cost?: number;
+          amount?: number | null;
         };
         Relationships: [];
       };
@@ -367,28 +489,45 @@ export interface Database {
         Relationships: [];
       };
       workers: {
-        // The Gantt Chart's own "Manpower" roster (its own toolbar
-        // button, next to Undo/Redo) — real named people currently or
-        // soon working on one project, for task-level accountability.
-        // Deliberately separate from estimate_task_labor_assignments'
-        // role+headcount tally (a cost-estimation input, not this).
+        // The company Team (the admin's Team page) — real named people,
+        // assigned straight to tasks/phases for accountability. Company-
+        // wide since 0059_company_team.sql (was one roster per project).
         Row: {
           id: number;
-          project_id: number;
           full_name: string;
+          /** The member's title (e.g. Foreman, Mason). */
           trade: string | null;
+          /** See 0060_team_member_details.sql. */
+          contact_number: string | null;
+          date_hired: string | null;
+          /** See 0063_team_categories.sql. */
+          category: "management" | "professional" | "skilled";
+          employment_type: "employee" | "subcontractor";
+          subcontractor_company: string | null;
+          profile_id: string | null;
           created_by: string | null;
           created_at: string;
         };
         Insert: {
-          project_id: number;
           full_name: string;
           trade?: string | null;
+          contact_number?: string | null;
+          date_hired?: string | null;
+          category?: "management" | "professional" | "skilled";
+          employment_type?: "employee" | "subcontractor";
+          subcontractor_company?: string | null;
+          profile_id?: string | null;
           created_by?: string | null;
         };
         Update: {
           full_name?: string;
           trade?: string | null;
+          contact_number?: string | null;
+          date_hired?: string | null;
+          category?: "management" | "professional" | "skilled";
+          employment_type?: "employee" | "subcontractor";
+          subcontractor_company?: string | null;
+          profile_id?: string | null;
         };
         Relationships: [];
       };
@@ -435,10 +574,12 @@ export interface Database {
           task_id: number;
           entry_date: string;
           quantity_completed: number;
-          labor_headcount: number;
-          // See 0049_progress_percent_override.sql's own comment — null
-          // means "no override, use the live Materials/Labor/Time blend."
-          percent_complete_override: number | null;
+          /** That day's spend per cost component — see
+           * 0057_progress_entry_costs.sql. */
+          labor_cost: number;
+          material_cost: number;
+          equipment_cost: number;
+          other_cost: number;
           recorded_by: string | null;
           created_at: string;
         };
@@ -446,14 +587,18 @@ export interface Database {
           task_id: number;
           entry_date: string;
           quantity_completed?: number;
-          labor_headcount?: number;
-          percent_complete_override?: number | null;
+          labor_cost?: number;
+          material_cost?: number;
+          equipment_cost?: number;
+          other_cost?: number;
           recorded_by?: string | null;
         };
         Update: {
           quantity_completed?: number;
-          labor_headcount?: number;
-          percent_complete_override?: number | null;
+          labor_cost?: number;
+          material_cost?: number;
+          equipment_cost?: number;
+          other_cost?: number;
         };
         Relationships: [];
       };
@@ -478,24 +623,6 @@ export interface Database {
         Update: never;
         Relationships: [];
       };
-      task_progress_material_usage: {
-        // Materials consumed on one task_progress_entries row's own day
-        // — each one is a real project_materials.quantity deduction, see
-        // recordTaskProgress in lib/task-progress/actions.ts.
-        Row: {
-          id: number;
-          progress_entry_id: number;
-          material_id: number;
-          quantity: number;
-        };
-        Insert: {
-          progress_entry_id: number;
-          material_id: number;
-          quantity?: number;
-        };
-        Update: never;
-        Relationships: [];
-      };
       category_progress_entries: {
         // Same idea as task_progress_entries above, one level up — see
         // 0048_category_progress_tracking.sql.
@@ -504,10 +631,12 @@ export interface Database {
           category_id: number;
           entry_date: string;
           quantity_completed: number;
-          labor_headcount: number;
-          // See 0049_progress_percent_override.sql's own comment — null
-          // means "no override, use the live Materials/Labor/Time blend."
-          percent_complete_override: number | null;
+          /** That day's spend per cost component — see
+           * 0057_progress_entry_costs.sql. */
+          labor_cost: number;
+          material_cost: number;
+          equipment_cost: number;
+          other_cost: number;
           recorded_by: string | null;
           created_at: string;
         };
@@ -515,39 +644,21 @@ export interface Database {
           category_id: number;
           entry_date: string;
           quantity_completed?: number;
-          labor_headcount?: number;
-          percent_complete_override?: number | null;
+          labor_cost?: number;
+          material_cost?: number;
+          equipment_cost?: number;
+          other_cost?: number;
           recorded_by?: string | null;
         };
         Update: {
           quantity_completed?: number;
-          labor_headcount?: number;
-          percent_complete_override?: number | null;
+          labor_cost?: number;
+          material_cost?: number;
+          equipment_cost?: number;
+          other_cost?: number;
         };
         Relationships: [];
       };
-      category_progress_material_usage: {
-        // Same idea as task_progress_material_usage above, one level up
-        // — see 0048_category_progress_tracking.sql.
-        Row: {
-          id: number;
-          progress_entry_id: number;
-          material_id: number;
-          quantity: number;
-        };
-        Insert: {
-          progress_entry_id: number;
-          material_id: number;
-          quantity?: number;
-        };
-        Update: never;
-        Relationships: [];
-      };
-      // The tables below (progress tracking, materials, equipment,
-      // expenses) have no app code reading/writing them yet — the
-      // "Progress"/"Materials"/"Equipment"/"Expenses" tabs are still
-      // placeholders. Typed now so building those features later doesn't
-      // require retrofitting this file from scratch.
       daily_logs: {
         Row: {
           id: number;
@@ -1164,6 +1275,19 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      /** See 0066_account_management.sql. */
+      account_has_history: {
+        Args: { p_profile_id: string };
+        Returns: boolean;
+      };
+      sign_out_everywhere: {
+        Args: { p_user_id: string };
+        Returns: undefined;
+      };
+      account_last_sign_ins: {
+        Args: Record<string, never>;
+        Returns: { profile_id: string; last_sign_in_at: string | null }[];
+      };
       set_project_default_labor_cost_percent: {
         Args: { p_project_id: number; p_percent: number | null };
         Returns: undefined;
@@ -1171,6 +1295,21 @@ export interface Database {
       sync_equipment_status: {
         Args: { p_equipment_id: number };
         Returns: undefined;
+      };
+      /** See 0060_team_member_details.sql. */
+      team_assignments: {
+        Args: Record<string, never>;
+        Returns: {
+          worker_id: number;
+          item_kind: "task" | "category" | "project";
+          item_id: number;
+          item_name: string;
+          project_id: number;
+          project_name: string;
+          project_completed: boolean;
+          start_date: string | null;
+          end_date: string | null;
+        }[];
       };
     };
     Enums: {

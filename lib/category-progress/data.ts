@@ -1,46 +1,72 @@
 import { createClient } from "@/lib/supabase/server";
-import type { ProgressAnchor } from "@/lib/task-progress/calculate";
-import type { TaskProgressToday } from "@/lib/task-progress/data";
+import { ZERO_COSTS, type ProgressAnchor } from "@/lib/task-progress/calculate";
+import {
+  entryCosts,
+  savedByNames,
+  type TaskProgressToday,
+} from "@/lib/task-progress/data";
 
 /** Same idea as TaskProgressAnchors, one level up — see that type's own
- * doc comment. Keyed by category id; a category with no Progress
- * Tracking Override recorded yet (which, in practice, is every category
- * that still has tasks — see 0048_category_progress_tracking.sql's own
- * comment) is simply absent.
+ * doc comment. Keyed by category id; a category with no Daily Progress
+ * Update saved yet (which, in practice, is every category that still has
+ * tasks — see 0048_category_progress_tracking.sql's own comment) is
+ * simply absent.
  *
  * cumulativeMaterialUsage is always empty here — a task-less category
  * has no planned material list of its own to log usage against (just
- * its single direct line, see CostCategory.materialDirectQuantity), so
- * its own Materials% is always excluded from its blend. */
+ * its single direct line, see CostCategory.materialDirectQuantity). */
 export type CategoryProgressAnchors = Record<number, ProgressAnchor>;
+
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/** Every entry for these categories, oldest first. "*" rather than a
+ * column list, so a DB missing a newer column (e.g. 0057's costs) still
+ * loads. */
+async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
+  const { data, error } = await supabase
+    .from("category_progress_entries")
+    .select("*")
+    .in("category_id", categoryIds)
+    .order("entry_date", { ascending: true });
+
+  if (error) {
+    console.error("[category-progress] entries query failed:", error.message);
+  }
+  return data ?? [];
+}
+
+function emptyAnchor(): ProgressAnchor & { loggedDates: string[] } {
+  return {
+    cumulativeQuantityCompleted: 0,
+    cumulativeMaterialUsage: {},
+    cumulativeCosts: { ...ZERO_COSTS },
+    loggedDates: [],
+  };
+}
+
+function addRow(
+  anchor: ReturnType<typeof emptyAnchor>,
+  row: Awaited<ReturnType<typeof fetchEntries>>[number]
+) {
+  const costs = entryCosts(row);
+  anchor.cumulativeQuantityCompleted += row.quantity_completed ?? 0;
+  anchor.cumulativeCosts.labor += costs.labor;
+  anchor.cumulativeCosts.material += costs.material;
+  anchor.cumulativeCosts.equipment += costs.equipment;
+  anchor.cumulativeCosts.other += costs.other;
+  anchor.loggedDates.push(row.entry_date);
+}
 
 export async function listCategoryProgressAnchors(
   categoryIds: number[]
 ): Promise<CategoryProgressAnchors> {
   if (categoryIds.length === 0) return {};
   const supabase = await createClient();
+  const rows = await fetchEntries(supabase, categoryIds);
 
-  const { data, error } = await supabase
-    .from("category_progress_entries")
-    .select("category_id, labor_headcount, percent_complete_override")
-    .in("category_id", categoryIds)
-    // Oldest first, so the last row seen per category below is the
-    // latest one — what latestPercentCompleteOverride is read from.
-    .order("entry_date", { ascending: true });
-
-  if (error) {
-    console.error("[category-progress] entries query failed:", error.message);
-  }
-
-  const result: CategoryProgressAnchors = {};
-  for (const row of data ?? []) {
-    const existing = result[row.category_id];
-    result[row.category_id] = {
-      cumulativeMaterialUsage: {},
-      cumulativeLaborHeadcount:
-        (existing?.cumulativeLaborHeadcount ?? 0) + (row.labor_headcount ?? 0),
-      latestPercentCompleteOverride: row.percent_complete_override,
-    };
+  const result: Record<number, ReturnType<typeof emptyAnchor>> = {};
+  for (const row of rows) {
+    addRow((result[row.category_id] ??= emptyAnchor()), row);
   }
   return result;
 }
@@ -70,35 +96,45 @@ export async function listCategoryProgressToday(
   if (categoryIds.length === 0) return {};
 
   const today = todayIso();
+  const rows = await fetchEntries(supabase, categoryIds);
 
-  const { data: entries, error } = await supabase
-    .from("category_progress_entries")
-    .select("category_id, entry_date, labor_headcount, percent_complete_override")
-    .in("category_id", categoryIds);
-
-  if (error) {
-    console.error("[category-progress] entries query failed:", error.message);
-  }
-
-  const result: Record<number, TaskProgressToday> = {};
+  const result: Record<
+    number,
+    ReturnType<typeof emptyAnchor> & {
+      today: TaskProgressToday["today"];
+      latest: TaskProgressToday["latest"];
+    }
+  > = {};
   for (const categoryId of categoryIds) {
-    result[categoryId] = {
-      cumulativeMaterialUsage: {},
-      cumulativeLaborHeadcount: 0,
-      today: null,
-    };
+    result[categoryId] = { ...emptyAnchor(), today: null, latest: null };
   }
-  for (const row of entries ?? []) {
+  // Oldest first, so each category's last row is its latest override.
+  const latestByCategory = new Map<number, (typeof rows)[number]>();
+  for (const row of rows) {
     const progress = result[row.category_id];
     if (!progress) continue;
-    progress.cumulativeLaborHeadcount += row.labor_headcount ?? 0;
+    addRow(progress, row);
+    latestByCategory.set(row.category_id, row);
     if (row.entry_date === today) {
       progress.today = {
-        laborHeadcount: row.labor_headcount ?? 0,
+        quantityCompleted: row.quantity_completed ?? 0,
+        costs: entryCosts(row),
         materialUsage: {},
-        percentCompleteOverride: row.percent_complete_override,
       };
     }
+  }
+  const names = await savedByNames(
+    supabase,
+    Array.from(latestByCategory.values(), (row) => row.recorded_by)
+  );
+  for (const [categoryId, row] of latestByCategory) {
+    result[categoryId].latest = {
+      quantityCompleted: row.quantity_completed ?? 0,
+      costs: entryCosts(row),
+      materialUsage: {},
+      entryDate: row.entry_date,
+      savedByName: (row.recorded_by && names.get(row.recorded_by)) || null,
+    };
   }
   return result;
 }

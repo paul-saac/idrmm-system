@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { seedDefaultSurveyQuestions } from "@/lib/daily-logs/actions";
+import { isAdminRole } from "@/lib/auth/roles";
 
 export type ProjectActionState = {
   error?: string;
@@ -37,13 +38,47 @@ function parseWorkingDays(formData: FormData): number[] {
     .filter((n) => Number.isInteger(n) && n >= 1 && n <= 7);
 }
 
+/**
+ * A project manager or foreman is only ever on one project at a time —
+ * the error for whichever of `people` already runs another project
+ * (other than `projectId`, the one being saved) that isn't completed,
+ * else null. lib/accounts/availability.ts holds the same rule in the
+ * forms.
+ */
+async function assignmentClash(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  people: { id: string; role: string }[],
+  projectId?: number
+): Promise<string | null> {
+  if (people.length === 0) return null;
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id, project_name, project_manager_id, foreman_id")
+    .neq("status", "completed");
+  if (error) {
+    console.error("[assignmentClash] Supabase read failed:", error);
+    return "Could not check who's free. Please try again.";
+  }
+  for (const person of people) {
+    const clash = (data ?? []).find(
+      (row) =>
+        row.id !== projectId &&
+        (row.project_manager_id === person.id || row.foreman_id === person.id)
+    );
+    if (clash) {
+      return `That ${person.role} is already on ${clash.project_name} — they can be assigned to another project once it's completed.`;
+    }
+  }
+  return null;
+}
+
 export async function createProject(
   _prevState: ProjectActionState,
   formData: FormData
 ): Promise<ProjectActionState> {
   const profile = await getSessionProfile();
 
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to create projects." };
   }
 
@@ -63,6 +98,14 @@ export async function createProject(
   }
 
   const supabase = await createClient();
+
+  const clash = await assignmentClash(supabase, [
+    { id: projectManagerId, role: "Project Manager" },
+    { id: foremanId, role: "Foreman" },
+  ]);
+  if (clash) {
+    return { error: clash };
+  }
 
   const { data: project, error } = await supabase
     .from("projects")
@@ -101,7 +144,7 @@ export async function updateProject(
 ): Promise<ProjectActionState> {
   const profile = await getSessionProfile();
 
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to edit projects." };
   }
 
@@ -123,6 +166,28 @@ export async function updateProject(
   }
 
   const supabase = await createClient();
+
+  // Only someone newly picked is checked — whoever's already on this
+  // project stays on it, even if (from before this rule) they're on
+  // another one too.
+  const { data: current } = await supabase
+    .from("projects")
+    .select("project_manager_id, foreman_id")
+    .eq("id", projectId)
+    .single();
+  const clash = await assignmentClash(
+    supabase,
+    [
+      ...(current?.project_manager_id !== projectManagerId
+        ? [{ id: projectManagerId, role: "Project Manager" }]
+        : []),
+      ...(current?.foreman_id !== foremanId ? [{ id: foremanId, role: "Foreman" }] : []),
+    ],
+    projectId
+  );
+  if (clash) {
+    return { error: clash };
+  }
 
   // status is deliberately not editable here — it's kept in sync with
   // actual logged progress by lib/projects/status.ts's
@@ -205,7 +270,7 @@ export async function deleteProject(
 ): Promise<ProjectActionState> {
   const profile = await getSessionProfile();
 
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to delete projects." };
   }
 

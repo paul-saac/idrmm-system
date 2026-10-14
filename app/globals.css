@@ -30,29 +30,28 @@ html {
 }
 
 /*
- * Every card in the app (project/stat cards, tables, modals, chart
- * containers, ...) uses the `rounded-lg` utility, so overriding this one
- * design token reshapes all of them at once — sharper corners, 5px
- * instead of Tailwind's default 8px — without hunting down every
- * individual `rounded-lg` across the codebase. Buttons intentionally
- * aren't affected: they use the bare `rounded` utility (a separate
- * token), left at its own already-established 4px.
+ * One sharp corner everywhere: 2px. Buttons use the bare `rounded`
+ * utility (--radius), inputs/selects `rounded-md`, badges `rounded-sm`,
+ * and cards/tables/dialogs `rounded-lg` — overriding these tokens here
+ * reshapes every one of them at once, without hunting down each class
+ * across the codebase. `rounded-full` (pills, avatars, dots) is untouched.
  */
 @theme {
-  --radius-lg: 5px;
+  --radius: 2px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
 
   /*
-   * The whole app uses zinc-900 as its "black" — primary buttons, the
-   * sidebar, headings, active tab/calendar-day states, dark section
-   * headers. Tailwind's real zinc-900 (#18181b) is a cold near-black;
-   * this project's black is a warmer, slightly lighter #3B3939.
-   * Overriding this one token repaints every bg-/text-/border-/ring-
-   * zinc-900 across all 40+ files at once. zinc-950 (used as a
-   * hover-darker target in a couple of spots) is nudged just below it so
-   * "darker on hover" still reads.
+   * One black, the sidebar's: zinc-900 (#3B3939, warmer and a touch
+   * lighter than Tailwind's own cold #18181b) — primary buttons, the
+   * sidebar, headings, text, dark section headers. zinc-950 is the same
+   * black, so nothing ever reads darker than it; zinc-800 is only a black
+   * button's hover — the same black, a shade lighter.
    */
+  --color-zinc-800: #4f4d4d;
   --color-zinc-900: #3b3939;
-  --color-zinc-950: #2e2c2c;
+  --color-zinc-950: #3b3939;
 }
 
 /*

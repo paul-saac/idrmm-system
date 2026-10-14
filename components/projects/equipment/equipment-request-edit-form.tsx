@@ -111,7 +111,7 @@ function ItemForm({
     <div className="flex flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label className="text-sm font-medium text-zinc-800">
+          <label className="text-sm font-medium text-zinc-900">
             Equipment Name
           </label>
           <input
@@ -123,7 +123,7 @@ function ItemForm({
           />
         </div>
         <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label className="text-sm font-medium text-zinc-800">
+          <label className="text-sm font-medium text-zinc-900">
             Specification / Model
           </label>
           <input
@@ -134,7 +134,7 @@ function ItemForm({
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-800">
+          <label className="text-sm font-medium text-zinc-900">
             Quantity Needed
           </label>
           <input
@@ -148,7 +148,7 @@ function ItemForm({
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-800">UOM</label>
+          <label className="text-sm font-medium text-zinc-900">UOM</label>
           <select
             value={selectedUnit}
             onChange={(e) => {
@@ -176,7 +176,7 @@ function ItemForm({
           )}
         </div>
         <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label className="text-sm font-medium text-zinc-800">
+          <label className="text-sm font-medium text-zinc-900">
             Purpose of Request
           </label>
           <input
@@ -188,7 +188,7 @@ function ItemForm({
         </div>
         {showFulfilled && (
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-zinc-800">
+            <label className="text-sm font-medium text-zinc-900">
               Quantity Fulfilled
             </label>
             <input
@@ -582,7 +582,7 @@ export function EquipmentRequestEditForm({
           <div className="flex flex-col gap-1.5">
             <label
               htmlFor="erf-remarks"
-              className="text-sm font-medium text-zinc-800"
+              className="text-sm font-medium text-zinc-900"
             >
               Remarks{" "}
               <span className="font-normal text-zinc-400">(optional)</span>

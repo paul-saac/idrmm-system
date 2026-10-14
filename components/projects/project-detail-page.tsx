@@ -6,11 +6,13 @@ import { getCostEstimate } from "@/lib/cost-estimate/data";
 import { getGanttUndoRedoState } from "@/lib/cost-estimate/undo-redo";
 import {
   listWorkers,
+  listAssignments,
   listTaskWorkerAssignments,
   listCategoryWorkerAssignments,
 } from "@/lib/workers/data";
 import { listTaskProgressToday } from "@/lib/task-progress/data";
 import { listCategoryProgressToday } from "@/lib/category-progress/data";
+import { listProjectEvents } from "@/lib/project-events/data";
 import { getProjectProgress } from "@/lib/progress/data";
 import { listDailyLogs, listSurveyQuestions } from "@/lib/daily-logs/data";
 import {
@@ -80,10 +82,12 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     sessionProfile,
     ganttUndoRedoState,
     workers,
+    workerAssignments,
     taskWorkerAssignments,
     categoryWorkerAssignments,
     taskProgressToday,
     categoryProgressToday,
+    events,
   ] = await Promise.all([
     getProjectById(projectId),
     listAccountsByRole(["project_manager"]),
@@ -106,11 +110,13 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listOtherExpenses(projectId),
     getSessionProfile(),
     getGanttUndoRedoState(projectId),
-    listWorkers(projectId),
+    listWorkers(),
+    listAssignments(),
     listTaskWorkerAssignments(projectId),
     listCategoryWorkerAssignments(projectId),
     listTaskProgressToday(projectId),
     listCategoryProgressToday(projectId),
+    listProjectEvents(projectId),
   ]);
 
   const expenseOverview = summarizeExpenses(
@@ -186,10 +192,12 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       ganttCanUndo={ganttUndoRedoState.canUndo}
       ganttCanRedo={ganttUndoRedoState.canRedo}
       workers={workers}
+      workerAssignments={workerAssignments}
       taskWorkerAssignments={taskWorkerAssignments}
       categoryWorkerAssignments={categoryWorkerAssignments}
       taskProgressToday={taskProgressToday}
       categoryProgressToday={categoryProgressToday}
+      events={events}
     />
   );
 }

@@ -1,58 +1,101 @@
 import { createClient } from "@/lib/supabase/server";
-import { materialKey, type ProgressAnchor } from "@/lib/task-progress/calculate";
+import {
+  materialKey,
+  ZERO_COSTS,
+  type CostAmounts,
+  type ProgressAnchor,
+} from "@/lib/task-progress/calculate";
 
-/** Every task's own cumulative totals (see ProgressAnchor's own doc
- * comment) for a whole project's worth of tasks — powers
- * computeAutoPercentComplete inside getCostEstimate. Keyed by task id;
- * a task with no Progress Tracking Override recorded yet is simply
- * absent (callers fall back to EMPTY_PROGRESS_ANCHOR). */
+/** Every task's own saved totals (see ProgressAnchor's own doc comment)
+ * for a whole project's worth of tasks — powers computeAutoPercentComplete
+ * inside getCostEstimate. Keyed by task id; a task with no Daily Progress
+ * Update saved yet is simply absent (callers fall back to
+ * EMPTY_PROGRESS_ANCHOR). */
 export type TaskProgressAnchors = Record<number, ProgressAnchor>;
 
-export type TaskProgressToday = {
-  /** Quantity used so far per material (keyed by materialKey), across
-   * every day ever recorded — shown in the Progress Tracking modal as
-   * each material's own "used so far." */
-  cumulativeMaterialUsage: Record<string, number>;
-  /** Worker-days logged so far, across every day ever recorded. */
-  cumulativeLaborHeadcount: number;
-  /** This task's own entry for *today* specifically, if one was
-   * already recorded (e.g. the admin is reopening the modal to correct
-   * it) — pre-fills the form instead of it starting blank. Null means
-   * nothing's been recorded yet today. */
-  today: {
-    laborHeadcount: number;
-    materialUsage: Record<string, number>;
-    percentCompleteOverride: number | null;
-  } | null;
+/** One day's saved Daily Progress Update. */
+export type ProgressDayEntry = {
+  quantityCompleted: number;
+  costs: CostAmounts;
+  /** That day's usage per material, keyed by materialKey. */
+  materialUsage: Record<string, number>;
+};
+
+/** The most recently overridden day — what the Gantt chart's orange dot
+ * marks, shown under the Daily Progress Update's inputs. */
+export type LatestOverride = ProgressDayEntry & {
+  entryDate: string;
+  /** Who saved it — null when unknown, or not visible to this user
+   * (they may only read their own profile). */
+  savedByName: string | null;
+};
+
+/** A task's saved totals plus whatever's already saved for today — what
+ * the Daily Progress Update modal starts from. `today` null means
+ * nothing's been saved yet today (the form starts from the day's
+ * automatic planned share instead — see computeDailyPlan). */
+export type TaskProgressToday = ProgressAnchor & {
+  today: ProgressDayEntry | null;
+  latest: LatestOverride | null;
 };
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
-type EntryWithMaterials = {
+type Entry = ProgressDayEntry & {
   taskId: number;
   entryDate: string;
-  laborHeadcount: number;
-  percentCompleteOverride: number | null;
-  /** That day's own usage per material, keyed by materialKey. */
-  materials: Record<string, number>;
+  recordedBy: string | null;
 };
 
+/** Display names for whoever saved these entries, by profile id. */
+export async function savedByNames(
+  supabase: Supabase,
+  ids: (string | null)[]
+): Promise<Map<string, string>> {
+  const unique = Array.from(new Set(ids.filter((id): id is string => Boolean(id))));
+  const names = new Map<string, string>();
+  if (unique.length === 0) return names;
+  const { data } = await supabase
+    .from("profiles")
+    .select("id, first_name, last_name")
+    .in("id", unique);
+  for (const profile of data ?? []) {
+    const name = `${profile.first_name ?? ""} ${profile.last_name ?? ""}`.trim();
+    if (name) names.set(profile.id, name);
+  }
+  return names;
+}
+
+/** A progress entry row's own four costs (0057_progress_entry_costs.sql)
+ * — 0 for any column a not-yet-migrated DB doesn't have. */
+export function entryCosts(row: {
+  labor_cost?: number | null;
+  material_cost?: number | null;
+  equipment_cost?: number | null;
+  other_cost?: number | null;
+}): CostAmounts {
+  return {
+    labor: row.labor_cost ?? 0,
+    material: row.material_cost ?? 0,
+    equipment: row.equipment_cost ?? 0,
+    other: row.other_cost ?? 0,
+  };
+}
+
 /**
- * Every Progress Tracking Override entry for these tasks, oldest first,
- * each with its own day's material usage attached. Every entry is its
- * own day's *increment*, not a running total (see
- * 0040_task_progress_tracking.sql), so a task's cumulative standing is
- * just the sum of its entries. Two queries rather than one embedded
- * select — neither table declares a Relationships entry in
+ * Every Daily Progress Update entry for these tasks, oldest first, each
+ * with its own day's material usage attached. Every entry is its own
+ * day's *increment*, not a running total (see
+ * 0040_task_progress_tracking.sql), so a task's saved standing is just
+ * the sum of its entries. "*" rather than a column list, so a DB missing
+ * a newer column (e.g. 0057's costs) still loads. Two queries rather than
+ * one embedded select — neither table declares a Relationships entry in
  * lib/supabase/types.ts for the typed client to embed through.
  */
-async function fetchEntriesWithMaterials(
-  supabase: Supabase,
-  taskIds: number[]
-): Promise<EntryWithMaterials[]> {
+async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entry[]> {
   const { data: entries, error: entriesError } = await supabase
     .from("task_progress_entries")
-    .select("id, task_id, entry_date, labor_headcount, percent_complete_override")
+    .select("*")
     .in("task_id", taskIds)
     .order("entry_date", { ascending: true });
 
@@ -92,21 +135,33 @@ async function fetchEntriesWithMaterials(
   return rows.map((row) => ({
     taskId: row.task_id,
     entryDate: row.entry_date,
-    laborHeadcount: row.labor_headcount ?? 0,
-    percentCompleteOverride: row.percent_complete_override,
-    materials: materialsByEntry.get(row.id) ?? {},
+    quantityCompleted: row.quantity_completed ?? 0,
+    costs: entryCosts(row),
+    materialUsage: materialsByEntry.get(row.id) ?? {},
+    recordedBy: row.recorded_by ?? null,
   }));
 }
 
-function addEntryTotals(
-  target: { cumulativeMaterialUsage: Record<string, number>; cumulativeLaborHeadcount: number },
-  entry: EntryWithMaterials
-) {
-  for (const [key, quantity] of Object.entries(entry.materials)) {
-    target.cumulativeMaterialUsage[key] =
-      (target.cumulativeMaterialUsage[key] ?? 0) + quantity;
+function emptyAnchor(): ProgressAnchor & { loggedDates: string[] } {
+  return {
+    cumulativeQuantityCompleted: 0,
+    cumulativeMaterialUsage: {},
+    cumulativeCosts: { ...ZERO_COSTS },
+    loggedDates: [],
+  };
+}
+
+function addEntry(anchor: ReturnType<typeof emptyAnchor>, entry: Entry) {
+  anchor.cumulativeQuantityCompleted += entry.quantityCompleted;
+  for (const [key, quantity] of Object.entries(entry.materialUsage)) {
+    anchor.cumulativeMaterialUsage[key] =
+      (anchor.cumulativeMaterialUsage[key] ?? 0) + quantity;
   }
-  target.cumulativeLaborHeadcount += entry.laborHeadcount;
+  anchor.cumulativeCosts.labor += entry.costs.labor;
+  anchor.cumulativeCosts.material += entry.costs.material;
+  anchor.cumulativeCosts.equipment += entry.costs.equipment;
+  anchor.cumulativeCosts.other += entry.costs.other;
+  anchor.loggedDates.push(entry.entryDate);
 }
 
 export async function listTaskProgressAnchors(
@@ -114,21 +169,12 @@ export async function listTaskProgressAnchors(
 ): Promise<TaskProgressAnchors> {
   if (taskIds.length === 0) return {};
   const supabase = await createClient();
-  const entries = await fetchEntriesWithMaterials(supabase, taskIds);
+  const entries = await fetchEntries(supabase, taskIds);
 
-  const result: TaskProgressAnchors = {};
+  const result: Record<number, ReturnType<typeof emptyAnchor>> = {};
   for (const entry of entries) {
-    const anchor = result[entry.taskId] ?? {
-      cumulativeMaterialUsage: {},
-      cumulativeLaborHeadcount: 0,
-      latestPercentCompleteOverride: null,
-    };
-    addEntryTotals(anchor, entry);
-    // Entries arrive oldest-first, so whichever entry is processed last
-    // is the latest one — a newer entry saved without an override
-    // correctly clears an older one's.
-    anchor.latestPercentCompleteOverride = entry.percentCompleteOverride;
-    result[entry.taskId] = anchor;
+    const anchor = (result[entry.taskId] ??= emptyAnchor());
+    addEntry(anchor, entry);
   }
   return result;
 }
@@ -141,12 +187,11 @@ function todayIso() {
 }
 
 /**
- * Every task's own cumulative-to-date totals plus whatever's already
- * recorded for today, for a whole project's worth of tasks — fetched
- * server-side alongside everything else (see page.tsx) and handed to
- * the Progress Tracking modal as a plain prop, same "server pre-fetches
- * everything, no per-open client fetch" convention every other Gantt
- * modal in this app already follows.
+ * Every task's own saved totals plus whatever's already saved for today,
+ * for a whole project's worth of tasks — fetched server-side alongside
+ * everything else and handed to the Daily Progress Update modal as a
+ * plain prop, same "server pre-fetches everything, no per-open client
+ * fetch" convention every other Gantt modal follows.
  */
 export async function listTaskProgressToday(
   projectId: number
@@ -164,27 +209,42 @@ export async function listTaskProgressToday(
   if (taskIds.length === 0) return {};
 
   const today = todayIso();
-  const entries = await fetchEntriesWithMaterials(supabase, taskIds);
+  const entries = await fetchEntries(supabase, taskIds);
 
-  const result: Record<number, TaskProgressToday> = {};
+  const result: Record<number, ReturnType<typeof emptyAnchor> & {
+    today: ProgressDayEntry | null;
+    latest: LatestOverride | null;
+  }> = {};
   for (const taskId of taskIds) {
-    result[taskId] = {
-      cumulativeMaterialUsage: {},
-      cumulativeLaborHeadcount: 0,
-      today: null,
-    };
+    result[taskId] = { ...emptyAnchor(), today: null, latest: null };
   }
+  // Oldest first, so each task's last entry is its latest override.
+  const latestByTask = new Map<number, Entry>();
   for (const entry of entries) {
     const progress = result[entry.taskId];
     if (!progress) continue;
-    addEntryTotals(progress, entry);
+    addEntry(progress, entry);
+    latestByTask.set(entry.taskId, entry);
     if (entry.entryDate === today) {
       progress.today = {
-        laborHeadcount: entry.laborHeadcount,
-        materialUsage: entry.materials,
-        percentCompleteOverride: entry.percentCompleteOverride,
+        quantityCompleted: entry.quantityCompleted,
+        costs: entry.costs,
+        materialUsage: entry.materialUsage,
       };
     }
+  }
+  const names = await savedByNames(
+    supabase,
+    Array.from(latestByTask.values(), (entry) => entry.recordedBy)
+  );
+  for (const [taskId, entry] of latestByTask) {
+    result[taskId].latest = {
+      quantityCompleted: entry.quantityCompleted,
+      costs: entry.costs,
+      materialUsage: entry.materialUsage,
+      entryDate: entry.entryDate,
+      savedByName: (entry.recordedBy && names.get(entry.recordedBy)) || null,
+    };
   }
   return result;
 }

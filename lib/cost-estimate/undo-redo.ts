@@ -21,7 +21,9 @@ export type GanttSnapshot = {
   tasks: RawRow[];
   otherCosts: RawRow[];
   materialAssignments: RawRow[];
-  laborAssignments: RawRow[];
+  /** A standalone category's own material lines (0058) — missing from
+   * any snapshot recorded before them, which had none. */
+  categoryMaterialAssignments?: RawRow[];
 };
 
 /**
@@ -35,7 +37,7 @@ const MAX_GANTT_HISTORY_PER_PROJECT = 50;
 
 /**
  * Captures the full current state of a project's schedule/cost data —
- * every estimate_categories/estimate_tasks row plus their 3 child tables
+ * every estimate_categories/estimate_tasks row plus their child tables
  * — as one JSON-serializable snapshot. Used both to record a checkpoint
  * after a mutation and, inside restoreGanttSnapshot, to diff against the
  * checkpoint being restored to.
@@ -50,25 +52,36 @@ export async function captureGanttSnapshot(
   ]);
 
   const taskIds = (tasks ?? []).map((row) => row.id);
+  const categoryIds = (categories ?? []).map((row) => row.id);
 
-  const [{ data: otherCosts }, { data: materialAssignments }, { data: laborAssignments }] =
+  const [
+    [{ data: otherCosts }, { data: materialAssignments }],
+    { data: categoryMaterialAssignments },
+  ] = await Promise.all([
     taskIds.length > 0
-      ? await Promise.all([
+      ? Promise.all([
           supabase.from("estimate_task_other_costs").select("*").in("task_id", taskIds),
           supabase
             .from("estimate_task_material_assignments")
             .select("*")
             .in("task_id", taskIds),
-          supabase.from("estimate_task_labor_assignments").select("*").in("task_id", taskIds),
         ])
-      : [{ data: [] }, { data: [] }, { data: [] }];
+      : [{ data: [] }, { data: [] }],
+    // Null data (no table yet, before 0058) reads as no lines.
+    categoryIds.length > 0
+      ? supabase
+          .from("estimate_category_material_assignments")
+          .select("*")
+          .in("category_id", categoryIds)
+      : { data: [] },
+  ]);
 
   return {
     categories: (categories ?? []) as unknown as RawRow[],
     tasks: (tasks ?? []) as unknown as RawRow[],
     otherCosts: (otherCosts ?? []) as unknown as RawRow[],
     materialAssignments: (materialAssignments ?? []) as unknown as RawRow[],
-    laborAssignments: (laborAssignments ?? []) as unknown as RawRow[],
+    categoryMaterialAssignments: (categoryMaterialAssignments ?? []) as unknown as RawRow[],
   };
 }
 
@@ -76,7 +89,7 @@ export async function captureGanttSnapshot(
  * Call this at the end of every mutating action in actions.ts, right
  * before its success `return` (including a "partial failure" path that
  * still left some rows committed — see e.g. createTask, which can fail
- * to save its material/labor assignments after the task row itself
+ * to save its material assignments after the task row itself
  * already saved; that's a real DB-state change too, and belongs in the
  * history the same as a full success would).
  *
@@ -277,7 +290,11 @@ export async function restoreGanttSnapshot(
       current.materialAssignments,
       snapshot.materialAssignments,
     ],
-    ["estimate_task_labor_assignments", current.laborAssignments, snapshot.laborAssignments],
+    [
+      "estimate_category_material_assignments",
+      current.categoryMaterialAssignments ?? [],
+      snapshot.categoryMaterialAssignments ?? [],
+    ],
   ] as const) {
     const diff = diffRows(currentRows, targetRows);
     if (diff.toDeleteIds.length > 0) {

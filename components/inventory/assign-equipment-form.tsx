@@ -41,7 +41,7 @@ export function AssignEquipmentForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-projectId`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Assign to Project
         </label>
@@ -71,7 +71,7 @@ export function AssignEquipmentForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-notes`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Purpose{" "}
           <span className="font-normal text-zinc-400">(optional)</span>

@@ -4,7 +4,7 @@ import { useActionState, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, Trash2 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
-import { LogoutButton } from "@/components/auth/logout-button";
+import { HeaderActions } from "@/components/auth/header-actions";
 import {
   AddDailyLogModal,
   type CategoryOption,
@@ -749,7 +749,7 @@ function AttachmentGallery({
 
   return (
     <div className="rounded-lg border border-zinc-200 bg-white">
-      <div className="bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-800">
+      <div className="bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900">
         {title}
       </div>
       <div className="flex flex-col gap-4 p-4">
@@ -790,7 +790,7 @@ function SurveyRow({
 }) {
   return (
     <tr className="border-b border-zinc-100 last:border-0">
-      <td className="px-4 py-3 text-sm text-zinc-800">{question}</td>
+      <td className="px-4 py-3 text-sm text-zinc-900">{question}</td>
       <td className="px-4 py-3 text-center">
         <input
           type="checkbox"
@@ -883,7 +883,7 @@ export function DailyLogDetailView({
             {formatDateLong(log.logDate)}
           </span>
         </nav>
-        <LogoutButton />
+        <HeaderActions />
       </header>
 
       <main className="flex-1 overflow-y-auto px-8 py-6">
@@ -948,7 +948,7 @@ export function DailyLogDetailView({
           </div>
 
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-            <div className="flex items-center justify-between bg-zinc-800 px-4 py-2.5 text-xs text-white">
+            <div className="flex items-center justify-between bg-zinc-900 px-4 py-2.5 text-xs text-white">
               <span>Date: {formatDateWithWeekday(log.logDate)}</span>
               <span>Prepared By: {log.submittedByName}</span>
             </div>
@@ -1028,7 +1028,7 @@ export function DailyLogDetailView({
 
           {log.workItems.some((item) => item.attachmentUrls.length > 0) && (
             <div className="rounded-lg border border-zinc-200 bg-white">
-              <div className="bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-800">
+              <div className="bg-zinc-100 px-4 py-2 text-sm font-medium text-zinc-900">
                 Work Log Photos
               </div>
               <div className="flex flex-col gap-4 p-4">
@@ -1068,7 +1068,7 @@ export function DailyLogDetailView({
           )}
 
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-            <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
+            <div className="bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
               Material Usage
             </div>
             <MaterialUsageSection
@@ -1080,7 +1080,7 @@ export function DailyLogDetailView({
           </div>
 
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-            <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
+            <div className="bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
               Labor Logs
             </div>
             <LaborLogsSection
@@ -1099,7 +1099,7 @@ export function DailyLogDetailView({
           />
 
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-            <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
+            <div className="bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
               Material Procurement Logs
             </div>
             <ProcurementLogsSection
@@ -1120,7 +1120,7 @@ export function DailyLogDetailView({
           />
 
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-            <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
+            <div className="bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
               Equipment Acquisition Logs
             </div>
             <EquipmentAcquisitionLogsSection
@@ -1139,7 +1139,7 @@ export function DailyLogDetailView({
           />
 
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-            <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
+            <div className="bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
               Other Expense
             </div>
             <ExpenseLogsSection
@@ -1157,7 +1157,7 @@ export function DailyLogDetailView({
             }))}
           />
 
-          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-800 px-4 py-2 text-sm font-semibold text-white">
+          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-900 px-4 py-2 text-sm font-semibold text-white">
             Survey
           </div>
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">

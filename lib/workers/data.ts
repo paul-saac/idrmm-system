@@ -1,11 +1,46 @@
 import { createClient } from "@/lib/supabase/server";
+import { toIsoDate } from "@/lib/task-progress/calculate";
+import {
+  categoryForTitle,
+  isMemberCategory,
+  type EmploymentType,
+  type MemberCategory,
+} from "@/lib/workers/presets";
 
-/** One entry in a project's own Manpower roster — see the Gantt Chart
- * Schedule's "Manpower" toolbar button. */
+/** One member of the company Team (the admin's Team page) — assigned
+ * straight to tasks/phases from the Gantt chart. See 0059_company_team.sql
+ * and 0060_team_member_details.sql. */
 export type Worker = {
   id: number;
   fullName: string;
-  trade: string | null;
+  /** Their job, e.g. Foreman or Mason (stored as trade). */
+  title: string | null;
+  contactNumber: string | null;
+  /** YYYY-MM-DD. */
+  dateHired: string | null;
+  /** The Team page's own table — see 0063_team_categories.sql. */
+  category: MemberCategory;
+  employmentType: EmploymentType;
+  subcontractorCompany: string | null;
+  /** Their own login account, when they have one (a project manager's
+   * or foreman's). */
+  profileId: string | null;
+};
+
+/** One task or phase a member is (or was) on. Open while its project
+ * isn't completed and it hasn't ended (no end date, or one today or
+ * later) — any open one makes them Assigned rather than Available. */
+export type WorkerAssignment = {
+  workerId: number;
+  /** "project": a project they run, as its project manager or foreman. */
+  kind: "task" | "category" | "project";
+  itemId: number;
+  itemName: string;
+  projectId: number;
+  projectName: string;
+  startDate: string | null;
+  endDate: string | null;
+  open: boolean;
 };
 
 /** Every task's current set of assigned worker ids, for one project —
@@ -25,18 +60,49 @@ export type TaskWorkerAssignments = Record<number, number[]>;
  * for the same reason. See 0045_category_worker_assignments.sql. */
 export type CategoryWorkerAssignments = Record<number, number[]>;
 
-export async function listWorkers(projectId: number): Promise<Worker[]> {
+export async function listWorkers(): Promise<Worker[]> {
   const supabase = await createClient();
+  // "*" so columns a migration hasn't added yet read as empty.
   const { data } = await supabase
     .from("workers")
-    .select("id, full_name, trade")
-    .eq("project_id", projectId)
+    .select("*")
     .order("full_name", { ascending: true });
 
   return (data ?? []).map((row) => ({
     id: row.id,
     fullName: row.full_name,
-    trade: row.trade,
+    title: row.trade,
+    contactNumber: row.contact_number ?? null,
+    dateHired: row.date_hired ?? null,
+    // Before 0063 has run: a category from the title, an employee. A
+    // retired one (laborer, until 0064 has run) falls back the same way.
+    category: isMemberCategory(row.category ?? "")
+      ? row.category
+      : (categoryForTitle(row.trade ?? "") ?? "skilled"),
+    employmentType: row.employment_type ?? "employee",
+    subcontractorCompany: row.subcontractor_company ?? null,
+    profileId: row.profile_id ?? null,
+  }));
+}
+
+/** Every member's assignments, across every project — see
+ * team_assignments (0060). Empty until that migration has run. */
+export async function listAssignments(): Promise<WorkerAssignment[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("team_assignments");
+  if (error) return [];
+
+  const today = toIsoDate(new Date());
+  return (data ?? []).map((row) => ({
+    workerId: row.worker_id,
+    kind: row.item_kind,
+    itemId: row.item_id,
+    itemName: row.item_name,
+    projectId: row.project_id,
+    projectName: row.project_name,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    open: !row.project_completed && (row.end_date === null || row.end_date >= today),
   }));
 }
 
@@ -110,3 +176,13 @@ export async function listCategoryWorkerAssignments(
   }
   return result;
 }
+
+/** A project manager's or foreman's login account a Team member can be
+ * linked to (Worker.profileId). */
+export type LinkableAccount = {
+  id: string;
+  name: string;
+  email: string;
+  role: "project_manager" | "foreman";
+  active: boolean;
+};

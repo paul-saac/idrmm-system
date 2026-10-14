@@ -62,7 +62,7 @@ export function EquipmentAssignmentForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-purpose`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Purpose{" "}
           <span className="font-normal text-zinc-400">(optional)</span>
@@ -81,7 +81,7 @@ export function EquipmentAssignmentForm({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-assignedAt`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Assigned Date
           </label>
@@ -97,7 +97,7 @@ export function EquipmentAssignmentForm({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-returnedAt`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Return Date{" "}
             <span className="font-normal text-zinc-400">(optional)</span>

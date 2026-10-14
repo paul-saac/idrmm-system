@@ -87,7 +87,7 @@ export function TotalFooterRow({
   total: number;
 }) {
   return (
-    <tr className="bg-zinc-800 text-white">
+    <tr className="bg-zinc-900 text-white">
       <td colSpan={colSpan - 1} className="px-4 py-3 text-sm font-semibold">
         Total
       </td>

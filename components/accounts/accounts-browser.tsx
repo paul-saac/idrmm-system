@@ -1,68 +1,104 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Search, Plus, ChevronDown } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown, Plus, Search, UserCheck, UserX } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { CreateAccountForm } from "@/components/accounts/create-account-form";
-import {
-  AccountsTable,
-  type SortDir,
-  type SortKey,
-} from "@/components/accounts/accounts-table";
+import { AccountsTable } from "@/components/accounts/accounts-table";
+import { AccountDetail } from "@/components/accounts/account-detail";
+import { setAccountsStatus } from "@/lib/accounts/actions";
 import { roleLabel, type UserRole } from "@/lib/auth/roles";
 import type { AccountRow } from "@/lib/accounts/data";
+
+// The toolbar's own buttons — Add User, and the checked rows' Activate /
+// Deactivate beside it (the Team page's toolbar style).
+const TOOLBAR_BUTTON =
+  "flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
 
 export function AccountsBrowser({
   accounts,
   roleOptions,
+  isSuperAdmin = false,
 }: {
   accounts: AccountRow[];
   roleOptions: UserRole[];
+  /** Sees each account's change log, and may delete one for good. */
+  isSuperAdmin?: boolean;
 }) {
-  const [query, setQuery] = useState("");
+  const router = useRouter();
+  // ?search= — from a Team member's own "Manage in Accounts" link.
+  const searchParams = useSearchParams();
+  const [query, setQuery] = useState(() => searchParams.get("search") ?? "");
   const [roleFilter, setRoleFilter] = useState<UserRole | "all">("all");
   const [addOpen, setAddOpen] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [openId, setOpenId] = useState<string | null>(null);
+  // Fresh from `accounts`, so the window follows every refresh — and
+  // closes once the account's gone (deleted).
+  const openAccount = openId ? accounts.find((account) => account.id === openId) : undefined;
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [pending, setPending] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
 
   const showRoleColumn = roleOptions.length > 1;
 
-  function handleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  }
-
+  // By name.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const rows = accounts.filter((account) => {
-      const matchesRole = roleFilter === "all" || account.role === roleFilter;
-      const name = `${account.firstName} ${account.lastName}`.toLowerCase();
-      const matchesQuery =
-        !q || name.includes(q) || account.email.toLowerCase().includes(q);
-      return matchesRole && matchesQuery;
-    });
+    return accounts
+      .filter((account) => {
+        const matchesRole = roleFilter === "all" || account.role === roleFilter;
+        const name = `${account.firstName} ${account.lastName}`.toLowerCase();
+        const matchesQuery = !q || name.includes(q) || account.email.toLowerCase().includes(q);
+        return matchesRole && matchesQuery;
+      })
+      .sort((a, b) =>
+        `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`, undefined, {
+          sensitivity: "base",
+        })
+      );
+  }, [accounts, query, roleFilter]);
 
-    const sorted = [...rows].sort((a, b) => {
-      let comparison = 0;
-      if (sortKey === "name") {
-        const nameA = `${a.firstName} ${a.lastName}`.toLowerCase();
-        const nameB = `${b.firstName} ${b.lastName}`.toLowerCase();
-        comparison = nameA.localeCompare(nameB);
-      } else if (sortKey === "status") {
-        comparison = a.status.localeCompare(b.status);
-      } else {
-        comparison =
-          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  // Only what's on screen counts — a checked account the search or filter
+  // hides isn't touched.
+  const selectedAccounts = filtered.filter((account) => selected.has(account.id));
+  const toActivate = selectedAccounts.filter((account) => account.status === "inactive");
+  const toDeactivate = selectedAccounts.filter((account) => account.status === "active");
+
+  function setChecked(ids: string[], checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (checked) next.add(id);
+        else next.delete(id);
       }
-      return sortDir === "asc" ? comparison : -comparison;
+      return next;
     });
+  }
 
-    return sorted;
-  }, [accounts, query, roleFilter, sortKey, sortDir]);
+  async function changeStatus(targets: AccountRow[], status: "active" | "inactive") {
+    if (
+      status === "inactive" &&
+      !window.confirm(
+        `Deactivate ${targets.length} account${targets.length === 1 ? "" : "s"}? They won't be able to sign in until reactivated.`
+      )
+    ) {
+      return;
+    }
+    setBulkError(null);
+    setPending(true);
+    const result = await setAccountsStatus(
+      targets.map((account) => account.id),
+      status
+    );
+    setPending(false);
+    if (result.error) {
+      setBulkError(result.error);
+      return;
+    }
+    setSelected(new Set());
+    router.refresh();
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -73,7 +109,7 @@ export function AccountsBrowser({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search User by name, username..."
+            placeholder="Search name or email"
             className="w-full rounded-md border border-zinc-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           />
         </div>
@@ -82,9 +118,8 @@ export function AccountsBrowser({
           <div className="relative">
             <select
               value={roleFilter}
-              onChange={(e) =>
-                setRoleFilter(e.target.value as UserRole | "all")
-              }
+              onChange={(e) => setRoleFilter(e.target.value as UserRole | "all")}
+              aria-label="Role"
               className="cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             >
               <option value="all">Role</option>
@@ -98,34 +133,96 @@ export function AccountsBrowser({
           </div>
         )}
 
-        <button
-          type="button"
-          onClick={() => setAddOpen(true)}
-          className="ml-auto flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white hover:shadow-md active:translate-y-0"
-        >
-          <Plus className="size-4" />
-          Add User
-        </button>
+        <div className="ml-auto flex items-center gap-3">
+          {selectedAccounts.length > 0 && (
+            <>
+              <span className="text-sm font-medium text-zinc-900">
+                {selectedAccounts.length} selected
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="cursor-pointer text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
+              >
+                Clear
+              </button>
+              {toActivate.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => changeStatus(toActivate, "active")}
+                  disabled={pending}
+                  className={`${TOOLBAR_BUTTON} text-emerald-700 hover:border-emerald-600 hover:bg-emerald-600 hover:text-white`}
+                >
+                  <UserCheck className="size-4" />
+                  Activate
+                </button>
+              )}
+              {toDeactivate.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => changeStatus(toDeactivate, "inactive")}
+                  disabled={pending}
+                  className={`${TOOLBAR_BUTTON} text-red-600 hover:border-red-600 hover:bg-red-600 hover:text-white`}
+                >
+                  <UserX className="size-4" />
+                  Deactivate
+                </button>
+              )}
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className={`${TOOLBAR_BUTTON} text-zinc-900 duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white active:translate-y-0`}
+          >
+            <Plus className="size-4" />
+            Add User
+          </button>
+        </div>
       </div>
 
-      <p className="text-sm text-zinc-500">
-        Showing {filtered.length} of {accounts.length} user
-        {accounts.length === 1 ? "" : "s"}
-      </p>
+      {bulkError && (
+        <p role="alert" className="text-sm text-red-600">
+          {bulkError}
+        </p>
+      )}
 
-      <AccountsTable
-        accounts={filtered}
-        showRoleColumn={showRoleColumn}
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSort={handleSort}
-      />
+      {filtered.length === 0 ? (
+        <p className="rounded-lg border border-zinc-200 bg-white py-10 text-center text-sm text-zinc-400">
+          {accounts.length === 0 ? "No users yet." : "No users match."}
+        </p>
+      ) : (
+        <AccountsTable
+          accounts={filtered}
+          showRoleColumn={showRoleColumn}
+          selected={selected}
+          onCheck={setChecked}
+          onOpen={setOpenId}
+        />
+      )}
+
+      <Modal
+        open={openAccount !== undefined}
+        onClose={() => setOpenId(null)}
+        title={
+          openAccount
+            ? `${openAccount.firstName} ${openAccount.lastName}`.trim() || openAccount.email
+            : ""
+        }
+      >
+        {openAccount && (
+          <AccountDetail
+            key={openAccount.id}
+            account={openAccount}
+            accounts={accounts}
+            roleOptions={roleOptions}
+            isSuperAdmin={isSuperAdmin}
+          />
+        )}
+      </Modal>
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add User">
-        <CreateAccountForm
-          roleOptions={roleOptions}
-          onSuccess={() => setAddOpen(false)}
-        />
+        <CreateAccountForm roleOptions={roleOptions} onSuccess={() => setAddOpen(false)} />
       </Modal>
     </div>
   );

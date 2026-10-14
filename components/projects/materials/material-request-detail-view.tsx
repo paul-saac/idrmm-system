@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
-import { LogoutButton } from "@/components/auth/logout-button";
+import { HeaderActions } from "@/components/auth/header-actions";
 import { MaterialRequestEditForm } from "@/components/projects/materials/material-request-edit-form";
 import { usePortal, type PortalBasePath } from "@/components/portal/portal-context";
 import {
@@ -202,7 +202,7 @@ export function MaterialRequestDetailView({
           <span className="text-zinc-300">/</span>
           <span className="font-medium text-zinc-900">{request.mrNo}</span>
         </nav>
-        <LogoutButton />
+        <HeaderActions />
       </header>
 
       <main className="flex-1 overflow-y-auto px-8 py-6">

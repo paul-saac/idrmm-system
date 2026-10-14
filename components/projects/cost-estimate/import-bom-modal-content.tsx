@@ -403,7 +403,7 @@ export function ImportBomModalContent({
           onClick={() => fileInputRef.current?.click()}
           className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-6 py-12 text-center transition ${
             dragActive
-              ? "border-zinc-800 bg-zinc-50"
+              ? "border-zinc-900 bg-zinc-50"
               : "border-zinc-300 hover:border-zinc-400"
           }`}
         >
@@ -640,7 +640,7 @@ export function ImportBomModalContent({
                             <button
                               type="button"
                               onClick={() => addMaterial(category.id, task.id)}
-                              className="shrink-0 cursor-pointer rounded border border-zinc-300 px-2 py-0.5 text-[11px] font-medium text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-800"
+                              className="shrink-0 cursor-pointer rounded border border-zinc-300 px-2 py-0.5 text-[11px] font-medium text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900"
                             >
                               Add Material
                             </button>
@@ -782,7 +782,7 @@ export function ImportBomModalContent({
                     <button
                       type="button"
                       onClick={() => addTask(category.id)}
-                      className="flex cursor-pointer items-center gap-1 text-xs font-medium text-zinc-500 transition hover:text-zinc-800"
+                      className="flex cursor-pointer items-center gap-1 text-xs font-medium text-zinc-500 transition hover:text-zinc-900"
                     >
                       <Plus className="size-3.5" />
                       Add task
@@ -798,7 +798,7 @@ export function ImportBomModalContent({
       <button
         type="button"
         onClick={addCategory}
-        className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-300 py-2.5 text-xs font-medium text-zinc-500 transition hover:border-zinc-400 hover:text-zinc-800"
+        className="flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-300 py-2.5 text-xs font-medium text-zinc-500 transition hover:border-zinc-400 hover:text-zinc-900"
       >
         <Plus className="size-3.5" />
         Add category

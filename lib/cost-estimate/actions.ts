@@ -336,26 +336,6 @@ function buildMaterialAssignmentDrafts(formData: FormData) {
   return drafts;
 }
 
-/**
- * Same convention, for the "Manpower Needed" rows. A row with a blank
- * worker role is dropped.
- */
-function buildLaborAssignmentDrafts(formData: FormData) {
-  const roles = formData.getAll("laborAssignmentRole").map((v) => String(v).trim());
-  const counts = formData.getAll("laborAssignmentCount");
-
-  const drafts: { workerRole: string; plannedWorkerCount: number }[] = [];
-  for (let i = 0; i < roles.length; i++) {
-    const workerRole = roles[i];
-    if (!workerRole) continue;
-    drafts.push({
-      workerRole,
-      plannedWorkerCount: parseNumber(counts[i] ?? null),
-    });
-  }
-  return drafts;
-}
-
 function buildTaskFields(formData: FormData) {
   const taskName = String(formData.get("taskName") ?? "").trim();
   const categoryId = Number(formData.get("categoryId"));
@@ -380,7 +360,6 @@ function buildTaskFields(formData: FormData) {
     laborEstimate + materialEstimate + equipmentEstimate + otherCostEstimate;
 
   const materialAssignments = buildMaterialAssignmentDrafts(formData);
-  const laborAssignments = buildLaborAssignmentDrafts(formData);
 
   return {
     taskName,
@@ -399,7 +378,6 @@ function buildTaskFields(formData: FormData) {
     isMilestone,
     priority,
     materialAssignments,
-    laborAssignments,
   };
 }
 
@@ -513,30 +491,6 @@ export async function createTask(
       }
     }
 
-    if (fields.laborAssignments.length > 0) {
-      const { error: laborError } = await supabase
-        .from("estimate_task_labor_assignments")
-        .insert(
-          fields.laborAssignments.map((item) => ({
-            task_id: task.id,
-            worker_role: item.workerRole,
-            planned_worker_count: item.plannedWorkerCount,
-          }))
-        );
-
-      if (laborError) {
-        logSupabaseError(
-          "[createTask] Supabase labor-assignment insert failed",
-          laborError
-        );
-        await recordGanttCheckpoint(supabase, projectId, profile.id);
-        return {
-          error:
-            "Task item saved, but its planned manpower could not be saved. Please edit the task and try again.",
-        };
-      }
-    }
-
     if (fields.otherCostItems.length > 0) {
       const { error: otherCostError } = await supabase
         .from("estimate_task_other_costs")
@@ -628,7 +582,7 @@ export type BomImportCategoryInput = {
  * resave it. A category with no tasks of its own instead gets its own
  * `amount` written straight to material_direct_amount/
  * category_material_estimate (the same two columns
- * updateCategoryMaterialDirect uses for a category created by hand) —
+ * updateCategoryMaterialAssignments uses for a category created by hand) —
  * this is the standalone-line-item case (e.g. a BOM's own "MOBILIZATION"
  * row with a peso amount and nothing broken out underneath it); a
  * category that does have tasks leaves those two columns at their
@@ -637,10 +591,9 @@ export type BomImportCategoryInput = {
  * recordGanttCheckpoint runs once at the very end (or as soon as
  * something fails), not per row — this reads as one single undo step,
  * matching what a bulk import actually is to the admin, not dozens of
- * separate ones. An imported task/category's own weight is left at its
- * default (0) either way — see updateTaskWeight's own doc comment for
- * why weight is never derived automatically anymore; the PM assigns it
- * by hand afterward, the same as any other task.
+ * separate ones. Imported tasks/categories need no weight of their own:
+ * weights are computed from cost when the estimate is read (see
+ * lib/cost-estimate/weights.ts).
  */
 export async function applyBomImport(
   projectId: number,
@@ -962,100 +915,6 @@ export async function updateCategoryPriority(
 }
 
 /**
- * A task's own weight — its share of effort/importance within the
- * project (0-100), assigned by hand by the PM, deliberately NOT derived
- * from cost (see this file's own former recomputeWeights, removed in
- * favor of this — a task's weight used to be its share of the project's
- * total estimated cost, recomputed automatically after every task
- * create/update/delete; the PM's own judgment of how much a task
- * matters replaces that entirely now, per an explicit request). Nothing
- * here enforces every task's weight summing to exactly 100 across the
- * project — the Gantt Chart's own toolbar shows how much of the 100 is
- * still unassigned as a live running total instead, the same "guide,
- * don't hard-block" role that total already plays elsewhere in this
- * app for a similar reason (e.g. cost estimate totals).
- *
- * This is what getProjectProgress (lib/progress/data.ts) reads for its
- * own Earned Value rollup: a task's contribution to the project's
- * overall percent complete is `weight * percentComplete / 100`.
- */
-export async function updateTaskWeight(
-  taskId: number,
-  projectId: number,
-  weight: number
-): Promise<CostEstimateActionState> {
-  return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
-    if (!profile) {
-      return { error: "You are not authorized to manage cost estimates." };
-    }
-    if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
-      return { error: "Weight must be a number between 0 and 100." };
-    }
-
-    const supabase = await createClient();
-    const { error } = await supabase
-      .from("estimate_tasks")
-      .update({ weight })
-      .eq("id", taskId);
-
-    if (error) {
-      logSupabaseError("[updateTaskWeight] Supabase update failed", error);
-      return { error: "Could not save the new weight. Please try again." };
-    }
-
-    await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidateProjectPaths(projectId);
-    return { success: true };
-  });
-}
-
-/**
- * Same idea as updateTaskWeight above, one level up — but only ever
- * meaningful for a category with no tasks of its own yet (the same
- * asymmetric "task-less category gets its own direct value" rule
- * already used for its own material line and percent complete — see
- * CostCategory.materialDirectAmountOverride's own doc comment). A
- * category WITH tasks never has its own weight set directly here — its
- * effective weight is always just the live sum of its tasks' own
- * weights instead (computed where it's read, e.g. the Gantt Chart's own
- * category row and getProjectProgress's own category rollup), the same
- * "has tasks -> live rollup, no tasks -> own stored value" split
- * categoryAmount (material-breakdown-modal-content.tsx) already uses
- * for the identical reason.
- */
-export async function updateCategoryWeight(
-  categoryId: number,
-  projectId: number,
-  weight: number
-): Promise<CostEstimateActionState> {
-  return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
-    if (!profile) {
-      return { error: "You are not authorized to manage cost estimates." };
-    }
-    if (!Number.isFinite(weight) || weight < 0 || weight > 100) {
-      return { error: "Weight must be a number between 0 and 100." };
-    }
-
-    const supabase = await createClient();
-    const { error } = await supabase
-      .from("estimate_categories")
-      .update({ weight })
-      .eq("id", categoryId);
-
-    if (error) {
-      logSupabaseError("[updateCategoryWeight] Supabase update failed", error);
-      return { error: "Could not save the new weight. Please try again." };
-    }
-
-    await recordGanttCheckpoint(supabase, projectId, profile.id);
-    revalidateProjectPaths(projectId);
-    return { success: true };
-  });
-}
-
-/**
  * Narrow, name-only update for a subtask's inline rename cell — mirrors
  * updateCategory's own narrow shape above, deliberately NOT built on top
  * of updateSubtask further down: that action overwrites dates, priority,
@@ -1184,13 +1043,10 @@ export async function updateSubtask(
       return { error: "You are not authorized to manage cost estimates." };
     }
 
-    const taskName = String(formData.get("taskName") ?? "").trim();
+    // No task name here — an existing task is renamed from the Gantt
+    // task list's own Task cell (renameTask above), not this form.
     const isMilestone = formData.get("isMilestone") === "on";
     const successorTaskId = parseOptionalId(formData.get("successorTaskId"));
-
-    if (!taskName) {
-      return { error: "Task name is required." };
-    }
 
     const supabase = await createClient();
 
@@ -1253,7 +1109,6 @@ export async function updateSubtask(
     const { error } = await supabase
       .from("estimate_tasks")
       .update({
-        task_name: taskName,
         is_milestone: isMilestone,
       })
       .eq("id", taskId)
@@ -1302,6 +1157,89 @@ export async function deleteTask(
   });
 }
 
+type MaterialDirectInput = {
+  quantity: number;
+  unit: string | null;
+  unitCost: number;
+  /** Null means "compute quantity * unitCost as normal"; a non-null value
+   * means Amount was typed directly on this own line (no clean quantity/
+   * unit cost breakdown). See 0043_amount_overrides.sql's own comment. */
+  amountOverride: number | null;
+};
+
+type MaterialLineInput = {
+  materialName: string;
+  specification: string | null;
+  plannedQuantity: number;
+  unit: string | null;
+  unitCost: number;
+  amountOverride: number | null;
+};
+
+function finiteOrZero(value: number) {
+  return Number.isFinite(value) ? value : 0;
+}
+
+/** A material list as it's saved: trimmed, non-finite numbers zeroed,
+ * unnamed lines dropped. */
+function cleanMaterialLines(lines: MaterialLineInput[]): MaterialLineInput[] {
+  return lines
+    .map((item) => ({
+      materialName: item.materialName.trim(),
+      specification: item.specification?.trim() || null,
+      plannedQuantity: finiteOrZero(item.plannedQuantity),
+      unit: item.unit?.trim() || null,
+      unitCost: finiteOrZero(item.unitCost),
+      amountOverride:
+        item.amountOverride != null && Number.isFinite(item.amountOverride)
+          ? item.amountOverride
+          : null,
+    }))
+    .filter((item) => item.materialName.length > 0);
+}
+
+function materialLineRow(item: MaterialLineInput) {
+  return {
+    material_name: item.materialName,
+    specification: item.specification,
+    planned_quantity: item.plannedQuantity,
+    unit: item.unit,
+    unit_cost: item.unitCost,
+    amount: item.amountOverride,
+  };
+}
+
+/** An own direct line's columns, and the material total it and `lines`
+ * add up to — what material_estimate / category_material_estimate store. */
+function materialTotals(direct: MaterialDirectInput, lines: MaterialLineInput[]) {
+  const quantity = finiteOrZero(direct.quantity);
+  const unitCost = finiteOrZero(direct.unitCost);
+  const amountOverride =
+    direct.amountOverride != null && Number.isFinite(direct.amountOverride)
+      ? direct.amountOverride
+      : null;
+  return {
+    directFields: {
+      material_direct_quantity: quantity,
+      material_direct_unit: direct.unit?.trim() || null,
+      material_unit_cost: unitCost,
+      material_direct_amount: amountOverride,
+    },
+    total:
+      (amountOverride ?? quantity * unitCost) +
+      lines.reduce(
+        (sum, item) => sum + (item.amountOverride ?? item.plannedQuantity * item.unitCost),
+        0
+      ),
+  };
+}
+
+/** Whether a query failed only because its table doesn't exist yet — a
+ * migration not run (PostgREST's PGRST205, or Postgres' own 42P01). */
+function isMissingTable(error: PostgrestError | null) {
+  return error?.code === "PGRST205" || error?.code === "42P01";
+}
+
 /**
  * Replaces one task's entire planned-materials list wholesale — the
  * same delete-then-reinsert block updateSubtask's own form submission
@@ -1318,24 +1256,8 @@ export async function deleteTask(
 export async function updateTaskMaterialAssignments(
   taskId: number,
   projectId: number,
-  materialDirect: {
-    quantity: number;
-    unit: string | null;
-    unitCost: number;
-    /** Null means "compute quantity * unitCost as normal"; a non-null
-     * value means Amount was typed directly on this task's own line
-     * (no clean quantity/unit cost breakdown). See
-     * 0043_amount_overrides.sql's own comment. */
-    amountOverride: number | null;
-  },
-  assignments: {
-    materialName: string;
-    specification: string | null;
-    plannedQuantity: number;
-    unit: string | null;
-    unitCost: number;
-    amountOverride: number | null;
-  }[]
+  materialDirect: MaterialDirectInput,
+  assignments: MaterialLineInput[]
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
     const profile = await requireProjectAccess(projectId);
@@ -1357,36 +1279,12 @@ export async function updateTaskMaterialAssignments(
       return { error: "Could not save the material list. Please try again." };
     }
 
-    const cleaned = assignments
-      .map((item) => ({
-        materialName: item.materialName.trim(),
-        specification: item.specification?.trim() || null,
-        plannedQuantity: Number.isFinite(item.plannedQuantity)
-          ? item.plannedQuantity
-          : 0,
-        unit: item.unit?.trim() || null,
-        unitCost: Number.isFinite(item.unitCost) ? item.unitCost : 0,
-        amountOverride:
-          item.amountOverride != null && Number.isFinite(item.amountOverride)
-            ? item.amountOverride
-            : null,
-      }))
-      .filter((item) => item.materialName.length > 0);
+    const cleaned = cleanMaterialLines(assignments);
 
     if (cleaned.length > 0) {
       const { error: insertError } = await supabase
         .from("estimate_task_material_assignments")
-        .insert(
-          cleaned.map((item) => ({
-            task_id: taskId,
-            material_name: item.materialName,
-            specification: item.specification,
-            planned_quantity: item.plannedQuantity,
-            unit: item.unit,
-            unit_cost: item.unitCost,
-            amount: item.amountOverride,
-          }))
-        );
+        .insert(cleaned.map((item) => ({ task_id: taskId, ...materialLineRow(item) })));
       if (insertError) {
         logSupabaseError(
           "[updateTaskMaterialAssignments] Supabase insert failed",
@@ -1401,25 +1299,10 @@ export async function updateTaskMaterialAssignments(
     // comment) — kept in sync here, in the same round trip, rather than
     // left stale until some unrelated action next happens to touch this
     // task's own cost fields.
-    const directQuantity = Number.isFinite(materialDirect.quantity)
-      ? materialDirect.quantity
-      : 0;
-    const directUnitCost = Number.isFinite(materialDirect.unitCost)
-      ? materialDirect.unitCost
-      : 0;
-    const directAmountOverride =
-      materialDirect.amountOverride != null &&
-      Number.isFinite(materialDirect.amountOverride)
-        ? materialDirect.amountOverride
-        : null;
-    const directAmount = directAmountOverride ?? directQuantity * directUnitCost;
-    const newMaterialEstimate =
-      directAmount +
-      cleaned.reduce(
-        (sum, item) =>
-          sum + (item.amountOverride ?? item.plannedQuantity * item.unitCost),
-        0
-      );
+    const { directFields, total: newMaterialEstimate } = materialTotals(
+      materialDirect,
+      cleaned
+    );
 
     const { data: currentTask, error: taskFetchError } = await supabase
       .from("estimate_tasks")
@@ -1443,10 +1326,7 @@ export async function updateTaskMaterialAssignments(
     const { error: taskUpdateError } = await supabase
       .from("estimate_tasks")
       .update({
-        material_direct_quantity: directQuantity,
-        material_direct_unit: materialDirect.unit?.trim() || null,
-        material_unit_cost: directUnitCost,
-        material_direct_amount: directAmountOverride,
+        ...directFields,
         material_estimate: newMaterialEstimate,
         total_estimate_cost: newTotalEstimateCost,
       })
@@ -1527,6 +1407,347 @@ export async function updateTaskLaborEstimate(
   });
 }
 
+// Below this, two peso amounts are the same (they're shown to the peso).
+const PESO_EPSILON = 0.005;
+
+function formatPeso(amount: number) {
+  return `₱${amount.toLocaleString("en-PH", { maximumFractionDigits: 2 })}`;
+}
+
+function invalidCostComponents(values: number[]): boolean {
+  return values.some((value) => !Number.isFinite(value) || value < 0);
+}
+
+/**
+ * Saves a task's own cost components — Labor, Material, Equipment and
+ * Other — typed straight into the Weight Breakdown panel
+ * (weight-breakdown-modal-content.tsx). They're what a task's weight is
+ * computed from (lib/cost-estimate/weights.ts), so changing them is what
+ * moves it.
+ *
+ * Material is a total, but a task's material_estimate is its own direct
+ * (lump-sum) line plus its itemized Material Breakdown lines — so the
+ * itemized lines are left exactly as they are and the direct line takes
+ * whatever the typed total adds on top of them (its amount override, see
+ * 0043_amount_overrides.sql; cleared when it lands back on the line's
+ * own quantity x unit cost). A total below the itemized lines' own sum is
+ * refused — those lines are lowered in the Material Breakdown itself.
+ * Material is only touched at all when it actually changed.
+ *
+ * Other is left as-is (the argument ignored) while the task has itemized
+ * other costs (estimate_task_other_costs) — its Other is their sum then.
+ */
+export async function updateTaskCostComponents(
+  taskId: number,
+  projectId: number,
+  components: {
+    laborEstimate: number;
+    materialEstimate: number;
+    equipmentEstimate: number;
+    otherCostEstimate: number;
+  }
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    const { laborEstimate, materialEstimate, equipmentEstimate, otherCostEstimate } =
+      components;
+    if (
+      invalidCostComponents([laborEstimate, materialEstimate, equipmentEstimate, otherCostEstimate])
+    ) {
+      return { error: "Costs must be 0 or more." };
+    }
+
+    const supabase = await createClient();
+    const [
+      { data: currentTask, error: fetchError },
+      { data: materialLines, error: linesError },
+      { count: otherItemCount, error: countError },
+    ] = await Promise.all([
+      supabase
+        .from("estimate_tasks")
+        .select(
+          "material_estimate, other_cost_estimate, material_direct_quantity, material_unit_cost"
+        )
+        .eq("id", taskId)
+        .eq("project_id", projectId)
+        .single(),
+      supabase
+        .from("estimate_task_material_assignments")
+        .select("planned_quantity, unit_cost, amount")
+        .eq("task_id", taskId),
+      supabase
+        .from("estimate_task_other_costs")
+        .select("id", { count: "exact", head: true })
+        .eq("task_id", taskId),
+    ]);
+    if (fetchError || linesError || countError || !currentTask) {
+      if (fetchError) {
+        logSupabaseError("[updateTaskCostComponents] Supabase task fetch failed", fetchError);
+      }
+      if (linesError) {
+        logSupabaseError("[updateTaskCostComponents] Supabase material lines fetch failed", linesError);
+      }
+      if (countError) {
+        logSupabaseError("[updateTaskCostComponents] Supabase other-cost count failed", countError);
+      }
+      return { error: "Could not save the costs. Please try again." };
+    }
+
+    const materialChanged =
+      Math.abs(materialEstimate - (currentTask.material_estimate ?? 0)) >= PESO_EPSILON;
+    let materialFields: {
+      material_estimate: number;
+      material_direct_amount: number | null;
+    } | null = null;
+    if (materialChanged) {
+      const itemized = (materialLines ?? []).reduce(
+        (sum, line) =>
+          sum + (line.amount ?? (line.planned_quantity ?? 0) * (line.unit_cost ?? 0)),
+        0
+      );
+      if (materialEstimate < itemized - PESO_EPSILON) {
+        return {
+          error: `Material can't be less than this task's itemized materials (${formatPeso(itemized)}) — lower those in the Material Breakdown.`,
+        };
+      }
+      const directAmount = Math.max(0, materialEstimate - itemized);
+      const directComputed =
+        (currentTask.material_direct_quantity ?? 0) * (currentTask.material_unit_cost ?? 0);
+      materialFields = {
+        material_estimate: materialEstimate,
+        material_direct_amount:
+          Math.abs(directAmount - directComputed) < PESO_EPSILON ? null : directAmount,
+      };
+    }
+
+    const material = materialFields?.material_estimate ?? currentTask.material_estimate ?? 0;
+    const other =
+      (otherItemCount ?? 0) > 0 ? (currentTask.other_cost_estimate ?? 0) : otherCostEstimate;
+
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({
+        ...materialFields,
+        labor_estimate: laborEstimate,
+        equipment_estimate: equipmentEstimate,
+        other_cost_estimate: other,
+        total_estimate_cost: laborEstimate + material + equipmentEstimate + other,
+      })
+      .eq("id", taskId);
+
+    if (error) {
+      logSupabaseError("[updateTaskCostComponents] Supabase update failed", error);
+      return { error: "Could not save the costs. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
+/**
+ * Same as updateTaskCostComponents above, one level up — a category's
+ * own direct line (e.g. a standalone MOBILIZATION): its labor
+ * (0047_category_labor_estimate.sql), material (0042_category_direct_
+ * cost.sql — the typed total, less its own itemized lines (0058), becomes
+ * the direct line's amount override, cleared when it lands back on its
+ * own quantity x unit cost; never below those lines), and equipment /
+ * other (0056_category_equipment_other.sql).
+ */
+export async function updateCategoryCostComponents(
+  categoryId: number,
+  projectId: number,
+  components: {
+    laborEstimate: number;
+    materialEstimate: number;
+    equipmentEstimate: number;
+    otherCostEstimate: number;
+  }
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    const { laborEstimate, materialEstimate, equipmentEstimate, otherCostEstimate } =
+      components;
+    if (
+      invalidCostComponents([laborEstimate, materialEstimate, equipmentEstimate, otherCostEstimate])
+    ) {
+      return { error: "Costs must be 0 or more." };
+    }
+
+    const supabase = await createClient();
+    const [
+      { data: currentCategory, error: fetchError },
+      { data: materialLines, error: linesError },
+    ] = await Promise.all([
+      supabase
+        .from("estimate_categories")
+        .select("category_material_estimate, material_direct_quantity, material_unit_cost")
+        .eq("id", categoryId)
+        .eq("project_id", projectId)
+        .single(),
+      supabase
+        .from("estimate_category_material_assignments")
+        .select("planned_quantity, unit_cost, amount")
+        .eq("category_id", categoryId),
+    ]);
+    // No lines table yet (0058 not run) just means no itemized lines.
+    const realLinesError = isMissingTable(linesError) ? null : linesError;
+    if (fetchError || realLinesError || !currentCategory) {
+      if (fetchError) {
+        logSupabaseError("[updateCategoryCostComponents] Supabase fetch failed", fetchError);
+      }
+      if (realLinesError) {
+        logSupabaseError(
+          "[updateCategoryCostComponents] Supabase material lines fetch failed",
+          realLinesError
+        );
+      }
+      return { error: "Could not save the costs. Please try again." };
+    }
+
+    const materialChanged =
+      Math.abs(materialEstimate - (currentCategory.category_material_estimate ?? 0)) >=
+      PESO_EPSILON;
+    const itemized = (materialLines ?? []).reduce(
+      (sum, line) =>
+        sum + (line.amount ?? (line.planned_quantity ?? 0) * (line.unit_cost ?? 0)),
+      0
+    );
+    if (materialChanged && materialEstimate < itemized - PESO_EPSILON) {
+      return {
+        error: `Material can't be less than this main task's itemized materials (${formatPeso(itemized)}) — lower those in the Material Breakdown.`,
+      };
+    }
+    const directAmount = Math.max(0, materialEstimate - itemized);
+    const directComputed =
+      (currentCategory.material_direct_quantity ?? 0) * (currentCategory.material_unit_cost ?? 0);
+
+    const { error } = await supabase
+      .from("estimate_categories")
+      .update({
+        ...(materialChanged && {
+          category_material_estimate: materialEstimate,
+          material_direct_amount:
+            Math.abs(directAmount - directComputed) < PESO_EPSILON ? null : directAmount,
+        }),
+        category_labor_estimate: laborEstimate,
+        category_equipment_estimate: equipmentEstimate,
+        category_other_estimate: otherCostEstimate,
+      })
+      .eq("id", categoryId);
+
+    if (error) {
+      logSupabaseError("[updateCategoryCostComponents] Supabase update failed", error);
+      return { error: "Could not save the costs. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
+const UNIT_MAX_LENGTH = 30;
+
+function normalizeEstimatedQuantity(input: {
+  estimatedQuantity: number;
+  unit: string | null;
+}): { estimatedQuantity: number; unit: string | null } | { error: string } {
+  if (!Number.isFinite(input.estimatedQuantity) || input.estimatedQuantity < 0) {
+    return { error: "Estimated quantity must be 0 or more." };
+  }
+  const unit = input.unit?.trim() || null;
+  if (unit && unit.length > UNIT_MAX_LENGTH) {
+    return { error: `Unit can be at most ${UNIT_MAX_LENGTH} characters.` };
+  }
+  return { estimatedQuantity: input.estimatedQuantity, unit };
+}
+
+/**
+ * Saves a task's own Estimated Quantity and Unit, typed straight into
+ * the Cost Estimate table — the amount of work to be done (e.g. 12
+ * cu.m), which a Daily Progress Update's quantity completed is measured
+ * against (lib/task-progress/calculate.ts). Not a cost, so it never
+ * moves the task's weight.
+ */
+export async function updateTaskEstimatedQuantity(
+  taskId: number,
+  projectId: number,
+  input: { estimatedQuantity: number; unit: string | null }
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    const fields = normalizeEstimatedQuantity(input);
+    if ("error" in fields) {
+      return { error: fields.error };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_tasks")
+      .update({ estimated_quantity: fields.estimatedQuantity, unit: fields.unit })
+      .eq("id", taskId)
+      .eq("project_id", projectId);
+
+    if (error) {
+      logSupabaseError("[updateTaskEstimatedQuantity] Supabase update failed", error);
+      return { error: "Could not save the estimated quantity. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
+/**
+ * Same as updateTaskEstimatedQuantity above, one level up — a task-less
+ * category's own quantity (see 0048_category_progress_tracking.sql). A
+ * category with tasks has none of its own; its tasks each carry theirs.
+ */
+export async function updateCategoryEstimatedQuantity(
+  categoryId: number,
+  projectId: number,
+  input: { estimatedQuantity: number; unit: string | null }
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+    const fields = normalizeEstimatedQuantity(input);
+    if ("error" in fields) {
+      return { error: fields.error };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("estimate_categories")
+      .update({ estimated_quantity: fields.estimatedQuantity, unit: fields.unit })
+      .eq("id", categoryId)
+      .eq("project_id", projectId);
+
+    if (error) {
+      logSupabaseError("[updateCategoryEstimatedQuantity] Supabase update failed", error);
+      return { error: "Could not save the estimated quantity. Please try again." };
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
 /**
  * Bulk-applies a Labor Rate % project-wide, unconditionally — called
  * from the Labor Breakdown modal's own top field (see
@@ -1564,9 +1785,11 @@ export async function applyLaborRateProjectWide(
 
     const [{ data: categoryRows, error: categoryError }, { data: taskRows, error: taskError }] =
       await Promise.all([
+        // "*" so a DB without 0056_category_equipment_other.sql's two
+        // columns yet still works (they just count as 0).
         supabase
           .from("estimate_categories")
-          .select("id, category_material_estimate")
+          .select("*")
           .eq("project_id", projectId),
         supabase
           .from("estimate_tasks")
@@ -1583,7 +1806,14 @@ export async function applyLaborRateProjectWide(
     }
 
     const projectBase =
-      categoryRows.reduce((sum, c) => sum + (c.category_material_estimate ?? 0), 0) +
+      categoryRows.reduce(
+        (sum, c) =>
+          sum +
+          (c.category_material_estimate ?? 0) +
+          (c.category_equipment_estimate ?? 0) +
+          (c.category_other_estimate ?? 0),
+        0
+      ) +
       taskRows.reduce(
         (sum, t) =>
           sum +
@@ -1662,7 +1892,7 @@ export async function applyLaborRateProjectWide(
  * Saves a category's own direct labor cost (Labor Breakdown modal's own
  * per-category cell — see LaborBreakdownModalContent) — only meaningful
  * while the category has no tasks yet, same "own direct line" rule
- * updateCategoryMaterialDirect below already follows for material cost.
+ * updateCategoryMaterialAssignments below already follows for material cost.
  * A category's own material/equipment/other-cost columns don't apply
  * here (categories have no equipment/other cost of their own, and this
  * doesn't touch category_material_estimate), so there's no
@@ -1698,25 +1928,18 @@ export async function updateCategoryLaborEstimate(
 }
 
 /**
- * Saves a category's own direct BOM line (Material Breakdown modal —
- * see CostCategory.materialDirectQuantity's own doc comment). Simpler
- * than updateTaskMaterialAssignments above: a category has no material
- * assignment rows of its own to delete/reinsert, so this only ever
- * updates the 4 columns directly.
+ * Same as updateTaskMaterialAssignments above, one level up — a
+ * category's own direct BOM line (see CostCategory.materialDirectQuantity's
+ * own doc comment) plus its own itemized materials (0058_category_material_
+ * lines.sql, a standalone main task's Add Material), the list replaced
+ * wholesale and category_material_estimate kept in sync in the same round
+ * trip.
  */
-export async function updateCategoryMaterialDirect(
+export async function updateCategoryMaterialAssignments(
   categoryId: number,
   projectId: number,
-  materialDirect: {
-    quantity: number;
-    unit: string | null;
-    unitCost: number;
-    /** Null means "compute quantity * unitCost as normal"; a non-null
-     * value means Amount was typed directly on this category's own line
-     * (no clean quantity/unit cost breakdown). See
-     * 0043_amount_overrides.sql's own comment. */
-    amountOverride: number | null;
-  }
+  materialDirect: MaterialDirectInput,
+  assignments: MaterialLineInput[]
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
     const profile = await requireProjectAccess(projectId);
@@ -1725,37 +1948,46 @@ export async function updateCategoryMaterialDirect(
     }
 
     const supabase = await createClient();
+    const cleaned = cleanMaterialLines(assignments);
 
-    const directQuantity = Number.isFinite(materialDirect.quantity)
-      ? materialDirect.quantity
-      : 0;
-    const directUnitCost = Number.isFinite(materialDirect.unitCost)
-      ? materialDirect.unitCost
-      : 0;
-    const directAmountOverride =
-      materialDirect.amountOverride != null &&
-      Number.isFinite(materialDirect.amountOverride)
-        ? materialDirect.amountOverride
-        : null;
-    const categoryMaterialEstimate =
-      directAmountOverride ?? directQuantity * directUnitCost;
+    const { error: deleteError } = await supabase
+      .from("estimate_category_material_assignments")
+      .delete()
+      .eq("category_id", categoryId);
+    // Before 0058 has run there are no lines to delete, and a direct line
+    // alone still saves.
+    if (deleteError && !(isMissingTable(deleteError) && cleaned.length === 0)) {
+      logSupabaseError(
+        "[updateCategoryMaterialAssignments] Supabase delete failed",
+        deleteError
+      );
+      return { error: "Could not save the material list. Please try again." };
+    }
 
+    if (cleaned.length > 0) {
+      const { error: insertError } = await supabase
+        .from("estimate_category_material_assignments")
+        .insert(cleaned.map((item) => ({ category_id: categoryId, ...materialLineRow(item) })));
+      if (insertError) {
+        logSupabaseError(
+          "[updateCategoryMaterialAssignments] Supabase insert failed",
+          insertError
+        );
+        return { error: "Could not save the material list. Please try again." };
+      }
+    }
+
+    const { directFields, total } = materialTotals(materialDirect, cleaned);
     const { error: updateError } = await supabase
       .from("estimate_categories")
-      .update({
-        material_direct_quantity: directQuantity,
-        material_direct_unit: materialDirect.unit?.trim() || null,
-        material_unit_cost: directUnitCost,
-        material_direct_amount: directAmountOverride,
-        category_material_estimate: categoryMaterialEstimate,
-      })
+      .update({ ...directFields, category_material_estimate: total })
       .eq("id", categoryId);
     if (updateError) {
       logSupabaseError(
-        "[updateCategoryMaterialDirect] Supabase update failed",
+        "[updateCategoryMaterialAssignments] Supabase update failed",
         updateError
       );
-      return { error: "Could not save the cost line. Please try again." };
+      return { error: "Could not save the material list. Please try again." };
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);

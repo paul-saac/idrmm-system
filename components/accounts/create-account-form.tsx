@@ -49,7 +49,7 @@ export function CreateAccountForm({
       noValidate
     >
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="firstName" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="firstName" className="text-sm font-medium text-zinc-900">
           First name
         </label>
         <input
@@ -61,7 +61,7 @@ export function CreateAccountForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="lastName" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="lastName" className="text-sm font-medium text-zinc-900">
           Last name
         </label>
         <input
@@ -73,7 +73,7 @@ export function CreateAccountForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="email" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="email" className="text-sm font-medium text-zinc-900">
           Email
         </label>
         <input
@@ -86,7 +86,7 @@ export function CreateAccountForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="password" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="password" className="text-sm font-medium text-zinc-900">
           Temporary password
         </label>
         <div className="relative">
@@ -131,7 +131,7 @@ export function CreateAccountForm({
         <input type="hidden" name="role" value={fixedRole} />
       ) : (
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="role" className="text-sm font-medium text-zinc-800">
+          <label htmlFor="role" className="text-sm font-medium text-zinc-900">
             Role
           </label>
           <select

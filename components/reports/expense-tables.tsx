@@ -25,7 +25,7 @@ function TableCard({
 }) {
   return (
     <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-      <div className="bg-zinc-800 px-4 py-2 text-sm font-medium text-white">
+      <div className="bg-zinc-900 px-4 py-2 text-sm font-medium text-white">
         {title}
       </div>
       {children}

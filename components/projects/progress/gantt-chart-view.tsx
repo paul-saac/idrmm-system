@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
 import {
+  CalendarDays,
   ChevronDown,
   ChevronRight,
-  HardHat,
   Plus,
   Redo2,
   Sparkles,
@@ -18,21 +18,32 @@ import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
-import { MembersModalContent } from "@/components/projects/progress/members-modal-content";
 import { AssignWorkersModalContent } from "@/components/projects/progress/assign-workers-modal-content";
 import { ProgressTrackingModalContent } from "@/components/projects/progress/progress-tracking-modal-content";
+import {
+  ProjectCalendarView,
+  type CalendarItem,
+} from "@/components/projects/progress/project-calendar-view";
+import { ProjectEventModalContent } from "@/components/projects/progress/project-event-modal-content";
+import { usePortal } from "@/components/portal/portal-context";
+import type { ProjectEvent } from "@/lib/project-events/types";
+import {
+  WeightBreakdownModal,
+  type WeightBreakdownTarget,
+} from "@/components/projects/cost-estimate/weight-breakdown-modal-content";
 import {
   updateTaskSchedule,
   updateCategorySchedule,
   updateTaskPriority,
   updateCategoryPriority,
-  updateTaskWeight,
-  updateCategoryWeight,
   createCategory,
   updateCategory,
   renameTask,
   createTask,
+  deleteCategory,
+  deleteTask,
 } from "@/lib/cost-estimate/actions";
+import { deleteProjectEvent } from "@/lib/project-events/actions";
 import {
   undoGanttAction,
   redoGanttAction,
@@ -44,24 +55,100 @@ import { recordTaskProgress } from "@/lib/task-progress/actions";
 import { recordCategoryProgress } from "@/lib/category-progress/actions";
 import type {
   Worker,
+  WorkerAssignment,
   TaskWorkerAssignments,
   CategoryWorkerAssignments,
 } from "@/lib/workers/data";
 import type { TaskProgressToday } from "@/lib/task-progress/data";
-import { groupPlannedMaterials } from "@/lib/task-progress/calculate";
+import {
+  computeExpectedProgress,
+  countWorkingDays,
+  groupPlannedMaterials,
+  scheduleStatusFor,
+  EMPTY_PROGRESS_ANCHOR,
+  type ScheduleStatus,
+} from "@/lib/task-progress/calculate";
+
+// Summing decimal weights leaves float noise (99.99 + 0.010000000000005116);
+// two decimals is all a weight is ever shown to.
+function roundWeight(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function formatWeightPoints(value: number) {
+  return roundWeight(value).toLocaleString("en-PH", {
+    maximumFractionDigits: 2,
+  });
+}
+
+/** The Weight column's cell — display-only (automatic from cost, see
+ * lib/cost-estimate/weights.ts); a click opens the Weight Breakdown
+ * modal showing how it was computed. */
+function WeightButton({
+  weight,
+  muted,
+  onClick,
+}: {
+  weight: number;
+  muted: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`h-full w-full cursor-pointer px-2 text-right text-xs tabular-nums transition hover:bg-zinc-900 hover:text-white ${
+        muted ? "text-zinc-400" : "text-zinc-600"
+      }`}
+    >
+      {formatWeightPoints(weight)}%
+    </button>
+  );
+}
+
+// Ahead blue, on track green, behind red — same as the progress
+// modal's and the dashboard's own badges.
+const SCHEDULE_STATUS_TEXT: Record<ScheduleStatus, string> = {
+  ahead: "text-sky-600",
+  on_track: "text-emerald-600",
+  behind: "text-red-600",
+};
+
+const SCHEDULE_STATUS_LABEL: Record<ScheduleStatus, string> = {
+  ahead: "Ahead of schedule",
+  on_track: "On track",
+  behind: "Behind schedule",
+};
+
+// The Expected column's own cell: where the schedule says the row should
+// be by today, colored by schedule status (SCHEDULE_STATUS_TEXT — same
+// 5-point tolerance as the Progress Tracking modal, see scheduleStatusFor).
+function ExpectedProgressCell({
+  actual,
+  expected,
+}: {
+  actual: number;
+  expected: number;
+}) {
+  const status = scheduleStatusFor(actual, expected);
+  return (
+    <span
+      className={`flex h-full w-full items-center px-2 text-xs font-medium ${SCHEDULE_STATUS_TEXT[status]}`}
+      title={`${SCHEDULE_STATUS_LABEL[status]} — actual ${Math.round(actual)}%, expected ${Math.round(expected)}%`}
+    >
+      {Math.round(expected)}%
+    </span>
+  );
+}
 
 const EMPTY_PROGRESS_TODAY: TaskProgressToday = {
-  cumulativeMaterialUsage: {},
-  cumulativeLaborHeadcount: 0,
+  ...EMPTY_PROGRESS_ANCHOR,
   today: null,
+  latest: null,
 };
 
 function toDate(iso: string) {
   return new Date(`${iso}T00:00:00`);
-}
-
-function daysBetween(start: Date, end: Date) {
-  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
 }
 
 function phaseRowId(categoryId: number) {
@@ -98,9 +185,7 @@ function previousDay(date: Date) {
 // typed-edit persistence, the Assign Workers date badge) goes through
 // this instead of reading `.end` directly, so nothing outside the bar's
 // own rendering ever sees or saves the shifted value. The one
-// deliberate exception is GanttTooltipContent's own Duration line,
-// which reads the raw (shifted) `task.end` on purpose — see its own
-// doc comment for why that one self-corrects instead.
+// GanttTooltipContent's own Duration line goes through it too.
 function trueEndDate(row: { type: GanttTask["type"]; end: Date }): Date {
   return row.type === "milestone" ? row.end : previousDay(row.end);
 }
@@ -124,14 +209,24 @@ function toIsoDate(date: Date) {
   return `${y}-${m}-${d}`;
 }
 
+// The project's working schedule, for GanttTooltipContent below —
+// gantt-task-react renders that tooltip itself and hands it only the
+// task, so it reads the working days/holidays from here instead
+// (provided around <Gantt> in GanttChartView).
+const WorkScheduleContext = createContext<{
+  workingDays: readonly number[];
+  holidays: ReadonlySet<string>;
+}>({ workingDays: [1, 2, 3, 4, 5, 6], holidays: new Set() });
+
 // Mirrors gantt-task-react's own default hover tooltip (StandardTooltipContent)
 // pixel-for-pixel — same date format, same CSS-module classes (_3T42e/_29NTg,
 // confirmed directly by reading the compiled bundle, the same technique
 // already used for the barLabel classes referenced in globals.css) — with
-// one deliberate change: Progress always renders, even at 0%. The
+// two deliberate changes: Progress always renders, even at 0% (the
 // library's own version guards it behind `!!task.progress`, so a task
 // that hasn't started yet silently drops the line instead of showing
-// "Progress: 0%".
+// "Progress: 0%"), and Duration counts working days only — a
+// non-working weekday or holiday inside the bar isn't a day of work.
 function GanttTooltipContent({
   task,
   fontSize,
@@ -141,17 +236,13 @@ function GanttTooltipContent({
   fontSize: string;
   fontFamily: string;
 }) {
-  // Deliberately the raw (shifted) task.end, not trueEndDate(task) — see
-  // trueEndDate's own doc comment. A non-milestone task.end is already
-  // pushed one day past the true planned end for bar-rendering purposes,
-  // which happens to make this exact diff-in-days formula land on the
-  // correct inclusive day count without needing its own +1 the way
-  // daysBetween (the Days column's own version of this) does.
-  const durationDays = Math.floor(
-    (task.end.getTime() - task.start.getTime()) / 86_400_000
-  );
-  const headingSize = (parseInt(fontSize, 10) || 14) + 6;
+  const { workingDays, holidays } = useContext(WorkScheduleContext);
+  const isMilestone = task.type === "milestone";
   const displayEnd = trueEndDate(task);
+  const durationDays = isMilestone
+    ? 0
+    : countWorkingDays(task.start, displayEnd, workingDays, holidays);
+  const headingSize = (parseInt(fontSize, 10) || 14) + 6;
 
   return (
     <div className="_3T42e" style={{ fontSize, fontFamily }}>
@@ -160,7 +251,7 @@ function GanttTooltipContent({
         {task.start.getFullYear()} - {displayEnd.getDate()}-
         {displayEnd.getMonth() + 1}-{displayEnd.getFullYear()}
       </b>
-      {durationDays !== 0 && (
+      {!isMilestone && (
         <p className="_29NTg">Duration: {durationDays} day(s)</p>
       )}
       <p className="_29NTg">Progress: {formatPercent(task.progress)}%</p>
@@ -247,6 +338,7 @@ const RESIZABLE_COLUMN_IDS = [
   "weight",
   "assigned",
   "percentComplete",
+  "expected",
 ] as const;
 type ResizableColumnId = (typeof RESIZABLE_COLUMN_IDS)[number];
 
@@ -276,6 +368,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   weight: 70,
   assigned: 78,
   percentComplete: 122,
+  expected: 84,
 };
 
 const MIN_COLUMN_WIDTH: Record<ResizableColumnId, number> = {
@@ -287,6 +380,7 @@ const MIN_COLUMN_WIDTH: Record<ResizableColumnId, number> = {
   weight: 56,
   assigned: 58,
   percentComplete: 90,
+  expected: 70,
 };
 
 // How far the whole task-list panel's own outer-edge handle can curtain
@@ -306,6 +400,7 @@ const COLUMN_LABEL: Record<ResizableColumnId, string> = {
   weight: "Weight",
   assigned: "Assigned",
   percentComplete: "Percent Complete",
+  expected: "Expected",
 };
 
 const RIGHT_ALIGNED_COLUMNS = new Set<ResizableColumnId>(["duration"]);
@@ -508,9 +603,12 @@ export function GanttChartView({
   categories,
   projectStartDate,
   workingDays,
+  holidays,
+  events,
   canUndo,
   canRedo,
   workers,
+  workerAssignments,
   taskWorkerAssignments,
   categoryWorkerAssignments,
   taskProgressToday,
@@ -538,17 +636,26 @@ export function GanttChartView({
    * quantity/labor — see ProgressTrackingModalContent's own doc
    * comment. */
   workingDays: number[];
+  /** The project's own holidays (lib/projects/data.ts) — left out of
+   * Expected progress the same way a non-working weekday is. */
+  holidays: string[];
+  /** The project's calendar events (lib/project-events/data.ts) — shown
+   * on the Calendar view. */
+  events: ProjectEvent[];
   /** From lib/cost-estimate/undo-redo.ts's getGanttUndoRedoState, fetched
    * server-side alongside categories/progress — refreshes for free
    * through the same revalidatePath/router.refresh() flow every Gantt
    * mutation already triggers, no separate polling needed. */
   canUndo: boolean;
   canRedo: boolean;
-  /** The project's own Members roster and each task's current
+  /** The company Team (the admin's Team page) and each task's current
    * assignments from it — see lib/workers/data.ts. Fetched alongside
    * categories/progress, same revalidatePath-driven refresh as
    * everything else here. */
   workers: Worker[];
+  /** Every member's open assignments, any project — their availability
+   * in the Assigned picker. */
+  workerAssignments: WorkerAssignment[];
   taskWorkerAssignments: TaskWorkerAssignments;
   /** Same idea, one level up — see CategoryWorkerAssignments's own doc
    * comment. */
@@ -569,7 +676,7 @@ export function GanttChartView({
    * highlighting the given task's own row there. Wired to the Edit
    * Task form's own "See All" button under Assigned Resources (see
    * SubtaskForm's own onViewMaterials prop). */
-  onOpenMaterialBreakdown: (taskId: number) => void;
+  onOpenMaterialBreakdown: (taskId?: number) => void;
   /** Opens the shared "Import with AI" modal — same modal, same open
    * state (project-detail-view.tsx), as the entry point already in
    * Material Breakdown's own footer (see MaterialBreakdownModalContent's
@@ -734,7 +841,6 @@ export function GanttChartView({
   // gutting that mode out of a shared, non-trivial form component is a
   // separate, larger change than this one, left alone.
   const [taskModal, setTaskModal] = useState<CostTask | null>(null);
-  const [membersModalOpen, setMembersModalOpen] = useState(false);
   // A discriminated union rather than two separate pieces of state —
   // only one "Assign workers" modal is ever open at a time, for either
   // a task row or, one level up, a category row with no tasks yet (see
@@ -766,9 +872,94 @@ export function GanttChartView({
   // already uses; carries the whole task/category, not just its id,
   // since the modal needs its own estimatedQuantity/unit/percentComplete
   // for display alongside the form.
+  // highlightLatest: opened from a notification — its Last override (the
+  // change it was about) is highlighted.
   const [progressModal, setProgressModal] = useState<
-    { kind: "task"; task: CostTask } | { kind: "category"; category: CostCategory } | null
+    | { kind: "task"; task: CostTask; highlightLatest?: boolean }
+    | { kind: "category"; category: CostCategory; highlightLatest?: boolean }
+    | null
   >(null);
+
+  // A notification's View Progress (?progress=task-12 or category-5)
+  // opens that row's Daily Progress Update straight away. Compared with
+  // the last one handled during render (React's "adjust state when a
+  // prop changes" pattern), then dropped from the URL below — so a
+  // refresh doesn't reopen it, and the same link works again later.
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const progressParam = searchParams.get("progress");
+  const [handledProgressParam, setHandledProgressParam] = useState<string | null>(null);
+  if (progressParam !== handledProgressParam) {
+    setHandledProgressParam(progressParam);
+    const [kind, rawId] = (progressParam ?? "").split("-");
+    const id = Number(rawId);
+    if (kind === "task") {
+      const task = categoriesForDisplay
+        .flatMap((category) => category.tasks)
+        .find((t) => t.id === id);
+      if (task && !task.isMilestone) {
+        setProgressModal({ kind: "task", task, highlightLatest: true });
+      }
+    } else if (kind === "category") {
+      const category = categoriesForDisplay.find((c) => c.id === id);
+      if (category && category.tasks.length === 0) {
+        setProgressModal({ kind: "category", category, highlightLatest: true });
+      }
+    }
+  }
+  useEffect(() => {
+    if (!progressParam) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("progress");
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [progressParam, pathname, router, searchParams]);
+  // Gantt chart vs. Calendar view of the same tasks (the toolbar's
+  // calendar button) — see ProjectCalendarView.
+  const [calendarView, setCalendarView] = useState(false);
+  const { isAdmin } = usePortal();
+  // The Calendar view's Add event / event chip — a new event on a day,
+  // or an existing one to edit. See ProjectEventModalContent.
+  const [eventModal, setEventModal] = useState<
+    { date: string; event?: ProjectEvent } | null
+  >(null);
+
+  // Delete from a modal's own ⋮ menu (Edit Phase / Edit Task / Edit
+  // Event) — asks first, the same confirm the old footer Delete used.
+  async function confirmAndDelete(
+    name: string,
+    remove: () => Promise<{ error?: string }>,
+    close: () => void
+  ) {
+    if (!window.confirm(`Delete "${name}"?`)) return;
+    const result = await remove();
+    if (result.error) {
+      window.alert(result.error);
+      return;
+    }
+    close();
+    router.refresh();
+  }
+
+  // A calendar bar opens the same Daily Progress Update a Gantt bar does.
+  function handleCalendarItemClick(item: CalendarItem) {
+    for (const category of categoriesForDisplay) {
+      if (item.kind === "category" && category.id === item.id) {
+        setProgressModal({ kind: "category", category });
+        return;
+      }
+      const task = category.tasks.find((t) => t.id === item.id);
+      if (item.kind === "task" && task) {
+        setProgressModal({ kind: "task", task });
+        return;
+      }
+    }
+  }
+
+  // The Weight column's own click-through — see WeightButton.
+  const [weightBreakdown, setWeightBreakdown] = useState<WeightBreakdownTarget | null>(
+    null
+  );
   const [collapsedPhaseIds, setCollapsedPhaseIds] = useState<Set<string>>(
     new Set()
   );
@@ -807,11 +998,17 @@ export function GanttChartView({
   const [historyReady, setHistoryReady] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    resetGanttHistory(projectId).finally(() => {
-      if (cancelled) return;
-      setHistoryReady(true);
-      router.refresh();
-    });
+    // Background housekeeping — a failed call (e.g. the session changed
+    // underneath this tab) must never surface as an error screen.
+    resetGanttHistory(projectId)
+      .catch((error) => {
+        console.error("[GanttChartView] resetGanttHistory failed", error);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setHistoryReady(true);
+        router.refresh();
+      });
     return () => {
       cancelled = true;
     };
@@ -1024,6 +1221,18 @@ export function GanttChartView({
   const fallbackStart = projectStartDate ? toDate(projectStartDate) : new Date();
   const fallbackEnd = new Date(fallbackStart.getTime() + 7 * 86_400_000);
 
+  // Every duration in this view (the Days column, the hover card, the
+  // phase rollups below) counts working days only — the project's own
+  // Working days, holidays left out — same as Expected progress does.
+  const holidaySet = useMemo(() => new Set(holidays), [holidays]);
+  const workSchedule = useMemo(
+    () => ({ workingDays, holidays: holidaySet }),
+    [workingDays, holidaySet]
+  );
+  function workingDaysBetween(start: Date, end: Date) {
+    return countWorkingDays(start, end, workingDays, holidaySet);
+  }
+
   function resolvedDates(task: { plannedStartDate: string | null; plannedEndDate: string | null }) {
     return {
       start: task.plannedStartDate ? toDate(task.plannedStartDate) : fallbackStart,
@@ -1039,13 +1248,11 @@ export function GanttChartView({
   // date shortened) that this is the expected behavior: the phase's
   // own rollup shifted even though no percentage changed, because a
   // shorter subtask now counts for less of the total. Each task's own
-  // weight is its planned duration in days (same daysBetween() the
-  // Days column itself already shows), so a short 100%-done task pulls
-  // the phase's own percent up less than a long one would. Empty of
-  // tasks (a fresh phase with nothing added yet), or every task
-  // resolving to 0 total duration (shouldn't happen in practice —
-  // daysBetween always returns at least 1 — but guarded rather than
-  // dividing by zero), reads as 0.
+  // weight is its planned duration in working days (the same count the
+  // Days column shows), so a short 100%-done task pulls the phase's own
+  // percent up less than a long one would. Empty of tasks (a fresh
+  // phase with nothing added yet), or every task resolving to 0 working
+  // days, reads as 0.
   const percentCompleteByCategoryId = useMemo(() => {
     const map = new Map<number, number>();
     for (const category of categoriesForDisplay) {
@@ -1061,7 +1268,7 @@ export function GanttChartView({
       let totalDuration = 0;
       for (const task of category.tasks) {
         const { start, end } = resolvedDates(task);
-        const duration = daysBetween(start, end);
+        const duration = workingDaysBetween(start, end);
         weightedSum += duration * task.percentComplete;
         totalDuration += duration;
       }
@@ -1076,32 +1283,69 @@ export function GanttChartView({
     // doc comment) on the `tasks` useMemo elsewhere in this file; same
     // reasoning applies here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoriesForDisplay]);
+  }, [categoriesForDisplay, workingDays, holidaySet]);
 
-  // How much of the project's own 100-point weight pool is currently
-  // assigned — every task's own weight, plus every task-less category's
-  // own weight (see updateCategoryWeight's own doc comment for why a
-  // category WITH tasks is deliberately excluded here: its own weight
-  // is nothing but the sum of those same tasks, already counted once).
-  // Shown in the toolbar as a live "X% assigned, Y% remaining" guide —
-  // not enforced/blocked at the input level (see updateTaskWeight's own
-  // doc comment), so nothing here prevents going over 100 either; the
-  // remaining figure just reads negative if it does, same "a guide, not
-  // a hard limit" role a running total already plays elsewhere in this
-  // app (e.g. cost estimate totals).
-  const totalWeightAssigned = useMemo(() => {
-    let sum = 0;
+  // Expected progress (where the schedule says each row should be by
+  // today) for the Expected column — the counterpart to Percent Complete,
+  // which is only what's actually been logged. Same shared math as the
+  // Progress Tracking modal (computeExpectedProgress). A phase with tasks
+  // rolls its tasks up the same duration-weighted way its own Percent
+  // Complete does, so the two stay comparable; null means no schedule to
+  // measure against.
+  const expectedByTaskId = useMemo(() => {
+    const today = new Date();
+    const map = new Map<number, number | null>();
     for (const category of categoriesForDisplay) {
-      if (category.tasks.length === 0) {
-        sum += category.weight;
-        continue;
-      }
       for (const task of category.tasks) {
-        sum += task.weight;
+        map.set(
+          task.id,
+          computeExpectedProgress({
+            plannedStartDate: task.plannedStartDate,
+            plannedEndDate: task.plannedEndDate,
+            workingDays,
+            holidays,
+            today,
+          }).timePercent
+        );
       }
     }
-    return sum;
-  }, [categoriesForDisplay]);
+    return map;
+  }, [categoriesForDisplay, workingDays, holidays]);
+
+  const expectedByCategoryId = useMemo(() => {
+    const today = new Date();
+    const map = new Map<number, number | null>();
+    for (const category of categoriesForDisplay) {
+      if (category.tasks.length === 0) {
+        map.set(
+          category.id,
+          computeExpectedProgress({
+            plannedStartDate: category.plannedStartDate,
+            plannedEndDate: category.plannedEndDate,
+            workingDays,
+            holidays,
+            today,
+          }).timePercent
+        );
+        continue;
+      }
+      let weightedSum = 0;
+      let totalDuration = 0;
+      for (const task of category.tasks) {
+        const expected = expectedByTaskId.get(task.id);
+        if (expected == null) continue;
+        const { start, end } = resolvedDates(task);
+        const duration = workingDaysBetween(start, end);
+        weightedSum += duration * expected;
+        totalDuration += duration;
+      }
+      map.set(category.id, totalDuration > 0 ? weightedSum / totalDuration : null);
+    }
+    return map;
+    // resolvedDates' own fallbacks deliberately omitted, same as
+    // percentCompleteByCategoryId above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoriesForDisplay, expectedByTaskId, workingDays, holidays]);
 
   // Keyed by the same string ids used in the `tasks` array below, so the
   // custom TaskListTable can hand a clicked row's full record to the
@@ -1116,6 +1360,57 @@ export function GanttChartView({
       }
     }
     return map;
+  }, [categoriesForDisplay]);
+
+  // The whole project's progress, shown on the toolbar's right edge:
+  // every task's weight x its percent complete (a task-less category
+  // counts as its own task) — the same Earned Value rollup
+  // getProjectProgress (lib/progress/data.ts) uses.
+  const overallProgress = useMemo(() => {
+    let sum = 0;
+    for (const category of categoriesForDisplay) {
+      if (category.tasks.length === 0) {
+        sum += (category.weight * category.percentComplete) / 100;
+        continue;
+      }
+      for (const task of category.tasks) {
+        sum += (task.weight * task.percentComplete) / 100;
+      }
+    }
+    return Math.min(100, sum);
+  }, [categoriesForDisplay]);
+
+  // The Calendar view (toolbar's calendar button) — every dated task, and
+  // every dated task-less category, as a bar across its own days. A
+  // category with tasks isn't its own bar; its tasks are.
+  const calendarItems = useMemo(() => {
+    const items: CalendarItem[] = [];
+    const add = (
+      kind: CalendarItem["kind"],
+      row: {
+        id: number;
+        name: string;
+        plannedStartDate: string | null;
+        plannedEndDate: string | null;
+        percentComplete: number;
+      }
+    ) => {
+      if (row.id <= 0 || !row.plannedStartDate || !row.plannedEndDate) return;
+      if (row.plannedEndDate < row.plannedStartDate) return;
+      items.push({
+        kind,
+        id: row.id,
+        name: row.name,
+        start: row.plannedStartDate,
+        end: row.plannedEndDate,
+        percentComplete: row.percentComplete,
+      });
+    };
+    for (const category of categoriesForDisplay) {
+      if (category.tasks.length === 0) add("category", category);
+      for (const task of category.tasks) add("task", task);
+    }
+    return items;
   }, [categoriesForDisplay]);
 
   const categoryById = useMemo(() => {
@@ -1138,17 +1433,9 @@ export function GanttChartView({
         // Start/End cell rendering below, both of which read it too.
         hasTasks: category.tasks.length > 0,
         priority: category.priority,
-        // Same "has tasks -> live rollup, no tasks -> own stored value"
-        // split as categoryAmount (material-breakdown-modal-content.tsx)
-        // — see updateCategoryWeight's own doc comment. Read-only
-        // whenever hasTasks is true, so no optimistic override is
-        // needed here the way the task-level weight cell needs one:
-        // this only ever changes after a task's own weight is saved and
-        // categoriesForDisplay refreshes.
-        weight:
-          category.tasks.length > 0
-            ? category.tasks.reduce((sum, t) => sum + t.weight, 0)
-            : category.weight,
+        // Already the sum of its tasks' weights while it has any — see
+        // lib/cost-estimate/weights.ts.
+        weight: category.weight,
       });
     }
     return map;
@@ -1464,15 +1751,6 @@ export function GanttChartView({
     setCategoryPriorityOverride,
     clearCategoryPriorityOverride,
   ] = usePendingOverrides<string>(categories);
-  // Same idea, one more field — a task/category's own weight (see
-  // updateTaskWeight's own doc comment, lib/cost-estimate/actions.ts).
-  const [pendingWeightOverrides, setWeightOverride, clearWeightOverride] =
-    usePendingOverrides<number>(categories);
-  const [
-    pendingCategoryWeightOverrides,
-    setCategoryWeightOverride,
-    clearCategoryWeightOverride,
-  ] = usePendingOverrides<number>(categories);
   const [pendingNameOverrides, setNameOverride, clearNameOverride] =
     usePendingOverrides<string>(categories);
   const [
@@ -1989,38 +2267,6 @@ export function GanttChartView({
     router.refresh();
   }
 
-  // Same optimistic-override pattern as handleTaskPriorityEdit above —
-  // see updateTaskWeight's own doc comment (lib/cost-estimate/actions.ts)
-  // for what a task's own weight means now (PM-assigned effort, not
-  // cost-derived).
-  async function handleTaskWeightEdit(taskId: number, weight: number) {
-    setScheduleError(null);
-    setWeightOverride(taskId, weight);
-    const result = await updateTaskWeight(taskId, projectId, weight);
-    if (result.error) {
-      setScheduleError(result.error);
-      clearWeightOverride(taskId);
-      return;
-    }
-    router.refresh();
-  }
-
-  // Same idea, one level up — only ever reachable for a task-less
-  // category (see the Weight cell's own render logic below and
-  // updateCategoryWeight's own doc comment for why a category WITH
-  // tasks never edits its own weight directly here).
-  async function handleCategoryWeightEdit(categoryId: number, weight: number) {
-    setScheduleError(null);
-    setCategoryWeightOverride(categoryId, weight);
-    const result = await updateCategoryWeight(categoryId, projectId, weight);
-    if (result.error) {
-      setScheduleError(result.error);
-      clearCategoryWeightOverride(categoryId);
-      return;
-    }
-    router.refresh();
-  }
-
   // The header's own "+" (Add task, next to the Task column label) —
   // creates a phase directly, no modal, per an explicit request that
   // adding one shouldn't need a form popup at all. "New Task" is a
@@ -2053,10 +2299,13 @@ export function GanttChartView({
         materialUnitCost: 0,
         materialDirectAmountOverride: null,
         categoryMaterialEstimate: 0,
+        materialAssignments: [],
         plannedStartDate: null,
         plannedEndDate: null,
         priority: "medium",
         categoryLaborEstimate: 0,
+        categoryEquipmentEstimate: 0,
+        categoryOtherEstimate: 0,
         estimatedQuantity: 0,
         unit: null,
         percentComplete: 0,
@@ -2096,10 +2345,13 @@ export function GanttChartView({
           materialUnitCost: 0,
           materialDirectAmountOverride: null,
           categoryMaterialEstimate: 0,
+          materialAssignments: [],
           plannedStartDate: null,
           plannedEndDate: null,
           priority: "medium",
           categoryLaborEstimate: 0,
+          categoryEquipmentEstimate: 0,
+          categoryOtherEstimate: 0,
           estimatedQuantity: 0,
           unit: null,
           percentComplete: 0,
@@ -2159,7 +2411,6 @@ export function GanttChartView({
       priority: "medium",
       percentComplete: 0,
       materialAssignments: [],
-      laborAssignments: [],
     };
     setPendingNewTask({ categoriesAtSet, categoryId, task: placeholderTask });
 
@@ -2387,7 +2638,7 @@ export function GanttChartView({
           const isFiller = row.id.startsWith(FILLER_ROW_ID_PREFIX);
           const category = isProject ? categoryById.get(row.id) : undefined;
           const task = !isProject ? taskById.get(row.id) : undefined;
-          const days = daysBetween(row.start, trueEndDate(row));
+          const days = workingDaysBetween(row.start, trueEndDate(row));
           // A phase's Start/End only lock to a read-only rollup once it
           // actually has tasks to roll up — an empty one has nothing to
           // compute from, so it's directly editable instead, same as a
@@ -2404,13 +2655,15 @@ export function GanttChartView({
               // at a glance, not just from the bold name/chevron — task
               // rows stay plain (no class) rather than an explicit white,
               // so they still show through whatever the panel's own
-              // background is.
-              className={`flex items-center border-b border-zinc-100 text-xs text-zinc-600 ${
-                isProject ? "bg-zinc-100" : ""
+              // background is. A phase row's own divider is a shade darker
+              // than its fill — border-zinc-100 on a bg-zinc-100 row
+              // vanished, so back-to-back phases read as one gray block.
+              className={`flex items-center border-b text-xs text-zinc-600 ${
+                isProject ? "border-zinc-200 bg-zinc-100" : "border-zinc-100"
               }`}
             >
               <div
-                className="flex h-full shrink-0 items-center gap-1 border-r border-zinc-200 px-2 text-zinc-800"
+                className="flex h-full shrink-0 items-center gap-1 border-r border-zinc-200 px-2 text-zinc-900"
                 style={{ width: columnWidths.text }}
               >
                 {/* The chevron itself only renders for a category that
@@ -2471,7 +2724,7 @@ export function GanttChartView({
                       else if (e.key === "Escape") setEditingCategoryId(null);
                     }}
                     aria-label="Phase name"
-                    className="h-full min-w-0 flex-1 border-none bg-white px-1 text-xs font-bold text-zinc-800 outline-1 -outline-offset-1 outline-zinc-400"
+                    className="h-full min-w-0 flex-1 border-none bg-white px-1 text-xs font-bold text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400"
                   />
                 ) : isProject && category && category.id > 0 ? (
                   <button
@@ -2522,7 +2775,7 @@ export function GanttChartView({
                       else if (e.key === "Escape") setEditingTaskId(null);
                     }}
                     aria-label="Task name"
-                    className="h-full min-w-0 flex-1 border-none bg-white ml-6 px-1 text-xs font-medium text-zinc-800 outline-1 -outline-offset-1 outline-zinc-400"
+                    className="h-full min-w-0 flex-1 border-none bg-white ml-6 px-1 text-xs font-medium text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400"
                   />
                 ) : !isProject && task && task.id > 0 ? (
                   <button
@@ -2950,74 +3203,24 @@ export function GanttChartView({
                 className="flex h-full shrink-0 items-center border-r border-zinc-200"
                 style={{ width: columnWidths.weight }}
               >
-                {/* PM-assigned effort (0-100), not a cost-derived value
-                    anymore — see updateTaskWeight's own doc comment
-                    (lib/cost-estimate/actions.ts). A category WITH
-                    tasks shows a read-only rollup of its own tasks'
-                    weights (same asymmetric rule categoryAmount already
-                    uses in Material Breakdown) rather than its own
-                    editable field — editing a number that's really just
-                    a sum of other numbers would be confusing, same
-                    reasoning the Amount cell there already documents.
-                    Commits on blur, not onChange — same "an optimistic
-                    update remounts this input via its own key, which
-                    would eat the next keystroke if it fired live" hazard
-                    the date inputs above already avoid the same way. */}
-                {isProject &&
-                  category &&
-                  (category.hasTasks ? (
-                    <div className="w-full px-2 text-right text-xs text-zinc-400">
-                      {category.weight}%
-                    </div>
-                  ) : (
-                    <input
-                      key={pendingCategoryWeightOverrides.get(category.id) ?? category.weight}
-                      type="number"
-                      min={0}
-                      max={100}
-                      defaultValue={
-                        pendingCategoryWeightOverrides.get(category.id) ??
-                        category.weight
-                      }
-                      onBlur={(e) => {
-                        const value = Number(e.target.value);
-                        if (Number.isFinite(value)) {
-                          handleCategoryWeightEdit(category.id, value);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") e.currentTarget.blur();
-                      }}
-                      aria-label={`${row.name} weight`}
-                      className="h-full w-full border-none bg-transparent px-2 text-right text-xs text-zinc-600 outline-none transition hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
-                    />
-                  ))}
-                {task &&
-                  task.id > 0 &&
-                  (() => {
-                    const effectiveWeight =
-                      pendingWeightOverrides.get(task.id) ?? task.weight;
-                    return (
-                      <input
-                        key={effectiveWeight}
-                        type="number"
-                        min={0}
-                        max={100}
-                        defaultValue={effectiveWeight}
-                        onBlur={(e) => {
-                          const value = Number(e.target.value);
-                          if (Number.isFinite(value)) {
-                            handleTaskWeightEdit(task.id, value);
-                          }
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") e.currentTarget.blur();
-                        }}
-                        aria-label={`${row.name} weight`}
-                        className="h-full w-full border-none bg-transparent px-2 text-right text-xs text-zinc-600 outline-none transition hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
-                      />
-                    );
-                  })()}
+                {/* See WeightButton. A category with tasks is the sum of
+                    its tasks' weights, so it's shown muted. */}
+                {isProject && category && (
+                  <WeightButton
+                    weight={category.weight}
+                    muted={category.hasTasks}
+                    onClick={() =>
+                      setWeightBreakdown({ kind: "category", id: category.id })
+                    }
+                  />
+                )}
+                {task && task.id > 0 && (
+                  <WeightButton
+                    weight={task.weight}
+                    muted={false}
+                    onClick={() => setWeightBreakdown({ kind: "task", id: task.id })}
+                  />
+                )}
               </div>
               <div
                 className="flex h-full shrink-0 items-center border-r border-zinc-200"
@@ -3091,7 +3294,7 @@ export function GanttChartView({
                   })()}
               </div>
               <div
-                className="relative flex h-full shrink-0 items-center"
+                className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
                 style={{ width: columnWidths.percentComplete }}
                 data-phase-info-cell={
                   isProject && category?.hasTasks ? true : undefined
@@ -3162,17 +3365,42 @@ export function GanttChartView({
                     either row type (set from task.percentComplete
                     directly in the tasks memo above), so this just
                     reads it back rather than re-deriving it. */}
-                {!isFiller && (
-                  <span
-                    className={`flex h-full w-full items-center truncate px-2 text-xs text-zinc-600 transition ${
-                      isProject || (task && !task.isMilestone)
-                        ? "cursor-pointer hover:bg-zinc-900 hover:text-white"
-                        : ""
-                    }`}
-                  >
-                    {formatPercent(row.progress)}%
-                  </span>
-                )}
+                {!isFiller &&
+                  (() => {
+                    // A directly tracked row (a task, or a task-less
+                    // phase) with saved Daily Progress Update days — its
+                    // progress was overridden, not just automatic. The
+                    // latest one is what its own modal shows under its inputs.
+                    const lastOverride = (
+                      task
+                        ? taskProgressToday[task.id]
+                        : category && !category.hasTasks
+                          ? categoryProgressToday[category.id]
+                          : undefined
+                    )?.latest;
+                    return (
+                      <span
+                        className={`flex h-full w-full items-center truncate px-2 text-xs text-zinc-600 transition ${
+                          isProject || (task && !task.isMilestone)
+                            ? "cursor-pointer hover:bg-zinc-900 hover:text-white"
+                            : ""
+                        }`}
+                      >
+                        {formatPercent(row.progress)}%
+                        {lastOverride && (
+                          <span
+                            title={`Progress overridden · last on ${new Date(
+                              `${lastOverride.entryDate}T00:00:00`
+                            ).toLocaleDateString("en-US", { month: "short", day: "numeric" })}${
+                              lastOverride.savedByName ? ` by ${lastOverride.savedByName}` : ""
+                            }`}
+                            aria-label="Progress overridden"
+                            className="ml-auto size-1.5 shrink-0 rounded-full bg-orange-500"
+                          />
+                        )}
+                      </span>
+                    );
+                  })()}
                 {cellInfoTooltip?.rowId === row.id &&
                   cellInfoTooltip.field === "percentComplete" &&
                   createPortal(
@@ -3197,6 +3425,26 @@ export function GanttChartView({
                     </div>,
                     document.body
                   )}
+              </div>
+              <div
+                className="flex h-full shrink-0 items-center"
+                style={{ width: columnWidths.expected }}
+              >
+                {!isFiller &&
+                  !(task && task.isMilestone) &&
+                  (() => {
+                    const expected = isProject && category
+                      ? expectedByCategoryId.get(category.id)
+                      : task
+                        ? expectedByTaskId.get(task.id)
+                        : null;
+                    if (expected == null) {
+                      return <span className="px-2 text-xs text-zinc-300">—</span>;
+                    }
+                    return (
+                      <ExpectedProgressCell actual={row.progress} expected={expected} />
+                    );
+                  })()}
               </div>
             </div>
           );
@@ -3223,7 +3471,7 @@ export function GanttChartView({
           border, same as adjacent bordered rows elsewhere in this
           chart. */}
       <div className="flex flex-col">
-        {/* Deliberately just Undo/Redo/Members/Import — a reference
+        {/* Deliberately just Undo/Redo/Import — a reference
             toolbar image with ~25 icons (text color, cut/copy/paste,
             zoom, print, share, lock, settings, ...) was the original
             ask, but none of those other actions have a real feature
@@ -3252,7 +3500,7 @@ export function GanttChartView({
           <div className="mx-1 h-5 w-px bg-zinc-200" />
           {/* Week isn't offered here — see the `view` state's own doc
               comment above for why. */}
-          {TIMELINE_VIEW_OPTIONS.map((option) => (
+          {!calendarView && TIMELINE_VIEW_OPTIONS.map((option) => (
             <button
               key={option}
               type="button"
@@ -3268,50 +3516,44 @@ export function GanttChartView({
               {option}
             </button>
           ))}
-          <div className="mx-1 h-5 w-px bg-zinc-200" />
-          {/* Filled black, unlike every other plain/ghost button in this
-              toolbar — deliberately stands out as the one action that
-              leaves the chart entirely (opens a different modal/flow)
-              rather than editing it in place, same bg-zinc-900 treatment
-              "Process with AI"/"Confirm & Create Tasks" use elsewhere in
-              this same flow. */}
+          {!calendarView && <div className="mx-1 h-5 w-px bg-zinc-200" />}
           <button
             type="button"
-            onClick={onImportBom}
-            title="Import a document with AI"
-            className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-2 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800"
+            onClick={() => setCalendarView((open) => !open)}
+            aria-pressed={calendarView}
+            aria-label="Calendar view"
+            title={calendarView ? "Back to the Gantt chart" : "Calendar view"}
+            className={`cursor-pointer rounded p-1.5 transition ${
+              calendarView
+                ? "bg-zinc-900 text-white"
+                : "text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
+            }`}
           >
-            <Sparkles className="size-4" />
-            Import
+            <CalendarDays className="size-4" />
           </button>
-          <div className="mx-1 h-5 w-px bg-zinc-200" />
-          <button
-            type="button"
-            onClick={() => setMembersModalOpen(true)}
-            aria-label="Members"
-            title="Manage the project's members"
-            className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900"
-          >
-            <HardHat className="size-4" />
-          </button>
-          {/* The Weight column's own running total — see
-              totalWeightAssigned's own doc comment for why nothing
-              actually blocks going over 100, this is a guide the PM
-              watches while assigning effort, not a hard limit. Pushed
-              to the toolbar's own right edge (ml-auto) since it's
-              informational, not another action alongside Undo/Redo/
-              zoom/Import/Members. */}
-          <div className="ml-auto flex items-center gap-1.5 text-xs text-zinc-500">
-            <span>Weight assigned:</span>
-            <span
-              className={`font-medium ${
-                totalWeightAssigned > 100 ? "text-red-600" : "text-zinc-700"
-              }`}
+          <div className="ml-auto flex items-center gap-1">
+            {/* Filled black, unlike every other plain/ghost button in this
+                toolbar — deliberately stands out as the one action that
+                leaves the chart entirely (opens a different modal/flow)
+                rather than editing it in place, same bg-zinc-900 treatment
+                "Process with AI"/"Confirm & Create Tasks" use elsewhere in
+                this same flow. */}
+            <button
+              type="button"
+              onClick={onImportBom}
+              title="Import a document with AI"
+              className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-2 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800"
             >
-              {totalWeightAssigned}%
-            </span>
-            <span className="text-zinc-300">·</span>
-            <span>{100 - totalWeightAssigned}% remaining</span>
+              <Sparkles className="size-4" />
+              Import with AI
+            </button>
+            <div className="mx-2 h-5 w-px bg-zinc-200" />
+            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+              <span>Overall progress</span>
+              <span className="font-semibold text-zinc-900 tabular-nums">
+                {overallProgress.toFixed(2)}%
+              </span>
+            </div>
           </div>
         </div>
 
@@ -3325,7 +3567,22 @@ export function GanttChartView({
             separate empty state — the header's own "+" (Add task, see
             CustomTaskListHeader) is already reachable with zero phases,
             same as with any number of them. */}
-        <>
+        {calendarView && (
+          <ProjectCalendarView
+            items={calendarItems}
+            events={events}
+            holidays={holidays}
+            workingDays={workingDays}
+            canEditEvents={isAdmin}
+            onAddEvent={(date) => setEventModal({ date })}
+            onEventClick={(event) => setEventModal({ date: event.date, event })}
+            onItemClick={handleCalendarItemClick}
+          />
+        )}
+        {/* Hidden, not unmounted, while the Calendar view is showing —
+            the chart's own scroll/resize wiring is set up once on mount,
+            so remounting it on the way back isn't safe. */}
+        <div className={calendarView ? "hidden" : "contents"}>
             {/* Expand/Collapse-all and Show/Hide Task List are still
                 removed for now — the Gantt chart's own toolbar gets a
                 fuller design pass later. Day/Month/Year zoom is live
@@ -3418,6 +3675,7 @@ export function GanttChartView({
               className="gantt-task-react-root"
             >
               <div className="relative" onMouseDown={handleChartMouseDown}>
+                <WorkScheduleContext.Provider value={workSchedule}>
                 <Gantt
                   tasks={chartTasks}
                   viewMode={VIEW_MODE[view]}
@@ -3440,6 +3698,7 @@ export function GanttChartView({
                     });
                   }}
                 />
+                </WorkScheduleContext.Provider>
                 {/* The whole task-list panel's own resize handle — see
                     handlePanelResizeMouseDown's own doc comment. Height
                     computed directly (header + one row per currently
@@ -3471,19 +3730,74 @@ export function GanttChartView({
               </div>
             </div>
             </div>
-          </>
+        </div>
       </div>
+
+      <Modal
+        open={eventModal !== null}
+        onClose={() => setEventModal(null)}
+        title={eventModal?.event ? "Edit Event" : "Add Event"}
+        menuItems={
+          eventModal?.event
+            ? [
+                {
+                  label: "Delete",
+                  destructive: true,
+                  onSelect: () => {
+                    const event = eventModal.event!;
+                    confirmAndDelete(
+                      event.name,
+                      () => deleteProjectEvent(event.id, projectId),
+                      () => setEventModal(null)
+                    );
+                  },
+                },
+              ]
+            : undefined
+        }
+      >
+        {eventModal && (
+          <ProjectEventModalContent
+            projectId={projectId}
+            date={eventModal.date}
+            event={eventModal.event}
+            onClose={() => setEventModal(null)}
+          />
+        )}
+      </Modal>
+
+      <WeightBreakdownModal
+        projectId={projectId}
+        categories={categoriesForDisplay}
+        target={weightBreakdown}
+        onTargetChange={setWeightBreakdown}
+      />
 
       <Modal
         open={categoryModal !== null}
         onClose={() => setCategoryModal(null)}
         title="Edit Phase"
+        menuItems={
+          categoryModal
+            ? [
+                {
+                  label: "Delete",
+                  destructive: true,
+                  onSelect: () =>
+                    confirmAndDelete(
+                      categoryModal.name,
+                      () => deleteCategory(categoryModal.id, projectId, {}, new FormData()),
+                      () => setCategoryModal(null)
+                    ),
+                },
+              ]
+            : undefined
+        }
       >
         {categoryModal && (
           <CategoryForm
             projectId={projectId}
             category={categoryModal}
-            showDeleteButton
             onSuccess={() => setCategoryModal(null)}
           />
         )}
@@ -3492,7 +3806,23 @@ export function GanttChartView({
       <Modal
         open={taskModal !== null}
         onClose={() => setTaskModal(null)}
-        title="Edit Task"
+        title={taskModal?.name ?? "Edit Task"}
+        menuItems={
+          taskModal
+            ? [
+                {
+                  label: "Delete",
+                  destructive: true,
+                  onSelect: () =>
+                    confirmAndDelete(
+                      taskModal.name,
+                      () => deleteTask(taskModal.id, projectId, {}, new FormData()),
+                      () => setTaskModal(null)
+                    ),
+                },
+              ]
+            : undefined
+        }
       >
         {taskModal && (
           <SubtaskForm
@@ -3514,18 +3844,6 @@ export function GanttChartView({
       </Modal>
 
       <Modal
-        open={membersModalOpen}
-        onClose={() => setMembersModalOpen(false)}
-        title="Members"
-      >
-        <MembersModalContent
-          projectId={projectId}
-          workers={workers}
-          onClose={() => setMembersModalOpen(false)}
-        />
-      </Modal>
-
-      <Modal
         open={assignWorkersModal !== null}
         onClose={() => setAssignWorkersModal(null)}
         title="Assign Workers"
@@ -3536,16 +3854,14 @@ export function GanttChartView({
             startDate={assignWorkersModal.start}
             endDate={assignWorkersModal.end}
             workers={workers}
+            assignments={workerAssignments}
+            current={{ kind: "task", id: assignWorkersModal.taskId }}
             assignedWorkerIds={
               taskWorkerAssignments[assignWorkersModal.taskId] ?? []
             }
             onSave={(workerIds) =>
               setTaskWorkers(assignWorkersModal.taskId, projectId, workerIds)
             }
-            onAddPerson={() => {
-              setAssignWorkersModal(null);
-              setMembersModalOpen(true);
-            }}
             onClose={() => setAssignWorkersModal(null)}
           />
         )}
@@ -3555,6 +3871,8 @@ export function GanttChartView({
             startDate={assignWorkersModal.start}
             endDate={assignWorkersModal.end}
             workers={workers}
+            assignments={workerAssignments}
+            current={{ kind: "category", id: assignWorkersModal.categoryId }}
             assignedWorkerIds={
               categoryWorkerAssignments[assignWorkersModal.categoryId] ?? []
             }
@@ -3565,10 +3883,6 @@ export function GanttChartView({
                 workerIds
               )
             }
-            onAddPerson={() => {
-              setAssignWorkersModal(null);
-              setMembersModalOpen(true);
-            }}
             onClose={() => setAssignWorkersModal(null)}
           />
         )}
@@ -3587,20 +3901,25 @@ export function GanttChartView({
       >
         {progressModal && progressModal.kind === "task" && (
           <ProgressTrackingModalContent
-            weight={progressModal.task.weight}
+            estimatedQuantity={progressModal.task.estimatedQuantity}
+            unit={progressModal.task.unit}
             plannedStartDate={progressModal.task.plannedStartDate}
             plannedEndDate={progressModal.task.plannedEndDate}
             plannedMaterials={groupPlannedMaterials(
               progressModal.task.materialAssignments
             )}
-            plannedWorkerCount={progressModal.task.laborAssignments.reduce(
-              (sum, a) => sum + a.plannedWorkerCount,
-              0
-            )}
+            plannedCosts={{
+              labor: progressModal.task.laborEstimate,
+              material: progressModal.task.materialEstimate,
+              equipment: progressModal.task.equipmentEstimate,
+              other: progressModal.task.otherCostEstimate,
+            }}
             workingDays={workingDays}
+            holidays={holidays}
             progressToday={
               taskProgressToday[progressModal.task.id] ?? EMPTY_PROGRESS_TODAY
             }
+            highlightLatest={progressModal.highlightLatest ?? false}
             onSave={(input) =>
               recordTaskProgress(progressModal.task.id, projectId, input)
             }
@@ -3609,23 +3928,30 @@ export function GanttChartView({
         )}
         {progressModal && progressModal.kind === "category" && (
           <ProgressTrackingModalContent
-            weight={progressModal.category.weight}
+            estimatedQuantity={progressModal.category.estimatedQuantity}
+            unit={progressModal.category.unit}
             plannedStartDate={progressModal.category.plannedStartDate}
             plannedEndDate={progressModal.category.plannedEndDate}
-            // A task-less category has no planned material list or labor
-            // assignments of its own — both components drop out of its
-            // blend rather than reading as 0%.
+            // A task-less category has no planned material list of its
+            // own; its planned costs are its own direct line's.
             plannedMaterials={[]}
-            plannedWorkerCount={0}
+            plannedCosts={{
+              labor: progressModal.category.categoryLaborEstimate,
+              material: progressModal.category.categoryMaterialEstimate,
+              equipment: progressModal.category.categoryEquipmentEstimate,
+              other: progressModal.category.categoryOtherEstimate,
+            }}
             workingDays={workingDays}
+            holidays={holidays}
             progressToday={
               categoryProgressToday[progressModal.category.id] ??
               EMPTY_PROGRESS_TODAY
             }
+            highlightLatest={progressModal.highlightLatest ?? false}
             onSave={(input) =>
               recordCategoryProgress(progressModal.category.id, projectId, {
-                laborHeadcount: input.laborHeadcount,
-                percentCompleteOverride: input.percentCompleteOverride,
+                quantityCompletedToday: input.quantityCompletedToday,
+                costs: input.costs,
               })
             }
             onClose={() => setProgressModal(null)}

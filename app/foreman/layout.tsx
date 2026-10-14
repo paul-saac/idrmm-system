@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSessionProfile } from "@/lib/auth/session";
 import { PortalSidebar } from "@/components/admin/sidebar";
 import { PortalProvider } from "@/components/portal/portal-context";
+import { roleLabel } from "@/lib/auth/roles";
 
 // The foreman portal: the same pages as the admin portal, scoped to the
 // projects assigned to this foreman (projects.foreman_id) by row-level
@@ -22,9 +23,15 @@ export default async function ForemanLayout({
   const name = `${profile.firstName} ${profile.lastName}`.trim();
 
   return (
-    <PortalProvider portal={{ basePath: "/foreman", isAdmin: false }}>
+    <PortalProvider
+      portal={{
+        basePath: "/foreman",
+        isAdmin: false,
+        user: { name, email: profile.email, roleLabel: roleLabel(profile.role) },
+      }}
+    >
       <div className="flex h-screen overflow-hidden bg-zinc-50">
-        <PortalSidebar basePath="/foreman" name={name} email={profile.email} />
+        <PortalSidebar basePath="/foreman" />
         <div className="flex flex-1 flex-col overflow-hidden">{children}</div>
       </div>
     </PortalProvider>

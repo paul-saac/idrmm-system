@@ -50,7 +50,7 @@ export function EquipmentForm({
         // never collected as input. Add mode has nothing to show yet, so
         // Equipment Name below takes the full row there instead.
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-800">
+          <label className="text-sm font-medium text-zinc-900">
             Asset Tag
           </label>
           <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">
@@ -62,7 +62,7 @@ export function EquipmentForm({
       <div className={`flex flex-col gap-1.5 ${equipment ? "" : "sm:col-span-2"}`}>
         <label
           htmlFor={`${formId}-name`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Equipment Name
         </label>
@@ -79,7 +79,7 @@ export function EquipmentForm({
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor={`${formId}-category`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Category
         </label>
@@ -101,7 +101,7 @@ export function EquipmentForm({
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor={`${formId}-description`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Description
         </label>
@@ -118,7 +118,7 @@ export function EquipmentForm({
       <div className={`flex flex-col gap-1.5 ${equipment ? "" : "sm:col-span-2"}`}>
         <label
           htmlFor={`${formId}-serialNumber`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Serial Number{" "}
           <span className="font-normal text-zinc-400">(optional)</span>
@@ -134,7 +134,7 @@ export function EquipmentForm({
 
       {equipment && (
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-800">Status</label>
+          <label className="text-sm font-medium text-zinc-900">Status</label>
           {equipment.status === "assigned" ? (
             <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">
               Assigned to {equipment.currentProjectName ?? "a project"} — return

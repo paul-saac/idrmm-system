@@ -5,7 +5,15 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { MaterialBreakdownModalContent } from "@/components/projects/cost-estimate/material-breakdown-modal-content";
 import { LaborBreakdownModalContent } from "@/components/projects/cost-estimate/labor-breakdown-modal-content";
+import {
+  WeightBreakdownModal,
+  type WeightBreakdownTarget,
+} from "@/components/projects/cost-estimate/weight-breakdown-modal-content";
 import type { CostEstimate } from "@/lib/cost-estimate/data";
+import {
+  updateCategoryEstimatedQuantity,
+  updateTaskEstimatedQuantity,
+} from "@/lib/cost-estimate/actions";
 
 // Accept null/undefined even though the props are typed as plain `number`
 // — lib/cost-estimate/data.ts already coalesces every numeric field to 0,
@@ -18,6 +26,61 @@ function formatCurrency(amount: number | null | undefined) {
 function formatWeight(weight: number | null | undefined) {
   return `${(weight ?? 0).toFixed(2)}%`;
 }
+
+// An empty cell counts as 0; null flags anything that isn't a real,
+// non-negative number.
+function parseQuantity(value: string): number | null {
+  if (!value) return 0;
+  const quantity = Number(value.replace(/,/g, ""));
+  return Number.isFinite(quantity) && quantity >= 0 ? quantity : null;
+}
+
+/** An inline-editable cell — fills its whole <td> (which carries no
+ * padding of its own, see EDITABLE_TD), saves on blur or Enter, only
+ * when the value actually changed; Escape puts it back, and so does a
+ * failed save. Remounts (via key) whenever the stored value changes, so
+ * it always shows what's saved. */
+function EditableCell({
+  value,
+  label,
+  numeric = false,
+  onSave,
+}: {
+  value: string;
+  label: string;
+  numeric?: boolean;
+  onSave: (next: string) => Promise<boolean>;
+}) {
+  return (
+    <input
+      key={value}
+      type="text"
+      inputMode={numeric ? "decimal" : undefined}
+      defaultValue={value}
+      aria-label={label}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+        if (e.key === "Escape") {
+          e.currentTarget.value = value;
+          e.currentTarget.blur();
+        }
+      }}
+      onBlur={async (e) => {
+        const input = e.currentTarget;
+        const next = input.value.trim();
+        if (next === value) return;
+        if (!(await onSave(next))) input.value = value;
+      }}
+      className={`block w-full bg-transparent px-4 py-2.5 outline-none focus:bg-white focus:text-zinc-900 ${
+        numeric ? "text-right tabular-nums" : ""
+      }`}
+    />
+  );
+}
+
+// The <td> around an EditableCell — no padding, so the input itself
+// (carrying the same px-4 py-2.5) fills the cell edge to edge.
+const EDITABLE_TD = "border-r border-zinc-200 p-0";
 
 const MIN_CATEGORIES_WIDTH = 200;
 const DEFAULT_CATEGORIES_WIDTH = 280;
@@ -78,13 +141,17 @@ export function CostEstimateView({
    * now instead of local state. */
   materialBreakdownOpen: boolean;
   materialBreakdownHighlightTaskId: number | null;
-  onOpenMaterialBreakdown: () => void;
+  onOpenMaterialBreakdown: (taskId?: number) => void;
   onCloseMaterialBreakdown: () => void;
 }) {
   // Project-wide, not per-task — see the two modal components' own doc
   // comments for why a column-header trigger replaced an earlier
   // per-task-row version of this.
   const [laborBreakdownOpen, setLaborBreakdownOpen] = useState(false);
+  // A Weight cell's own click-through — how that weight was computed.
+  const [weightBreakdown, setWeightBreakdown] = useState<WeightBreakdownTarget | null>(
+    null
+  );
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<number>>(
     new Set()
   );
@@ -148,6 +215,30 @@ export function CostEstimateView({
   }
 
   const { categories, summary } = estimate;
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Estimated Quantity/Unit — a task's, or a task-less category's own
+  // (a category with tasks has none; its tasks each carry theirs).
+  async function saveEstimatedQuantity(
+    target: { kind: "task" | "category"; id: number },
+    fields: { estimatedQuantity: number | null; unit: string | null }
+  ): Promise<boolean> {
+    if (fields.estimatedQuantity === null) {
+      setSaveError("Estimated quantity must be 0 or more.");
+      return false;
+    }
+    setSaveError(null);
+    const input = { estimatedQuantity: fields.estimatedQuantity, unit: fields.unit };
+    const result =
+      target.kind === "task"
+        ? await updateTaskEstimatedQuantity(target.id, projectId, input)
+        : await updateCategoryEstimatedQuantity(target.id, projectId, input);
+    if (result.error) {
+      setSaveError(result.error);
+      return false;
+    }
+    return true;
+  }
 
   return (
     // No border/rounded chrome of its own — this renders as a direct
@@ -170,6 +261,11 @@ export function CostEstimateView({
         </div>
       ) : (
         <div className="overflow-x-auto">
+          {saveError && (
+            <p role="alert" className="px-4 py-2 text-sm text-red-600">
+              {saveError}
+            </p>
+          )}
           <table className="w-full table-fixed text-left text-sm">
               <thead className="bg-white text-xs font-medium text-zinc-500">
                 <tr>
@@ -206,7 +302,7 @@ export function CostEstimateView({
                   <th className="w-28 border-r border-zinc-200 text-right">
                     <button
                       type="button"
-                      onClick={onOpenMaterialBreakdown}
+                      onClick={() => onOpenMaterialBreakdown()}
                       title="View the project's full material breakdown"
                       className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white"
                     >
@@ -244,32 +340,29 @@ export function CostEstimateView({
                     (t) => !t.isMilestone || t.totalEstimateCost > 0
                   );
                   const isOpen = !collapsedCategoryIds.has(category.id);
-                  // Rolled up from every task in the category, the same
-                  // way the Material Breakdown modal's own categoryAmount
-                  // does it (see material-breakdown-modal-content.tsx) —
-                  // a category has no direct equipment/other cost of its
-                  // own, only material (categoryMaterialEstimate) and, if
-                  // it has no tasks yet, labor (categoryLaborEstimate —
-                  // see 0047_category_labor_estimate.sql's own comment),
-                  // so those are the only columns with a "plus the
-                  // category's own line" on top of the sum of its tasks.
+                  // Each column is the category's own direct line (its
+                  // labor/material/equipment/other — see 0047, 0042 and
+                  // 0056_category_equipment_other.sql) plus every one of
+                  // its tasks', the same way the Material Breakdown
+                  // modal's own categoryAmount does it (see
+                  // material-breakdown-modal-content.tsx).
                   const categoryLaborTotal =
                     category.categoryLaborEstimate +
                     category.tasks.reduce((sum, t) => sum + t.laborEstimate, 0);
                   const categoryMaterialTotal =
                     category.categoryMaterialEstimate +
                     category.tasks.reduce((sum, t) => sum + t.materialEstimate, 0);
-                  const categoryEquipmentTotal = category.tasks.reduce(
-                    (sum, t) => sum + t.equipmentEstimate,
-                    0
-                  );
-                  const categoryOtherTotal = category.tasks.reduce(
-                    (sum, t) => sum + t.otherCostEstimate,
-                    0
-                  );
+                  const categoryEquipmentTotal =
+                    category.categoryEquipmentEstimate +
+                    category.tasks.reduce((sum, t) => sum + t.equipmentEstimate, 0);
+                  const categoryOtherTotal =
+                    category.categoryOtherEstimate +
+                    category.tasks.reduce((sum, t) => sum + t.otherCostEstimate, 0);
                   const categoryTotalCost =
                     category.categoryMaterialEstimate +
                     category.categoryLaborEstimate +
+                    category.categoryEquipmentEstimate +
+                    category.categoryOtherEstimate +
                     category.tasks.reduce((sum, t) => sum + t.totalEstimateCost, 0);
                   return (
                     <Fragment key={category.id}>
@@ -288,11 +381,50 @@ export function CostEstimateView({
                             {category.name}
                           </button>
                         </td>
-                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                          —
+                        <td
+                          className={
+                            category.tasks.length === 0
+                              ? EDITABLE_TD
+                              : "border-r border-zinc-200 px-4 py-2.5 text-right"
+                          }
+                        >
+                          {category.tasks.length === 0 ? (
+                            <EditableCell
+                              value={String(category.estimatedQuantity)}
+                              label={`${category.name} estimated quantity`}
+                              numeric
+                              onSave={(next) =>
+                                saveEstimatedQuantity(
+                                  { kind: "category", id: category.id },
+                                  { estimatedQuantity: parseQuantity(next), unit: category.unit }
+                                )
+                              }
+                            />
+                          ) : (
+                            "—"
+                          )}
                         </td>
-                        <td className="border-r border-zinc-200 px-4 py-2.5">
-                          —
+                        <td
+                          className={
+                            category.tasks.length === 0
+                              ? EDITABLE_TD
+                              : "border-r border-zinc-200 px-4 py-2.5"
+                          }
+                        >
+                          {category.tasks.length === 0 ? (
+                            <EditableCell
+                              value={category.unit ?? ""}
+                              label={`${category.name} unit`}
+                              onSave={(next) =>
+                                saveEstimatedQuantity(
+                                  { kind: "category", id: category.id },
+                                  { estimatedQuantity: category.estimatedQuantity, unit: next }
+                                )
+                              }
+                            />
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                           {formatCurrency(categoryLaborTotal)}
@@ -310,7 +442,15 @@ export function CostEstimateView({
                           {formatCurrency(categoryTotalCost)}
                         </td>
                         <td className="px-4 py-2.5 text-right">
-                          {formatWeight(category.weight)}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setWeightBreakdown({ kind: "category", id: category.id })
+                            }
+                            className="cursor-pointer underline-offset-2 transition hover:underline"
+                          >
+                            {formatWeight(category.weight)}
+                          </button>
                         </td>
                       </tr>
 
@@ -324,11 +464,30 @@ export function CostEstimateView({
                               <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8">
                                 {task.name}
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                                {task.estimatedQuantity}
+                              <td className={EDITABLE_TD}>
+                                <EditableCell
+                                  value={String(task.estimatedQuantity)}
+                                  label={`${task.name} estimated quantity`}
+                                  numeric
+                                  onSave={(next) =>
+                                    saveEstimatedQuantity(
+                                      { kind: "task", id: task.id },
+                                      { estimatedQuantity: parseQuantity(next), unit: task.unit }
+                                    )
+                                  }
+                                />
                               </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5">
-                                {task.unit ?? "—"}
+                              <td className={EDITABLE_TD}>
+                                <EditableCell
+                                  value={task.unit ?? ""}
+                                  label={`${task.name} unit`}
+                                  onSave={(next) =>
+                                    saveEstimatedQuantity(
+                                      { kind: "task", id: task.id },
+                                      { estimatedQuantity: task.estimatedQuantity, unit: next }
+                                    )
+                                  }
+                                />
                               </td>
                               <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
                                 {formatCurrency(task.laborEstimate)}
@@ -367,7 +526,15 @@ export function CostEstimateView({
                                 {formatCurrency(task.totalEstimateCost)}
                               </td>
                               <td className="px-4 py-2.5 text-right">
-                                {formatWeight(task.weight)}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setWeightBreakdown({ kind: "task", id: task.id })
+                                  }
+                                  className="cursor-pointer underline-offset-2 transition hover:underline"
+                                >
+                                  {formatWeight(task.weight)}
+                                </button>
                               </td>
                             </tr>
                             {expanded && hasOtherCosts && (
@@ -458,6 +625,13 @@ export function CostEstimateView({
           onClose={() => setLaborBreakdownOpen(false)}
         />
       </Modal>
+
+      <WeightBreakdownModal
+        projectId={projectId}
+        categories={categories}
+        target={weightBreakdown}
+        onTargetChange={setWeightBreakdown}
+      />
     </div>
   );
 }

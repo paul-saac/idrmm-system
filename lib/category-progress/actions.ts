@@ -4,6 +4,7 @@ import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
+import { COST_COMPONENTS, type CostAmounts } from "@/lib/task-progress/calculate";
 
 export type CategoryProgressActionState = {
   error?: string;
@@ -36,20 +37,17 @@ function todayIso() {
 
 /**
  * Same idea as recordTaskProgress, one level up — a task-less
- * category's own Progress Tracking Override for *today* (see
+ * category's own Daily Progress Update for *today* (see
  * 0048_category_progress_tracking.sql's own doc comment for why this
- * exists at all). Identical shape/behavior throughout — see
- * recordTaskProgress's own doc comment, unchanged here, including why
- * this no longer touches project_materials/category_progress_material_
- * usage, and how percentCompleteOverride (0049_progress_percent_
- * override.sql) gets written.
+ * exists at all). Identical shape/behavior throughout, minus materials —
+ * a task-less category has no planned material list to log against.
  */
 export async function recordCategoryProgress(
   categoryId: number,
   projectId: number,
   input: {
-    laborHeadcount: number;
-    percentCompleteOverride: number | null;
+    quantityCompletedToday: number;
+    costs: CostAmounts;
   }
 ): Promise<CategoryProgressActionState> {
   return safely(async () => {
@@ -57,16 +55,19 @@ export async function recordCategoryProgress(
     if (!profile) {
       return { error: "You are not authorized to record progress." };
     }
-    if (!Number.isFinite(input.laborHeadcount) || input.laborHeadcount < 0) {
-      return { error: "Labor headcount can't be negative." };
+    if (
+      !Number.isFinite(input.quantityCompletedToday) ||
+      input.quantityCompletedToday < 0
+    ) {
+      return { error: "Quantity completed can't be negative." };
     }
     if (
-      input.percentCompleteOverride !== null &&
-      (!Number.isFinite(input.percentCompleteOverride) ||
-        input.percentCompleteOverride < 0 ||
-        input.percentCompleteOverride > 100)
+      COST_COMPONENTS.some(
+        (component) =>
+          !Number.isFinite(input.costs[component]) || input.costs[component] < 0
+      )
     ) {
-      return { error: "Percent complete must be a number between 0 and 100." };
+      return { error: "Costs must be 0 or more." };
     }
 
     const supabase = await createClient();
@@ -78,8 +79,11 @@ export async function recordCategoryProgress(
         {
           category_id: categoryId,
           entry_date: entryDate,
-          labor_headcount: Math.round(input.laborHeadcount),
-          percent_complete_override: input.percentCompleteOverride,
+          quantity_completed: input.quantityCompletedToday,
+          labor_cost: input.costs.labor,
+          material_cost: input.costs.material,
+          equipment_cost: input.costs.equipment,
+          other_cost: input.costs.other,
           recorded_by: profile.id,
         },
         { onConflict: "category_id,entry_date" }

@@ -11,6 +11,8 @@ export type Portal = {
    * managing the equipment inventory) are hidden when false. Purely a UI
    * affordance — the server actions and RLS enforce the real rules. */
   isAdmin: boolean;
+  /** Who's signed in — the profile menu in every page header. */
+  user: { name: string; email: string | null; roleLabel: string };
 };
 
 const PortalContext = createContext<Portal | null>(null);

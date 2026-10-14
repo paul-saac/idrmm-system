@@ -130,3 +130,53 @@ export async function updatePassword(
 
   redirect(roleHome(profile?.role as UserRole | undefined));
 }
+
+/**
+ * Settings' Change Password, for whoever's signed in — the current
+ * password is checked first (by signing in with it again), so an
+ * unattended session can't be used to take the account over.
+ */
+export async function changePassword(
+  _prevState: AuthActionState,
+  formData: FormData
+): Promise<AuthActionState> {
+  const currentPassword = String(formData.get("currentPassword") ?? "");
+  const password = String(formData.get("password") ?? "");
+  const confirmPassword = String(formData.get("confirmPassword") ?? "");
+
+  if (!currentPassword) {
+    return { error: "Enter your current password." };
+  }
+  if (password.length < 8) {
+    return { error: "New password must be at least 8 characters." };
+  }
+  if (password !== confirmPassword) {
+    return { error: "New passwords do not match." };
+  }
+  if (password === currentPassword) {
+    return { error: "Choose a password different from your current one." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user?.email) {
+    return { error: "You've been signed out. Please log in again." };
+  }
+
+  const { error: signInError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: currentPassword,
+  });
+  if (signInError) {
+    return { error: "Your current password is incorrect." };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) {
+    return { error: "Could not change your password. Please try again." };
+  }
+
+  return { success: "Password changed." };
+}

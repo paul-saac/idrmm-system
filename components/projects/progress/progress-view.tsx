@@ -273,7 +273,7 @@ export function ProgressView({
             <div className="mt-4 flex flex-col gap-6">
               {progress.categories.map((category) => (
                 <div key={category.id}>
-                  <h4 className="text-sm font-semibold text-zinc-800">
+                  <h4 className="text-sm font-semibold text-zinc-900">
                     {category.name}
                   </h4>
                   <div className="mt-3 flex flex-col gap-3">

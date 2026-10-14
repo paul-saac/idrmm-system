@@ -1,4 +1,4 @@
-import { LogoutButton } from "@/components/auth/logout-button";
+import { HeaderActions } from "@/components/auth/header-actions";
 
 export function AdminPageHeader({
   title,
@@ -15,7 +15,7 @@ export function AdminPageHeader({
           <p className="mt-0.5 text-sm text-zinc-500">{description}</p>
         )}
       </div>
-      <LogoutButton />
+      <HeaderActions />
     </header>
   );
 }

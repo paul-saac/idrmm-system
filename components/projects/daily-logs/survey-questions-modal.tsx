@@ -181,7 +181,7 @@ function QuestionRow({
         value={draft.questionText}
         onChange={(e) => onChange({ questionText: e.target.value })}
         placeholder="Question text"
-        className="min-w-0 flex-1 border-0 bg-transparent text-sm text-zinc-800 outline-none placeholder:text-zinc-400"
+        className="min-w-0 flex-1 border-0 bg-transparent text-sm text-zinc-900 outline-none placeholder:text-zinc-400"
       />
 
       <label

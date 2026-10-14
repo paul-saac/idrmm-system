@@ -14,7 +14,7 @@ export function ResetPasswordForm() {
   return (
     <form action={formAction} className="flex flex-col gap-5" noValidate>
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="password" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="password" className="text-sm font-medium text-zinc-900">
           New password
         </label>
         <input
@@ -32,7 +32,7 @@ export function ResetPasswordForm() {
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="confirmPassword"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Confirm new password
         </label>

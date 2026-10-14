@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { Trash2, LayoutGrid, CircleDollarSign, CalendarDays, PiggyBank, ChevronDown } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
-import { LogoutButton } from "@/components/auth/logout-button";
+import { HeaderActions } from "@/components/auth/header-actions";
 import { usePortal } from "@/components/portal/portal-context";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
@@ -80,10 +80,12 @@ import type { DelayRiskAssessment } from "@/lib/forecasting/data";
 import type { DailyLogSummary, SurveyQuestion } from "@/lib/daily-logs/data";
 import type {
   Worker,
+  WorkerAssignment,
   TaskWorkerAssignments,
   CategoryWorkerAssignments,
 } from "@/lib/workers/data";
 import type { TaskProgressToday } from "@/lib/task-progress/data";
+import type { ProjectEvent } from "@/lib/project-events/types";
 
 const MAIN_TABS = [
   { value: "overview", label: "Overview" },
@@ -208,9 +210,10 @@ function StatCard({
 // Rendered inside a centered Modal (see the delete-confirm Modal below),
 // never a window.confirm() — an admin deleting an entire project is a
 // real, hard-to-reverse action worth a proper dialog, not a bare browser
-// alert. Opened only from EditProjectForm's own Delete button, which
-// closes the Edit Project modal in the same click that opens this one
-// (see onRequestDelete's own wiring below) so the two never stack.
+// alert. Opened only from the Edit Project panel's own Delete button,
+// which closes the Edit Project modal in the same click that opens this
+// one (see EditProjectForm's onRequestDelete below) so the two never
+// stack.
 function DeleteProjectModalContent({
   projectId,
   projectName,
@@ -288,10 +291,12 @@ export function ProjectDetailView({
   ganttCanUndo,
   ganttCanRedo,
   workers,
+  workerAssignments,
   taskWorkerAssignments,
   categoryWorkerAssignments,
   taskProgressToday,
   categoryProgressToday,
+  events,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
@@ -332,10 +337,12 @@ export function ProjectDetailView({
    * fetched alongside costEstimate/progress in page.tsx. */
   ganttCanUndo: boolean;
   ganttCanRedo: boolean;
-  /** The project's own Members roster + each task's current
+  /** The company Team (the Team page) + each task's current
    * assignments from it — see lib/workers/data.ts, fetched alongside
    * costEstimate/progress in page.tsx. */
   workers: Worker[];
+  /** Every Team member's open assignments — see lib/workers/data.ts. */
+  workerAssignments: WorkerAssignment[];
   taskWorkerAssignments: TaskWorkerAssignments;
   /** Same idea, one level up — see CategoryWorkerAssignments's own doc
    * comment. */
@@ -349,6 +356,8 @@ export function ProjectDetailView({
    * Tracking Override — see lib/category-progress/data.ts, fetched
    * alongside costEstimate/progress in page.tsx. */
   categoryProgressToday: Record<number, TaskProgressToday>;
+  /** The project's calendar events — see lib/project-events/data.ts. */
+  events: ProjectEvent[];
 }) {
   // Reading the initial tab/sub-tab from the URL lets a link *into* this
   // page (e.g. a Daily Log detail page's back button) land on the exact
@@ -402,7 +411,7 @@ export function ProjectDetailView({
   const [editOpen, setEditOpen] = useState(false);
   // The Delete Project confirmation modal — a separate piece of state
   // from editOpen (not a second "screen" inside the same Modal) so the
-  // two can never both be true at once and stack; onRequestDelete below
+  // two can never both be true at once and stack; the ⋮ menu's Delete below
   // always flips both in the same click.
   const [deleteProjectConfirmOpen, setDeleteProjectConfirmOpen] =
     useState(false);
@@ -497,7 +506,7 @@ export function ProjectDetailView({
           <span className="text-zinc-300">/</span>
           <span className="font-medium text-zinc-900">{breadcrumbLabel}</span>
         </nav>
-        <LogoutButton />
+        <HeaderActions />
       </header>
 
       <main>
@@ -790,7 +799,7 @@ export function ProjectDetailView({
                     }}
                     materialBreakdownOpen={materialBreakdownOpen}
                     materialBreakdownHighlightTaskId={materialBreakdownHighlightTaskId}
-                    onOpenMaterialBreakdown={() => openMaterialBreakdown()}
+                    onOpenMaterialBreakdown={openMaterialBreakdown}
                     onCloseMaterialBreakdown={() => setMaterialBreakdownOpen(false)}
                   />
                 </div>
@@ -802,13 +811,16 @@ export function ProjectDetailView({
               categories={costEstimate.categories}
               projectStartDate={project.startDate}
               workingDays={project.workingDays}
+              holidays={project.holidays}
               canUndo={ganttCanUndo}
               canRedo={ganttCanRedo}
               workers={workers}
+              workerAssignments={workerAssignments}
               taskWorkerAssignments={taskWorkerAssignments}
               categoryWorkerAssignments={categoryWorkerAssignments}
               taskProgressToday={taskProgressToday}
               categoryProgressToday={categoryProgressToday}
+              events={events}
               onOpenMaterialBreakdown={openMaterialBreakdown}
               onImportBom={() => {
                 setImportBomStep("upload");
@@ -846,6 +858,8 @@ export function ProjectDetailView({
               projectManagers={projectManagers}
               foremen={foremen}
               onSuccess={() => setEditOpen(false)}
+              // Closes this panel in the same click that opens the Delete
+              // Project confirmation, so the two never stack.
               onRequestDelete={() => {
                 setEditOpen(false);
                 setDeleteProjectConfirmOpen(true);

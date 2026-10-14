@@ -961,7 +961,7 @@ function MainScreen({
       {isEditing ? (
         <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
           <p className="text-xs font-medium text-zinc-400">Log date</p>
-          <p className="mt-0.5 text-sm font-medium text-zinc-800">
+          <p className="mt-0.5 text-sm font-medium text-zinc-900">
             {formatSelectedDate(selectedDate)}
           </p>
           <p className="mt-1 text-xs text-zinc-400">
@@ -989,7 +989,7 @@ function MainScreen({
                   // grid back from whatever month is being browsed.
                   setViewMonth(today);
                 }}
-                className="cursor-pointer rounded-[3px] border border-zinc-200 px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-900"
+                className="cursor-pointer rounded border border-zinc-200 px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-900"
               >
                 Today
               </button>
@@ -997,7 +997,7 @@ function MainScreen({
                 <button
                   type="button"
                   onClick={openCalendar}
-                  className="flex cursor-pointer items-center gap-1 rounded-[3px] bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-800"
+                  className="flex cursor-pointer items-center gap-1 rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-900"
                 >
                   <Calendar className="size-3.5" />
                   Jump to date
@@ -1113,7 +1113,7 @@ function MainScreen({
               onClick={type.available ? () => onOpenLogType(type.key) : undefined}
               className={`flex items-center justify-between rounded border border-zinc-200 px-3 py-2.5 text-left text-sm transition ${
                 type.available
-                  ? "cursor-pointer text-zinc-800 hover:border-zinc-300 hover:bg-zinc-50"
+                  ? "cursor-pointer text-zinc-900 hover:border-zinc-300 hover:bg-zinc-50"
                   : "cursor-not-allowed text-zinc-400"
               }`}
             >
@@ -1133,7 +1133,7 @@ function MainScreen({
         <button
           type="button"
           onClick={onOpenSurvey}
-          className="flex cursor-pointer items-center justify-between rounded border border-zinc-200 px-3 py-2.5 text-left text-sm text-zinc-800 transition hover:border-zinc-300 hover:bg-zinc-50"
+          className="flex cursor-pointer items-center justify-between rounded border border-zinc-200 px-3 py-2.5 text-left text-sm text-zinc-900 transition hover:border-zinc-300 hover:bg-zinc-50"
         >
           <span className="flex items-center gap-2.5">
             <ClipboardList className="size-4" />
@@ -1256,7 +1256,7 @@ function SurveyQuestionField({
   return (
     <div className="flex flex-col gap-2 rounded border border-zinc-200 px-3 py-2.5">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-zinc-800">
+        <p className="text-sm text-zinc-900">
           {question}
           {required && <span className="ml-0.5 text-red-500">*</span>}
         </p>
@@ -1291,7 +1291,7 @@ function SurveyQuestionField({
           value={answer.notes}
           onChange={(e) => onChange({ notes: e.target.value })}
           placeholder="Add details..."
-          className="w-full rounded border border-zinc-200 px-2.5 py-1.5 text-sm text-zinc-800 outline-none focus:border-zinc-400"
+          className="w-full rounded border border-zinc-200 px-2.5 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-400"
         />
       )}
     </div>
@@ -1318,7 +1318,7 @@ function ExistingEntry({
       }`}
     >
       <div className={removed ? "line-through opacity-60" : undefined}>
-        <p className="text-sm font-medium text-zinc-800">{label}</p>
+        <p className="text-sm font-medium text-zinc-900">{label}</p>
         <p className="text-xs text-zinc-500">{detail}</p>
       </div>
       <button
@@ -1326,7 +1326,7 @@ function ExistingEntry({
         onClick={onToggle}
         className={`cursor-pointer rounded px-2 py-1 text-xs font-medium transition ${
           removed
-            ? "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+            ? "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
             : "text-red-500 hover:bg-red-50"
         }`}
       >
@@ -1578,7 +1578,7 @@ function DraftRow({
   return (
     <div className="flex items-center justify-between rounded-md bg-zinc-50 px-3 py-2.5">
       <div>
-        <p className="text-sm font-medium text-zinc-800">{title}</p>
+        <p className="text-sm font-medium text-zinc-900">{title}</p>
         <p className="text-xs text-zinc-500">{subtitle}</p>
       </div>
       <div className="flex items-center gap-1">
@@ -1723,7 +1723,7 @@ function WorkLogFormScreen({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-category`} className="text-sm font-medium text-zinc-800">
+        <label htmlFor={`${formId}-category`} className="text-sm font-medium text-zinc-900">
           Phase Category
         </label>
         <select
@@ -1747,7 +1747,7 @@ function WorkLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-task`} className="text-sm font-medium text-zinc-800">
+        <label htmlFor={`${formId}-task`} className="text-sm font-medium text-zinc-900">
           Work Item
         </label>
         <select
@@ -1772,7 +1772,7 @@ function WorkLogFormScreen({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-quantity`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Quantity Completed
           </label>
@@ -1796,7 +1796,7 @@ function WorkLogFormScreen({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-800">Unit</label>
+          <label className="text-sm font-medium text-zinc-900">Unit</label>
           <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">
             {unit || "—"}
           </div>
@@ -1804,7 +1804,7 @@ function WorkLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-activity`} className="text-sm font-medium text-zinc-800">
+        <label htmlFor={`${formId}-activity`} className="text-sm font-medium text-zinc-900">
           Activity
         </label>
         <textarea
@@ -1818,7 +1818,7 @@ function WorkLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-attachment`} className="text-sm font-medium text-zinc-800">
+        <label htmlFor={`${formId}-attachment`} className="text-sm font-medium text-zinc-900">
           Attachments
         </label>
         <AttachmentDropzone
@@ -1936,7 +1936,7 @@ function LaborLogFormScreen({
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-4">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${formId}-role`} className="text-sm font-medium text-zinc-800">
+          <label htmlFor={`${formId}-role`} className="text-sm font-medium text-zinc-900">
             Worker Role
           </label>
           <input
@@ -1949,7 +1949,7 @@ function LaborLogFormScreen({
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${formId}-count`} className="text-sm font-medium text-zinc-800">
+          <label htmlFor={`${formId}-count`} className="text-sm font-medium text-zinc-900">
             No. of Worker
           </label>
           <input
@@ -1967,13 +1967,13 @@ function LaborLogFormScreen({
 
       <div className="grid grid-cols-2 gap-4">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${formId}-rate`} className="text-sm font-medium text-zinc-800">
+          <label htmlFor={`${formId}-rate`} className="text-sm font-medium text-zinc-900">
             Daily Rate
           </label>
           <CurrencyInput id={`${formId}-rate`} value={dailyRate} onChange={setDailyRate} />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${formId}-ot`} className="text-sm font-medium text-zinc-800">
+          <label htmlFor={`${formId}-ot`} className="text-sm font-medium text-zinc-900">
             OT Hours
           </label>
           <input
@@ -1991,7 +1991,7 @@ function LaborLogFormScreen({
 
       <div className="grid grid-cols-2 gap-4">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${formId}-overtime`} className="text-sm font-medium text-zinc-800">
+          <label htmlFor={`${formId}-overtime`} className="text-sm font-medium text-zinc-900">
             Renders Overtime
           </label>
           <input
@@ -2006,7 +2006,7 @@ function LaborLogFormScreen({
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${formId}-halfday`} className="text-sm font-medium text-zinc-800">
+          <label htmlFor={`${formId}-halfday`} className="text-sm font-medium text-zinc-900">
             Renders Halfday
           </label>
           <input
@@ -2023,7 +2023,7 @@ function LaborLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-zinc-800">Attachments</label>
+        <label className="text-sm font-medium text-zinc-900">Attachments</label>
         <AttachmentDropzone
           id={`${formId}-attachment`}
           files={attachments}
@@ -2032,7 +2032,7 @@ function LaborLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-remarks`} className="text-sm font-medium text-zinc-800">
+        <label htmlFor={`${formId}-remarks`} className="text-sm font-medium text-zinc-900">
           Remarks
         </label>
         <textarea
@@ -2137,7 +2137,7 @@ function ExpenseLogFormScreen({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-category`} className="text-sm font-medium text-zinc-800">
+        <label htmlFor={`${formId}-category`} className="text-sm font-medium text-zinc-900">
           Expense Category
         </label>
         <input
@@ -2152,13 +2152,13 @@ function ExpenseLogFormScreen({
 
       <div className="grid grid-cols-2 gap-4">
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${formId}-amount`} className="text-sm font-medium text-zinc-800">
+          <label htmlFor={`${formId}-amount`} className="text-sm font-medium text-zinc-900">
             Amount
           </label>
           <CurrencyInput id={`${formId}-amount`} value={amount} onChange={setAmount} />
         </div>
         <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${formId}-fees`} className="text-sm font-medium text-zinc-800">
+          <label htmlFor={`${formId}-fees`} className="text-sm font-medium text-zinc-900">
             Additional Fees
           </label>
           <CurrencyInput
@@ -2170,7 +2170,7 @@ function ExpenseLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-description`} className="text-sm font-medium text-zinc-800">
+        <label htmlFor={`${formId}-description`} className="text-sm font-medium text-zinc-900">
           Description
         </label>
         <textarea
@@ -2184,7 +2184,7 @@ function ExpenseLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-zinc-800">Attachments</label>
+        <label className="text-sm font-medium text-zinc-900">Attachments</label>
         <AttachmentDropzone
           id={`${formId}-attachment`}
           files={attachments}
@@ -2193,7 +2193,7 @@ function ExpenseLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-remarks`} className="text-sm font-medium text-zinc-800">
+        <label htmlFor={`${formId}-remarks`} className="text-sm font-medium text-zinc-900">
           Remarks
         </label>
         <textarea
@@ -2408,7 +2408,7 @@ function MaterialUsageFormScreen({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-zinc-800">
+        <label className="text-sm font-medium text-zinc-900">
           Select Material
         </label>
         <button
@@ -2428,7 +2428,7 @@ function MaterialUsageFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-zinc-800">
+        <label className="text-sm font-medium text-zinc-900">
           Specification
         </label>
         <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500">
@@ -2439,7 +2439,7 @@ function MaterialUsageFormScreen({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-status`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Usage Status
         </label>
@@ -2474,7 +2474,7 @@ function MaterialUsageFormScreen({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-activity`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Activity
         </label>
@@ -2491,7 +2491,7 @@ function MaterialUsageFormScreen({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-remarks`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Remarks
         </label>
@@ -2891,7 +2891,7 @@ function ProcurementLogFormScreen({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-type`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Procurement Type
           </label>
@@ -2908,7 +2908,7 @@ function ProcurementLogFormScreen({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-supplier`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Supplier / Store Name
           </label>
@@ -2925,7 +2925,7 @@ function ProcurementLogFormScreen({
 
       <div className="grid grid-cols-2 gap-4">
         <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-800">
+          <label className="text-sm font-medium text-zinc-900">
             Material Request Number{" "}
             <span className="font-normal text-zinc-400">(optional)</span>
           </label>
@@ -2942,7 +2942,7 @@ function ProcurementLogFormScreen({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-fees`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Additional Fees
           </label>
@@ -3052,7 +3052,7 @@ function ProcurementLogFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-zinc-800">Attachments</label>
+        <label className="text-sm font-medium text-zinc-900">Attachments</label>
         <AttachmentDropzone
           id={`${formId}-attachment`}
           files={attachments}
@@ -3063,7 +3063,7 @@ function ProcurementLogFormScreen({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-remarks`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Remarks
         </label>
@@ -3412,7 +3412,7 @@ function EquipmentAcquisitionFormScreen({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-name`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Equipment Name
         </label>
@@ -3430,7 +3430,7 @@ function EquipmentAcquisitionFormScreen({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-quantity`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Quantity
           </label>
@@ -3448,7 +3448,7 @@ function EquipmentAcquisitionFormScreen({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-spec`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Specification
           </label>
@@ -3467,7 +3467,7 @@ function EquipmentAcquisitionFormScreen({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-type`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Type
           </label>
@@ -3484,7 +3484,7 @@ function EquipmentAcquisitionFormScreen({
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-amount`}
-            className="text-sm font-medium text-zinc-800"
+            className="text-sm font-medium text-zinc-900"
           >
             Amount
           </label>
@@ -3493,7 +3493,7 @@ function EquipmentAcquisitionFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-zinc-800">
+        <label className="text-sm font-medium text-zinc-900">
           Equipment Request Number{" "}
           <span className="font-normal text-zinc-400">(optional)</span>
         </label>
@@ -3509,7 +3509,7 @@ function EquipmentAcquisitionFormScreen({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label className="text-sm font-medium text-zinc-800">Attachments</label>
+        <label className="text-sm font-medium text-zinc-900">Attachments</label>
         <AttachmentDropzone
           id={`${formId}-attachment`}
           files={attachments}
@@ -3520,7 +3520,7 @@ function EquipmentAcquisitionFormScreen({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor={`${formId}-remarks`}
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Remarks
         </label>

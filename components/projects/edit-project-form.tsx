@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState, useEffect, useId } from "react";
-import { ChevronDown, Trash2 } from "lucide-react";
+import { useActionState, useEffect, useId, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { updateProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
+import { projectElsewhere } from "@/lib/accounts/availability";
 
 const initialState: ProjectActionState = {};
 
@@ -42,10 +43,8 @@ export function EditProjectForm({
   projectManagers: AccountRow[];
   foremen: AccountRow[];
   onSuccess?: () => void;
-  /** Closes this modal and opens the (centered, non-stacking) Delete
-   * Project confirmation modal instead — see project-detail-view.tsx's
-   * own wiring. Never a window.confirm() here. */
-  onRequestDelete: () => void;
+  /** Opens the Delete Project confirmation (see project-detail-view.tsx). */
+  onRequestDelete?: () => void;
 }) {
   const boundAction = updateProject.bind(null, project.id);
   const [state, formAction, pending] = useActionState(
@@ -53,6 +52,9 @@ export function EditProjectForm({
     initialState
   );
   const formId = useId();
+  // Holidays aren't set here — they're Holiday events on the Gantt
+  // chart's Calendar view (0055_project_events.sql).
+  const [workingDays, setWorkingDays] = useState<number[]>(project.workingDays);
 
   useEffect(() => {
     if (state.success) {
@@ -74,7 +76,7 @@ export function EditProjectForm({
         <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor="edit-projectName"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Project name
         </label>
@@ -91,7 +93,7 @@ export function EditProjectForm({
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor="edit-location"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Location
         </label>
@@ -107,7 +109,7 @@ export function EditProjectForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-startDate"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Start date
         </label>
@@ -125,7 +127,7 @@ export function EditProjectForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-targetEndDate"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Target end date
         </label>
@@ -143,7 +145,7 @@ export function EditProjectForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-actualEndDate"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Actual end date
         </label>
@@ -161,7 +163,7 @@ export function EditProjectForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-allocatedBudget"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Allocated budget
         </label>
@@ -180,7 +182,7 @@ export function EditProjectForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-projectManagerId"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Project Manager
         </label>
@@ -192,11 +194,18 @@ export function EditProjectForm({
             defaultValue={project.projectManagerId}
             className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
-            {projectManagers.map((pm) => (
-              <option key={pm.id} value={pm.id}>
-                {personLabel(pm)}
-              </option>
-            ))}
+            {/* Someone already on another unfinished project can't be
+                picked (see projectElsewhere) — this project's own PM
+                always can. */}
+            {projectManagers.map((pm) => {
+              const elsewhere =
+                pm.id === project.projectManagerId ? null : projectElsewhere(pm, project.id);
+              return (
+                <option key={pm.id} value={pm.id} disabled={elsewhere !== null}>
+                  {`${personLabel(pm)}${elsewhere ? ` — on ${elsewhere.name}` : ""}`}
+                </option>
+              );
+            })}
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
         </div>
@@ -205,7 +214,7 @@ export function EditProjectForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-foremanId"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Foreman
         </label>
@@ -217,37 +226,49 @@ export function EditProjectForm({
             defaultValue={project.foremanId}
             className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
-            {foremen.map((f) => (
-              <option key={f.id} value={f.id}>
-                {personLabel(f)}
-              </option>
-            ))}
+            {foremen.map((f) => {
+              const elsewhere = f.id === project.foremanId ? null : projectElsewhere(f, project.id);
+              return (
+                <option key={f.id} value={f.id} disabled={elsewhere !== null}>
+                  {`${personLabel(f)}${elsewhere ? ` — on ${elsewhere.name}` : ""}`}
+                </option>
+              );
+            })}
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
         </div>
       </div>
 
       <div className="flex flex-col gap-1.5 sm:col-span-2">
-        <span className="text-sm font-medium text-zinc-800">Working days</span>
+        <span className="text-sm font-medium text-zinc-900">Working days</span>
         <div className="flex flex-wrap gap-3">
           {WEEKDAY_OPTIONS.map((day) => (
             <label
               key={day.value}
               className="flex cursor-pointer items-center gap-1.5 text-sm text-zinc-700"
             >
-              <input
-                type="checkbox"
-                name="workingDays"
-                value={day.value}
-                defaultChecked={project.workingDays.includes(day.value)}
-                // accent-color, not the text-* + forms-plugin trick this
-                // app's other checkboxes assume — @tailwindcss/forms isn't
-                // actually installed here, so text-* alone left every
-                // checkbox in the app rendering with the browser's own
-                // native (blue) checked color, confirmed directly. This
-                // is the one that actually controls it, cross-browser.
-                className="size-4 cursor-pointer rounded border-zinc-300 accent-zinc-900 focus:ring-2 focus:ring-zinc-200"
-              />
+              {/* Drawn by hand (appearance-none + an inner square, no
+                  check mark): checked shows a filled square inset from
+                  the box's border. A native checkbox's own mark can't be
+                  changed, only recolored via accent-color —
+                  @tailwindcss/forms isn't installed here. */}
+              <span className="relative flex size-4 shrink-0 items-center justify-center">
+                <input
+                  type="checkbox"
+                  name="workingDays"
+                  value={day.value}
+                  checked={workingDays.includes(day.value)}
+                  onChange={() =>
+                    setWorkingDays((prev) =>
+                      prev.includes(day.value)
+                        ? prev.filter((value) => value !== day.value)
+                        : [...prev, day.value]
+                    )
+                  }
+                  className="peer size-4 cursor-pointer appearance-none rounded border border-zinc-300 bg-white transition checked:border-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:outline-none"
+                />
+                <span className="pointer-events-none absolute size-2 rounded-[1px] bg-zinc-900 opacity-0 transition peer-checked:opacity-100" />
+              </span>
               {day.label}
             </label>
           ))}
@@ -261,15 +282,16 @@ export function EditProjectForm({
         </p>
       )}
 
-      <div className="mt-auto flex items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={onRequestDelete}
-          className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-        >
-          <Trash2 className="size-3.5" />
-          Delete
-        </button>
+      <div className="mt-auto flex items-center justify-end gap-3">
+        {onRequestDelete && (
+          <button
+            type="button"
+            onClick={onRequestDelete}
+            className="cursor-pointer rounded border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+          >
+            Delete
+          </button>
+        )}
         <button
           type="submit"
           form={formId}

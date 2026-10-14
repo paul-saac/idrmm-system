@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { listTaskProgressAnchors } from "@/lib/task-progress/data";
 import { listCategoryProgressAnchors } from "@/lib/category-progress/data";
+import { computeWeights } from "@/lib/cost-estimate/weights";
 import {
   computeAutoPercentComplete,
   EMPTY_PROGRESS_ANCHOR,
@@ -38,15 +39,6 @@ export type TaskMaterialAssignment = {
   amountOverride: number | null;
 };
 
-/** Manpower planned for a task ahead of time — same relationship to
- * daily_log_labor_items as TaskMaterialAssignment has to the material
- * tables above. */
-export type TaskLaborAssignment = {
-  id: number;
-  workerRole: string;
-  plannedWorkerCount: number;
-};
-
 export type CostTask = {
   id: number;
   categoryId: number;
@@ -76,6 +68,8 @@ export type CostTask = {
   otherCostEstimate: number;
   otherCostItems: OtherCostItem[];
   totalEstimateCost: number;
+  /** This task's share of the project, in percent — its share of the
+   * total estimated cost. See lib/cost-estimate/weights.ts. */
   weight: number;
   /** The task's baseline schedule — null on any task nobody's dated yet
    * (nothing requires these; see 0027_estimate_task_schedule.sql). Used
@@ -109,12 +103,13 @@ export type CostTask = {
    * own percentComplete, computed in gantt-chart-view.tsx itself. */
   percentComplete: number;
   materialAssignments: TaskMaterialAssignment[];
-  laborAssignments: TaskLaborAssignment[];
 };
 
 export type CostCategory = {
   id: number;
   name: string;
+  /** Same as CostTask's own weight: the sum of its tasks' weights while
+   * it has any, else its own. See lib/cost-estimate/weights.ts. */
   weight: number;
   tasks: CostTask[];
   /** A category's own direct BOM line — for a category with no tasks
@@ -129,12 +124,17 @@ export type CostCategory = {
    * typed directly (no clean quantity/unit cost breakdown). See
    * 0043_amount_overrides.sql's own comment. */
   materialDirectAmountOverride: number | null;
-  /** Stored — this line's own (materialDirectQuantity *
-   * materialUnitCost, or materialDirectAmountOverride if set) only, kept
-   * in sync by updateCategoryMaterialDirect (lib/cost-estimate/
-   * actions.ts). Already folded into this CostEstimate's own
+  /** Stored — this category's own direct line (materialDirectQuantity *
+   * materialUnitCost, or materialDirectAmountOverride if set) plus its
+   * own itemized materialAssignments, kept in sync by
+   * updateCategoryMaterialAssignments (lib/cost-estimate/actions.ts).
+   * Already folded into this CostEstimate's own
    * summary.totalsByColumn.material/totalEstimatedCost below. */
   categoryMaterialEstimate: number;
+  /** A standalone category's own itemized materials — the same lines a
+   * task carries, one level up (Material Breakdown's Add Material on a
+   * main task with no subtasks). See 0058_category_material_lines.sql. */
+  materialAssignments: TaskMaterialAssignment[];
   /** This category's own planned schedule — only meaningful (and only
    * ever shown/editable in the Gantt Chart) while it has no tasks yet;
    * once it does, its start/end is a rollup of theirs instead. See
@@ -149,6 +149,11 @@ export type CostCategory = {
    * above, one level up from CostTask's own laborEstimate. See
    * 0047_category_labor_estimate.sql's own comment. */
   categoryLaborEstimate: number;
+  /** This category's own direct Equipment / Other cost — the same two
+   * components a task has, one level up. See
+   * 0056_category_equipment_other.sql. */
+  categoryEquipmentEstimate: number;
+  categoryOtherEstimate: number;
   /** This category's own tracked quantity/unit — same "only meaningful
    * while it has no tasks yet" rule as categoryLaborEstimate above, one
    * level up from CostTask's own estimatedQuantity/unit. See
@@ -196,11 +201,12 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
 
   const [{ data: categoryRows }, { data: taskRows }, { data: projectRow }] =
     await Promise.all([
+      // "*" rather than a column list, so a DB that hasn't run
+      // 0056_category_equipment_other.sql yet still loads (those two
+      // costs just read as 0).
       supabase
         .from("estimate_categories")
-        .select(
-          "id, category_name, weight, material_direct_quantity, material_direct_unit, material_unit_cost, material_direct_amount, category_material_estimate, planned_start_date, planned_end_date, priority, category_labor_estimate, estimated_quantity, unit"
-        )
+        .select("*")
         .eq("project_id", projectId)
         .order("id", { ascending: true }),
       supabase
@@ -208,9 +214,12 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
         .select("*")
         .eq("project_id", projectId)
         .order("id", { ascending: true }),
+      // "*" rather than naming holidays, so a DB that hasn't run
+      // 0053_project_holidays.sql yet still reads its working days
+      // instead of failing the whole query.
       supabase
         .from("projects")
-        .select("working_days")
+        .select("*")
         .eq("id", projectId)
         .maybeSingle(),
     ]);
@@ -222,15 +231,16 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
   const workingDays: readonly number[] = projectRow?.working_days ?? [
     1, 2, 3, 4, 5, 6,
   ];
+  const holidays: readonly string[] = projectRow?.holidays ?? [];
 
   const taskIds = (taskRows ?? []).map((row) => row.id);
   const categoryIds = (categoryRows ?? []).map((row) => row.id);
   const [
     { data: otherCostRows, error: otherCostError },
     { data: materialAssignmentRows },
-    { data: laborAssignmentRows },
     progressAnchorsByTask,
     progressAnchorsByCategory,
+    { data: categoryMaterialRows },
   ] = await Promise.all([
     taskIds.length > 0
       ? supabase
@@ -248,13 +258,6 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
           .in("task_id", taskIds)
           .order("id", { ascending: true })
       : Promise.resolve({ data: [] as never[] }),
-    taskIds.length > 0
-      ? supabase
-          .from("estimate_task_labor_assignments")
-          .select("id, task_id, worker_role, planned_worker_count")
-          .in("task_id", taskIds)
-          .order("id", { ascending: true })
-      : Promise.resolve({ data: [] as never[] }),
     // Every task's own Progress Tracking Override anchor (see
     // lib/task-progress/data.ts) — what computeAutoPercentComplete
     // below projects each task's live percentComplete forward from.
@@ -262,6 +265,17 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     // Same idea, one level up, for a task-less category's own Progress
     // Tracking Override — see lib/category-progress/data.ts.
     listCategoryProgressAnchors(categoryIds),
+    // A standalone category's own itemized materials (0058) — empty, not
+    // an error, until that migration has run.
+    categoryIds.length > 0
+      ? supabase
+          .from("estimate_category_material_assignments")
+          .select(
+            "id, category_id, material_name, specification, planned_quantity, unit, unit_cost, amount"
+          )
+          .in("category_id", categoryIds)
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
   ]);
 
   if (otherCostError) {
@@ -296,9 +310,16 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     otherCostsByTask.set(row.task_id, existing);
   }
 
-  const materialAssignmentsByTask = new Map<number, TaskMaterialAssignment[]>();
-  for (const row of materialAssignmentRows ?? []) {
-    const item: TaskMaterialAssignment = {
+  function toMaterialAssignment(row: {
+    id: number;
+    material_name: string;
+    specification: string | null;
+    planned_quantity: number | null;
+    unit: string | null;
+    unit_cost: number | null;
+    amount: number | null;
+  }): TaskMaterialAssignment {
+    return {
       id: row.id,
       materialName: row.material_name,
       specification: row.specification,
@@ -307,21 +328,20 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       unitCost: row.unit_cost ?? 0,
       amountOverride: row.amount,
     };
+  }
+
+  const materialAssignmentsByTask = new Map<number, TaskMaterialAssignment[]>();
+  for (const row of materialAssignmentRows ?? []) {
     const existing = materialAssignmentsByTask.get(row.task_id) ?? [];
-    existing.push(item);
+    existing.push(toMaterialAssignment(row));
     materialAssignmentsByTask.set(row.task_id, existing);
   }
 
-  const laborAssignmentsByTask = new Map<number, TaskLaborAssignment[]>();
-  for (const row of laborAssignmentRows ?? []) {
-    const item: TaskLaborAssignment = {
-      id: row.id,
-      workerRole: row.worker_role,
-      plannedWorkerCount: row.planned_worker_count ?? 0,
-    };
-    const existing = laborAssignmentsByTask.get(row.task_id) ?? [];
-    existing.push(item);
-    laborAssignmentsByTask.set(row.task_id, existing);
+  const materialAssignmentsByCategory = new Map<number, TaskMaterialAssignment[]>();
+  for (const row of categoryMaterialRows ?? []) {
+    const existing = materialAssignmentsByCategory.get(row.category_id) ?? [];
+    existing.push(toMaterialAssignment(row));
+    materialAssignmentsByCategory.set(row.category_id, existing);
   }
 
   const VALID_PRIORITIES: TaskPriority[] = ["low", "medium", "high"];
@@ -358,7 +378,8 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       otherCostEstimate: row.other_cost_estimate ?? 0,
       otherCostItems: otherCostsByTask.get(row.id) ?? [],
       totalEstimateCost: row.total_estimate_cost ?? 0,
-      weight: row.weight ?? 0,
+      // Filled in below by computeWeights, once every cost is known.
+      weight: 0,
       plannedStartDate: row.planned_start_date,
       plannedEndDate: row.planned_end_date,
       predecessorTaskId: row.predecessor_task_id,
@@ -374,19 +395,22 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       percentComplete: computeAutoPercentComplete({
         plannedStartDate: row.planned_start_date,
         plannedEndDate: row.planned_end_date,
+        estimatedQuantity: row.estimated_quantity ?? 0,
         plannedMaterials: groupPlannedMaterials(
           materialAssignmentsByTask.get(row.id) ?? []
         ),
-        plannedWorkerCount: (laborAssignmentsByTask.get(row.id) ?? []).reduce(
-          (sum, a) => sum + a.plannedWorkerCount,
-          0
-        ),
+        plannedCosts: {
+          labor: row.labor_estimate ?? 0,
+          material: row.material_estimate ?? 0,
+          equipment: row.equipment_estimate ?? 0,
+          other: row.other_cost_estimate ?? 0,
+        },
         workingDays,
+        holidays,
         anchor: progressAnchorsByTask[row.id] ?? EMPTY_PROGRESS_ANCHOR,
         today: new Date(),
       }),
       materialAssignments: materialAssignmentsByTask.get(row.id) ?? [],
-      laborAssignments: laborAssignmentsByTask.get(row.id) ?? [],
     };
     const existing = tasksByCategory.get(row.category_id) ?? [];
     existing.push(task);
@@ -401,33 +425,50 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
   const categories: CostCategory[] = (categoryRows ?? []).map((row) => ({
     id: row.id,
     name: row.category_name,
-    weight: row.weight ?? 0,
+    weight: 0,
     tasks: tasksByCategory.get(row.id) ?? [],
     materialDirectQuantity: row.material_direct_quantity ?? 0,
     materialDirectUnit: row.material_direct_unit,
     materialUnitCost: row.material_unit_cost ?? 0,
     materialDirectAmountOverride: row.material_direct_amount,
     categoryMaterialEstimate: row.category_material_estimate ?? 0,
+    materialAssignments: materialAssignmentsByCategory.get(row.id) ?? [],
     plannedStartDate: row.planned_start_date,
     plannedEndDate: row.planned_end_date,
     priority: toTaskPriority(row.priority),
     categoryLaborEstimate: row.category_labor_estimate ?? 0,
+    categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
+    categoryOtherEstimate: row.category_other_estimate ?? 0,
     estimatedQuantity: row.estimated_quantity ?? 0,
     unit: row.unit,
     percentComplete: computeAutoPercentComplete({
       plannedStartDate: row.planned_start_date,
       plannedEndDate: row.planned_end_date,
-      // A task-less category has no planned material list or
-      // estimate_task_labor_assignments of its own (both hang off a
-      // task) — Materials% and Labor% are simply excluded from its own
-      // blend rather than counted as 0%, same as any missing baseline.
+      estimatedQuantity: row.estimated_quantity ?? 0,
+      // A task-less category's progress form has no materials-used
+      // inputs, so no planned material list here; its planned costs are
+      // its own (material: its direct line plus its itemized lines).
       plannedMaterials: [],
-      plannedWorkerCount: 0,
+      plannedCosts: {
+        labor: row.category_labor_estimate ?? 0,
+        material: row.category_material_estimate ?? 0,
+        equipment: row.category_equipment_estimate ?? 0,
+        other: row.category_other_estimate ?? 0,
+      },
       workingDays,
+      holidays,
       anchor: progressAnchorsByCategory[row.id] ?? EMPTY_PROGRESS_ANCHOR,
       today: new Date(),
     }),
   }));
+
+  const { taskWeights, categoryWeights } = computeWeights(categories);
+  for (const category of categories) {
+    category.weight = categoryWeights.get(category.id) ?? 0;
+    for (const task of category.tasks) {
+      task.weight = taskWeights.get(task.id) ?? 0;
+    }
+  }
 
   const categoryMaterialTotal = categories.reduce(
     (sum, c) => sum + c.categoryMaterialEstimate,
@@ -439,6 +480,16 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     0
   );
   totalsByColumn.labor += categoryLaborTotal;
+  const categoryEquipmentTotal = categories.reduce(
+    (sum, c) => sum + c.categoryEquipmentEstimate,
+    0
+  );
+  totalsByColumn.equipment += categoryEquipmentTotal;
+  const categoryOtherTotal = categories.reduce(
+    (sum, c) => sum + c.categoryOtherEstimate,
+    0
+  );
+  totalsByColumn.other += categoryOtherTotal;
 
   const taskCount = taskRows?.length ?? 0;
   const totalEstimatedCost =
@@ -447,7 +498,9 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       0
     ) +
     categoryMaterialTotal +
-    categoryLaborTotal;
+    categoryLaborTotal +
+    categoryEquipmentTotal +
+    categoryOtherTotal;
 
   return {
     categories,

@@ -167,7 +167,7 @@ export function MaterialsMonitoringView({
       }
       return (
         row.entry.materialName.toLowerCase().includes(q) ||
-        row.entry.taskName.toLowerCase().includes(q) ||
+        (row.entry.taskName ?? "").toLowerCase().includes(q) ||
         row.entry.categoryName.toLowerCase().includes(q)
       );
     });
@@ -287,7 +287,7 @@ export function MaterialsMonitoringView({
                     </tr>
                   ) : (
                     <tr
-                      key={`breakdown-${row.entry.id}`}
+                      key={`breakdown-${row.entry.key}`}
                       className="transition-colors hover:bg-zinc-50"
                     >
                       <td className="px-4 py-2.5">
@@ -300,7 +300,8 @@ export function MaterialsMonitoringView({
                             so the Material Breakdown context isn't lost
                             entirely. */}
                         <p className="text-xs text-zinc-400">
-                          {row.entry.categoryName} → {row.entry.taskName}
+                          {row.entry.categoryName}
+                          {row.entry.taskName && ` → ${row.entry.taskName}`}
                         </p>
                       </td>
                       <td className="px-4 py-2.5 text-zinc-600">

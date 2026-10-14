@@ -46,8 +46,15 @@ export type BomExtractionState = {
 // gemini-3.5-flash is one generation back: still free-tier and still
 // strong at document/table extraction, but far less contended since
 // default traffic goes to 3.8 first.
-const GEMINI_MODEL = "gemini-3.5-flash";
-const GEMINI_ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+//
+// Still at capacity sometimes, so 3.8 is the fallback: when one model
+// keeps answering 503 through all of its retries, the other is
+// provisioned separately and is often free.
+const GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.8-flash"];
+
+function geminiEndpoint(model: string) {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+}
 
 // Sent as inline base64 in the request body, not Google's separate Files
 // API (this app has no infrastructure for that yet) — inline_data has a
@@ -175,6 +182,28 @@ async function excelToText(file: File): Promise<string> {
 // treatment — 429 (this project's own quota, not Gemini's capacity) and
 // 4xx (a real request problem) retrying blindly wouldn't help either.
 const MAX_ATTEMPTS = 3;
+
+// A busy model can also just never answer — Node's own fetch then waits 5
+// minutes for headers before failing (UND_ERR_HEADERS_TIMEOUT), the modal
+// spinning all the while. So each request gets REQUEST_TIMEOUT_MS (a
+// 3-page BOM normally takes well under a minute), a model that times out
+// isn't retried (it's jammed — the next one is tried instead), and the
+// whole import stops after TOTAL_BUDGET_MS either way.
+const REQUEST_TIMEOUT_MS = 90_000;
+const TOTAL_BUDGET_MS = 180_000;
+
+const BUSY_MESSAGE =
+  "Google's AI service is busy right now (high demand) — nothing's wrong with your file. Please try again in a few minutes.";
+
+/** Whether a failed fetch was a timeout — ours (AbortSignal.timeout) or
+ * Node's own header/body wait. */
+function isTimeout(error: unknown) {
+  if (error instanceof DOMException) {
+    return error.name === "TimeoutError" || error.name === "AbortError";
+  }
+  const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
+  return code === "UND_ERR_HEADERS_TIMEOUT" || code === "UND_ERR_BODY_TIMEOUT";
+}
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -399,38 +428,60 @@ export async function extractBomFromFile(
     });
   }
 
-  let response: Response;
-  let attempt = 1;
-  for (;;) {
-    try {
-      response = await fetch(`${GEMINI_ENDPOINT}?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: requestParts,
+  // Each model gets MAX_ATTEMPTS tries on a 503 (see above), then the
+  // next model; a timeout moves straight on to the next model; anything
+  // else ends it right there. All within TOTAL_BUDGET_MS.
+  const startedAt = Date.now();
+  let response: Response | undefined;
+  let timedOut = false;
+  tryModels: for (const model of GEMINI_MODELS) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+      if (remaining < 5_000) break tryModels;
+      try {
+        response = await fetch(`${geminiEndpoint(model)}?key=${apiKey}`, {
+          signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, remaining)),
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: requestParts,
+              },
+            ],
+            generationConfig: {
+              response_mime_type: "application/json",
+              response_schema: RESPONSE_SCHEMA,
             },
-          ],
-          generationConfig: {
-            response_mime_type: "application/json",
-            response_schema: RESPONSE_SCHEMA,
-          },
-        }),
-      });
-    } catch (error) {
-      console.error("[extractBomFromFile] Gemini request failed:", error);
-      return {
-        error: "Could not reach Gemini. Check your connection and try again.",
-      };
-    }
+          }),
+        });
+      } catch (error) {
+        if (isTimeout(error)) {
+          console.error(`[extractBomFromFile] ${model} didn't answer in time — trying the next model`);
+          timedOut = true;
+          response = undefined;
+          continue tryModels;
+        }
+        console.error("[extractBomFromFile] Gemini request failed:", error);
+        return {
+          error: "Could not reach Gemini. Check your connection and try again.",
+        };
+      }
 
-    if (response.status !== 503 || attempt >= MAX_ATTEMPTS) break;
-    console.error(
-      `[extractBomFromFile] Gemini returned 503 (attempt ${attempt}/${MAX_ATTEMPTS}) — retrying`
-    );
-    await sleep(1000 * attempt);
-    attempt += 1;
+      if (response.status !== 503) break tryModels;
+      console.error(
+        `[extractBomFromFile] ${model} returned 503 (attempt ${attempt}/${MAX_ATTEMPTS})`
+      );
+      if (attempt < MAX_ATTEMPTS) await sleep(1000 * attempt);
+    }
+  }
+
+  if (!response) {
+    return {
+      error: timedOut
+        ? BUSY_MESSAGE
+        : "Could not reach Gemini. Check your connection and try again.",
+    };
   }
 
   if (!response.ok) {
@@ -463,6 +514,9 @@ export async function extractBomFromFile(
         error: "Gemini's free-tier rate limit was hit — wait a moment and try again.",
       };
     }
+    if (response.status === 503) {
+      return { error: BUSY_MESSAGE };
+    }
     return {
       error: geminiMessage
         ? `Gemini error (${response.status}): ${geminiMessage}`
@@ -470,7 +524,13 @@ export async function extractBomFromFile(
     };
   }
 
-  const payload = await response.json();
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    console.error("[extractBomFromFile] Reading Gemini's response failed:", error);
+    return { error: isTimeout(error) ? BUSY_MESSAGE : "Gemini returned an unreadable response. Please try again." };
+  }
   const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
   if (typeof text !== "string") {
     console.error("[extractBomFromFile] Unexpected Gemini response shape", payload);

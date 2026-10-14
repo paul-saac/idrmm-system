@@ -18,10 +18,14 @@ export type ProjectRow = {
    * Gantt Chart's own Automatic Progress Completion — see
    * 0040_task_progress_tracking.sql. */
   workingDays: number[];
+  /** ISO dates (YYYY-MM-DD) the site is off on top of its non-working
+   * weekdays, sorted — see 0053_project_holidays.sql. */
+  holidays: string[];
   projectManagerId: string;
   projectManagerName: string | null;
   foremanId: string;
   foremanName: string | null;
+  createdAt: string | null;
 };
 
 function formatName(
@@ -69,8 +73,11 @@ function toProjectRow(
     allocated_budget: number | null;
     default_labor_cost_percent: number | null;
     working_days: number[] | null;
+    // Optional: undefined until 0053_project_holidays.sql has been run.
+    holidays?: string[] | null;
     project_manager_id: string;
     foreman_id: string;
+    created_at: string | null;
   },
   namesById: Map<string, { first_name: string; last_name: string }>
 ): ProjectRow {
@@ -85,10 +92,12 @@ function toProjectRow(
     allocatedBudget: row.allocated_budget,
     defaultLaborCostPercent: row.default_labor_cost_percent,
     workingDays: row.working_days ?? [1, 2, 3, 4, 5, 6],
+    holidays: [...(row.holidays ?? [])].sort(),
     projectManagerId: row.project_manager_id,
     projectManagerName: formatName(namesById.get(row.project_manager_id)),
     foremanId: row.foreman_id,
     foremanName: formatName(namesById.get(row.foreman_id)),
+    createdAt: row.created_at,
   };
 }
 

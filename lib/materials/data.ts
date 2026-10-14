@@ -237,6 +237,9 @@ export async function getTodayMaterialProcurement(
 
 export type MaterialBreakdownEntry = {
   id: number;
+  /** Unique across both line tables — a task's and a category's own
+   * line can share an id. */
+  key: string;
   materialName: string;
   specification: string | null;
   plannedQuantity: number;
@@ -247,7 +250,8 @@ export type MaterialBreakdownEntry = {
    * Breakdown modal's own live "Amount" column uses (see
    * material-breakdown-modal-content.tsx's own lineAmount). */
   amount: number;
-  taskName: string;
+  /** Null for a standalone category's own line (0058). */
+  taskName: string | null;
   categoryName: string;
 };
 
@@ -264,11 +268,12 @@ export type MaterialBreakdownEntry = {
  * created, it lands in the same table, so this reads it back the same
  * way either time with nothing extra to distinguish the two.
  *
- * A category's own direct material line (material_direct_quantity/unit/
- * unit_cost on estimate_categories itself, see 0042_category_direct_
- * cost.sql) is deliberately excluded — it has no material_name column at
- * all, just a lump-sum quantity/cost, so there's no material identity to
- * list here.
+ * A standalone category's own itemized lines (estimate_category_material_
+ * assignments, 0058) are listed too. Its direct material line
+ * (material_direct_quantity/unit/unit_cost on estimate_categories itself,
+ * see 0042_category_direct_cost.sql) is deliberately excluded — it has no
+ * material_name column at all, just a lump-sum quantity/cost, so there's
+ * no material identity to list here.
  */
 export async function listMaterialBreakdownEntries(
   projectId: number
@@ -290,35 +295,65 @@ export async function listMaterialBreakdownEntries(
     .in("category_id", categoryIds);
 
   const taskIds = (taskRows ?? []).map((row) => row.id);
-  if (taskIds.length === 0) return [];
   const taskById = new Map((taskRows ?? []).map((t) => [t.id, t]));
 
-  const { data: assignmentRows } = await supabase
-    .from("estimate_task_material_assignments")
-    .select(
-      "id, task_id, material_name, specification, planned_quantity, unit, unit_cost, amount"
-    )
-    .in("task_id", taskIds)
-    .order("id", { ascending: true });
+  const lineColumns =
+    "id, material_name, specification, planned_quantity, unit, unit_cost, amount";
+  const [{ data: assignmentRows }, { data: categoryLineRows }] = await Promise.all([
+    taskIds.length > 0
+      ? supabase
+          .from("estimate_task_material_assignments")
+          .select(`task_id, ${lineColumns}`)
+          .in("task_id", taskIds)
+          .order("id", { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
+    // Empty (null data), not an error, until 0058 has run.
+    supabase
+      .from("estimate_category_material_assignments")
+      .select(`category_id, ${lineColumns}`)
+      .in("category_id", categoryIds)
+      .order("id", { ascending: true }),
+  ]);
 
-  const entries: MaterialBreakdownEntry[] = [];
-  for (const row of assignmentRows ?? []) {
-    const task = taskById.get(row.task_id);
-    if (!task) continue;
-    const category = categoryById.get(task.category_id);
+  function toEntry(
+    row: {
+      id: number;
+      material_name: string;
+      specification: string | null;
+      planned_quantity: number | null;
+      unit: string | null;
+      unit_cost: number | null;
+      amount: number | null;
+    },
+    key: string,
+    categoryId: number | undefined,
+    taskName: string | null
+  ): MaterialBreakdownEntry {
     const plannedQuantity = row.planned_quantity ?? 0;
     const unitCost = row.unit_cost ?? 0;
-    entries.push({
+    return {
       id: row.id,
+      key,
       materialName: row.material_name,
       specification: row.specification,
       plannedQuantity,
       unit: row.unit,
       unitCost,
       amount: row.amount ?? plannedQuantity * unitCost,
-      taskName: task.task_name,
-      categoryName: category?.category_name ?? "—",
-    });
+      taskName,
+      categoryName:
+        (categoryId !== undefined && categoryById.get(categoryId)?.category_name) || "—",
+    };
+  }
+
+  const entries: MaterialBreakdownEntry[] = [];
+  for (const row of categoryLineRows ?? []) {
+    entries.push(toEntry(row, `category-${row.id}`, row.category_id, null));
+  }
+  for (const row of assignmentRows ?? []) {
+    const task = taskById.get(row.task_id);
+    if (!task) continue;
+    entries.push(toEntry(row, `task-${row.id}`, task.category_id, task.task_name));
   }
   return entries;
 }

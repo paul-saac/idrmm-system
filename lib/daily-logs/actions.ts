@@ -18,6 +18,7 @@ import { nextMaterialCode } from "@/lib/materials/codes";
 import { listFlaggedEntryIds, type EntryType } from "@/lib/daily-logs/data";
 import { getCostEstimate } from "@/lib/cost-estimate/data";
 import { getProjectProgress } from "@/lib/progress/data";
+import { isAdminRole } from "@/lib/auth/roles";
 
 export type DailyLogActionState = {
   error?: string;
@@ -450,7 +451,7 @@ export async function createDailyLog(
   formData: FormData
 ): Promise<DailyLogActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to submit daily logs." };
   }
 
@@ -816,7 +817,7 @@ export async function updateDailyLog(
   formData: FormData
 ): Promise<DailyLogActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to edit daily logs." };
   }
 
@@ -1360,7 +1361,7 @@ export async function updateDailyLogStatus(
   _formData: FormData
 ): Promise<DailyLogActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to review daily logs." };
   }
 
@@ -1447,7 +1448,7 @@ export async function deleteDailyLog(
   _formData: FormData
 ): Promise<DailyLogActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to delete daily logs." };
   }
 
@@ -1541,7 +1542,7 @@ export async function flagDailyLogEntry(
   formData: FormData
 ): Promise<FlagActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to flag daily log entries." };
   }
 
@@ -1595,7 +1596,7 @@ export async function unflagDailyLogEntry(
   _formData: FormData
 ): Promise<FlagActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to unflag daily log entries." };
   }
 
@@ -1651,7 +1652,7 @@ export async function resolveDailyLogEntryFlag(
   _formData: FormData
 ): Promise<FlagActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to resolve flags." };
   }
 
@@ -1724,7 +1725,7 @@ export async function reflagDailyLogEntry(
   formData: FormData
 ): Promise<FlagActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to flag daily log entries." };
   }
 
@@ -1978,7 +1979,7 @@ export async function updateFlaggedEntry(
   formData: FormData
 ): Promise<FlagActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to edit daily log entries." };
   }
 
@@ -2054,7 +2055,7 @@ export async function saveSurveyQuestions(
   formData: FormData
 ): Promise<SurveyQuestionsActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to edit survey questions." };
   }
 

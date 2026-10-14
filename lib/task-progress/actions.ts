@@ -4,6 +4,7 @@ import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
+import { COST_COMPONENTS, type CostAmounts } from "@/lib/task-progress/calculate";
 
 export type TaskProgressActionState = {
   error?: string;
@@ -46,25 +47,20 @@ function todayIso() {
  * Materials used are logged against the task's own planned material
  * lines (task_progress_material_entries, see 0050_task_progress_
  * material_entries.sql) — replaced wholesale for this day on every
- * save, so correcting today's numbers never double-counts. No longer
- * touches project_materials stock at all: the old "Materials consumed
- * today" picker pulled from the project's whole stock roster with no
- * connection to what was planned for this specific task.
- * quantity_completed is no longer written either — the modal's own
- * "Quantity completed" field was removed; a task's Materials% now comes
- * from its materials used vs. planned instead.
+ * save, so correcting today's numbers never double-counts. Never touches
+ * project_materials stock.
  *
- * percentCompleteOverride (see 0049_progress_percent_override.sql) is
- * written as-is, including null — null is what actually clears a
- * previously-saved override rather than leaving a stale value in place.
+ * The day's spend per cost component (0057_progress_entry_costs.sql) is
+ * what the task's % complete is measured from — saving a day overrides
+ * its automatic planned share (see computeProgressBreakdown).
  */
 export async function recordTaskProgress(
   taskId: number,
   projectId: number,
   input: {
-    laborHeadcount: number;
+    quantityCompletedToday: number;
+    costs: CostAmounts;
     materialsUsed: { name: string; unit: string | null; quantity: number }[];
-    percentCompleteOverride: number | null;
   }
 ): Promise<TaskProgressActionState> {
   return safely(async () => {
@@ -72,24 +68,24 @@ export async function recordTaskProgress(
     if (!profile) {
       return { error: "You are not authorized to record task progress." };
     }
+    if (
+      !Number.isFinite(input.quantityCompletedToday) ||
+      input.quantityCompletedToday < 0
+    ) {
+      return { error: "Quantity completed can't be negative." };
+    }
     for (const material of input.materialsUsed) {
       if (!Number.isFinite(material.quantity) || material.quantity < 0) {
         return { error: "Material quantity used can't be negative." };
       }
     }
     if (
-      !Number.isFinite(input.laborHeadcount) ||
-      input.laborHeadcount < 0
+      COST_COMPONENTS.some(
+        (component) =>
+          !Number.isFinite(input.costs[component]) || input.costs[component] < 0
+      )
     ) {
-      return { error: "Labor headcount can't be negative." };
-    }
-    if (
-      input.percentCompleteOverride !== null &&
-      (!Number.isFinite(input.percentCompleteOverride) ||
-        input.percentCompleteOverride < 0 ||
-        input.percentCompleteOverride > 100)
-    ) {
-      return { error: "Percent complete must be a number between 0 and 100." };
+      return { error: "Costs must be 0 or more." };
     }
 
     const supabase = await createClient();
@@ -101,8 +97,11 @@ export async function recordTaskProgress(
         {
           task_id: taskId,
           entry_date: entryDate,
-          labor_headcount: Math.round(input.laborHeadcount),
-          percent_complete_override: input.percentCompleteOverride,
+          quantity_completed: input.quantityCompletedToday,
+          labor_cost: input.costs.labor,
+          material_cost: input.costs.material,
+          equipment_cost: input.costs.equipment,
+          other_cost: input.costs.other,
           recorded_by: profile.id,
         },
         { onConflict: "task_id,entry_date" }

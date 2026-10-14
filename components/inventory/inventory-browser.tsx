@@ -1,16 +1,14 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown, Plus, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronDown, Plus, Search, Trash2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { EquipmentForm } from "@/components/inventory/equipment-form";
 import { AssignEquipmentForm } from "@/components/inventory/assign-equipment-form";
-import {
-  EquipmentTable,
-  type SortDir,
-  type SortKey,
-} from "@/components/inventory/equipment-table";
+import { EquipmentTable } from "@/components/inventory/equipment-table";
 import { usePortal } from "@/components/portal/portal-context";
+import { deleteEquipmentItems } from "@/lib/equipment/actions";
 import type { EquipmentRow, EquipmentStatus } from "@/lib/equipment/data";
 
 const STATUS_FILTERS: { value: EquipmentStatus | "all"; label: string }[] = [
@@ -21,6 +19,10 @@ const STATUS_FILTERS: { value: EquipmentStatus | "all"; label: string }[] = [
   { value: "retired", label: "Retired" },
 ];
 
+// The toolbar's own buttons (the Team page's toolbar style).
+const TOOLBAR_BUTTON =
+  "flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
+
 export function InventoryBrowser({
   equipment,
   projects,
@@ -28,12 +30,12 @@ export function InventoryBrowser({
   equipment: EquipmentRow[];
   projects: { id: number; name: string }[];
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<EquipmentStatus | "all">(
-    "all"
-  );
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [statusFilter, setStatusFilter] = useState<EquipmentStatus | "all">("all");
+  const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [formModal, setFormModal] = useState<
     { mode: "add" } | { mode: "edit"; equipment: EquipmentRow } | null
   >(null);
@@ -41,44 +43,54 @@ export function InventoryBrowser({
   // The company-wide inventory is view-only in the foreman portal.
   const { isAdmin } = usePortal();
 
-  function handleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDir("asc");
-    }
-  }
-
+  // By name.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const rows = equipment.filter((item) => {
-      const matchesStatus = statusFilter === "all" || item.status === statusFilter;
-      const matchesQuery =
-        !q ||
-        item.name.toLowerCase().includes(q) ||
-        item.assetTag.toLowerCase().includes(q) ||
-        (item.category ?? "").toLowerCase().includes(q) ||
-        (item.serialNumber ?? "").toLowerCase().includes(q);
-      return matchesStatus && matchesQuery;
-    });
+    return equipment
+      .filter((item) => {
+        const matchesStatus = statusFilter === "all" || item.status === statusFilter;
+        const matchesQuery =
+          !q ||
+          item.name.toLowerCase().includes(q) ||
+          item.assetTag.toLowerCase().includes(q) ||
+          (item.category ?? "").toLowerCase().includes(q) ||
+          (item.serialNumber ?? "").toLowerCase().includes(q);
+        return matchesStatus && matchesQuery;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }, [equipment, query, statusFilter]);
 
-    const sorted = [...rows].sort((a, b) => {
-      let comparison = 0;
-      if (sortKey === "name") {
-        comparison = a.name.localeCompare(b.name);
-      } else if (sortKey === "status") {
-        comparison = a.status.localeCompare(b.status);
-      } else {
-        const aTime = a.lastAssignedAt ?? a.lastReturnedAt ?? a.createdAt;
-        const bTime = b.lastAssignedAt ?? b.lastReturnedAt ?? b.createdAt;
-        comparison = new Date(aTime).getTime() - new Date(bTime).getTime();
+  // Only what's on screen counts — a checked item the search or filter
+  // hides isn't touched.
+  const selectedItems = filtered.filter((item) => selected.has(item.id));
+
+  function setChecked(ids: number[], checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (checked) next.add(id);
+        else next.delete(id);
       }
-      return sortDir === "asc" ? comparison : -comparison;
+      return next;
     });
+  }
 
-    return sorted;
-  }, [equipment, query, statusFilter, sortKey, sortDir]);
+  async function handleDeleteSelected() {
+    const count = selectedItems.length;
+    if (!window.confirm(`Delete ${count} item${count === 1 ? "" : "s"}? This cannot be undone.`)) {
+      return;
+    }
+    setDeleteError(null);
+    setDeleting(true);
+    const result = await deleteEquipmentItems(selectedItems.map((item) => item.id));
+    setDeleting(false);
+    if (result.error) {
+      setDeleteError(result.error);
+      return;
+    }
+    setSelected(new Set());
+    router.refresh();
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -89,7 +101,7 @@ export function InventoryBrowser({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search User by item name, status..."
+            placeholder="Search name, asset tag, category or serial"
             className="w-full rounded-md border border-zinc-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           />
         </div>
@@ -97,9 +109,8 @@ export function InventoryBrowser({
         <div className="relative">
           <select
             value={statusFilter}
-            onChange={(e) =>
-              setStatusFilter(e.target.value as EquipmentStatus | "all")
-            }
+            onChange={(e) => setStatusFilter(e.target.value as EquipmentStatus | "all")}
+            aria-label="Status"
             className="cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
             {STATUS_FILTERS.map((option) => (
@@ -112,66 +123,97 @@ export function InventoryBrowser({
         </div>
 
         {isAdmin && (
-          <button
-            type="button"
-            onClick={() => setFormModal({ mode: "add" })}
-            className="ml-auto flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white hover:shadow-md active:translate-y-0"
-          >
-            <Plus className="size-4" />
-            Add Equipment
-          </button>
+          <div className="ml-auto flex items-center gap-3">
+            {selectedItems.length > 0 && (
+              <>
+                <span className="text-sm font-medium text-zinc-900">
+                  {selectedItems.length} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="cursor-pointer text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteSelected}
+                  disabled={deleting}
+                  className={`${TOOLBAR_BUTTON} text-red-600 hover:border-red-600 hover:bg-red-600 hover:text-white`}
+                >
+                  <Trash2 className="size-4" />
+                  Delete
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setFormModal({ mode: "add" })}
+              className={`${TOOLBAR_BUTTON} text-zinc-900 duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white active:translate-y-0`}
+            >
+              <Plus className="size-4" />
+              Add Equipment
+            </button>
+          </div>
         )}
       </div>
 
-      <p className="text-sm text-zinc-500">
-        Showing {filtered.length} of {equipment.length} item
-        {equipment.length === 1 ? "" : "s"}
-      </p>
+      {deleteError && (
+        <p role="alert" className="text-sm text-red-600">
+          {deleteError}
+        </p>
+      )}
 
-      <EquipmentTable
-        equipment={filtered}
-        sortKey={sortKey}
-        sortDir={sortDir}
-        onSort={handleSort}
-        onEdit={(item) => setFormModal({ mode: "edit", equipment: item })}
-        onAssign={(item) => setAssignTarget(item)}
-        readOnly={!isAdmin}
-      />
+      {filtered.length === 0 ? (
+        <p className="rounded-lg border border-zinc-200 bg-white py-10 text-center text-sm text-zinc-400">
+          {equipment.length === 0 ? "No equipment recorded yet." : "No equipment matches."}
+        </p>
+      ) : (
+        <EquipmentTable
+          equipment={filtered}
+          selected={selected}
+          onCheck={setChecked}
+          onEdit={(item) => setFormModal({ mode: "edit", equipment: item })}
+          onAssign={(item) => setAssignTarget(item)}
+          readOnly={!isAdmin}
+        />
+      )}
 
       {isAdmin && (
-      <>
-      <Modal
-        open={formModal !== null}
-        onClose={() => setFormModal(null)}
-        title={formModal?.mode === "edit" ? "Edit Equipment" : "Add Equipment"}
-      >
-        <EquipmentForm
-          // See components/projects/materials/materials-monitoring-view.tsx
-          // for why this needs a key — Modal keeps its children mounted
-          // even while closed, so without one the form's Status field
-          // would get stuck reflecting whichever item (or none) was
-          // selected when it first mounted.
-          key={formModal?.mode === "edit" ? formModal.equipment.id : "add"}
-          equipment={formModal?.mode === "edit" ? formModal.equipment : undefined}
-          onSuccess={() => setFormModal(null)}
-        />
-      </Modal>
+        <>
+          <Modal
+            open={formModal !== null}
+            onClose={() => setFormModal(null)}
+            title={formModal?.mode === "edit" ? "Edit Equipment" : "Add Equipment"}
+          >
+            <EquipmentForm
+              // See components/projects/materials/materials-monitoring-view.tsx
+              // for why this needs a key — Modal keeps its children mounted
+              // even while closed, so without one the form's Status field
+              // would get stuck reflecting whichever item (or none) was
+              // selected when it first mounted.
+              key={formModal?.mode === "edit" ? formModal.equipment.id : "add"}
+              equipment={formModal?.mode === "edit" ? formModal.equipment : undefined}
+              onSuccess={() => setFormModal(null)}
+            />
+          </Modal>
 
-      <Modal
-        open={assignTarget !== null}
-        onClose={() => setAssignTarget(null)}
-        title="Assign Equipment"
-      >
-        {assignTarget && (
-          <AssignEquipmentForm
-            key={assignTarget.id}
-            equipment={assignTarget}
-            projects={projects}
-            onSuccess={() => setAssignTarget(null)}
-          />
-        )}
-      </Modal>
-      </>
+          <Modal
+            open={assignTarget !== null}
+            onClose={() => setAssignTarget(null)}
+            title="Assign Equipment"
+          >
+            {assignTarget && (
+              <AssignEquipmentForm
+                key={assignTarget.id}
+                equipment={assignTarget}
+                projects={projects}
+                onSuccess={() => setAssignTarget(null)}
+              />
+            )}
+          </Modal>
+        </>
       )}
     </div>
   );

@@ -32,7 +32,7 @@ export function ForgotPasswordForm() {
   return (
     <form action={formAction} className="flex flex-col gap-5" noValidate>
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="email" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="email" className="text-sm font-medium text-zinc-900">
           Email address
         </label>
         <input

@@ -132,7 +132,7 @@ export function DailyLogsTable({
                           <button
                             type="button"
                             onClick={() => toggle(log.id)}
-                            className="flex cursor-pointer items-center gap-2 text-sm font-normal text-zinc-800 transition hover:text-zinc-900"
+                            className="flex cursor-pointer items-center gap-2 text-sm font-normal text-zinc-900 transition hover:text-zinc-900"
                           >
                             {isOpen ? (
                               <ChevronDown className="size-4 text-zinc-400" />

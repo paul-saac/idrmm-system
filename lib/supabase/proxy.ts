@@ -42,6 +42,20 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // A Server Action call (a POST to the page it's used on, marked by
+  // this header) is never redirected — the browser can't use an HTML
+  // page as an action's reply, and throws "An unexpected response was
+  // received from the server." That happened to a foreman tab left open
+  // while the same browser signed in as admin in another tab: the shared
+  // session cookie made its next action an admin request to /foreman/...,
+  // which the section check below redirected. Every action checks its
+  // own access instead (lib/auth/project-access.ts, getSessionProfile),
+  // as Next.js's own proxy docs ask for anyway. The session above is
+  // still refreshed.
+  if (request.headers.has("next-action")) {
+    return response;
+  }
+
   const { pathname } = request.nextUrl;
 
   const isAuthRoute =

@@ -29,7 +29,8 @@ export const STATUS_COLORS = {
 export const SEQUENTIAL_HUE = "#2a78d6";
 
 export const CHART_INK = {
-  primary: "#0b0b0b",
+  // The app's one black (zinc-900 — see globals.css).
+  primary: "#3b3939",
   secondary: "#52514e",
   muted: "#898781",
   grid: "#e1e0d9",

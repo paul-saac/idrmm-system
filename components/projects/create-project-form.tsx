@@ -4,6 +4,7 @@ import { useActionState, useEffect, useRef } from "react";
 import { ChevronDown } from "lucide-react";
 import { createProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { AccountRow } from "@/lib/accounts/data";
+import { projectElsewhere } from "@/lib/accounts/availability";
 
 const initialState: ProjectActionState = {};
 
@@ -53,7 +54,7 @@ export function CreateProjectForm({
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor="projectName"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Project name
         </label>
@@ -67,7 +68,7 @@ export function CreateProjectForm({
       </div>
 
       <div className="flex flex-col gap-1.5 sm:col-span-2">
-        <label htmlFor="location" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="location" className="text-sm font-medium text-zinc-900">
           Location
         </label>
         <input
@@ -79,7 +80,7 @@ export function CreateProjectForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="startDate" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="startDate" className="text-sm font-medium text-zinc-900">
           Start date
         </label>
         <input
@@ -95,7 +96,7 @@ export function CreateProjectForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="targetEndDate"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Target end date
         </label>
@@ -112,7 +113,7 @@ export function CreateProjectForm({
       <div className="flex flex-col gap-1.5 sm:col-span-2">
         <label
           htmlFor="allocatedBudget"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Allocated budget
         </label>
@@ -130,7 +131,7 @@ export function CreateProjectForm({
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="projectManagerId"
-          className="text-sm font-medium text-zinc-800"
+          className="text-sm font-medium text-zinc-900"
         >
           Project Manager
         </label>
@@ -145,23 +146,35 @@ export function CreateProjectForm({
             <option value="" disabled>
               Select a Project Manager
             </option>
-            {projectManagers.map((pm) => (
-              <option key={pm.id} value={pm.id}>
-                {personLabel(pm)}
-              </option>
-            ))}
+            {/* Someone already on an unfinished project can't be picked
+                (see projectElsewhere). */}
+            {projectManagers.map((pm) => {
+              const elsewhere = projectElsewhere(pm);
+              return (
+                <option key={pm.id} value={pm.id} disabled={elsewhere !== null}>
+                  {`${personLabel(pm)}${elsewhere ? ` — on ${elsewhere.name}` : ""}`}
+                </option>
+              );
+            })}
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
         </div>
-        {projectManagers.length === 0 && (
+        {projectManagers.length === 0 ? (
           <p className="text-xs text-amber-600">
             No Project Manager accounts yet — create one in Accounts first.
           </p>
+        ) : (
+          projectManagers.every((pm) => projectElsewhere(pm)) && (
+            <p className="text-xs text-amber-600">
+              Every Project Manager is already on a project — they&apos;re free again once
+              it&apos;s completed.
+            </p>
+          )
         )}
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="foremanId" className="text-sm font-medium text-zinc-800">
+        <label htmlFor="foremanId" className="text-sm font-medium text-zinc-900">
           Foreman
         </label>
         <div className="relative">
@@ -175,18 +188,28 @@ export function CreateProjectForm({
             <option value="" disabled>
               Select a Foreman
             </option>
-            {foremen.map((f) => (
-              <option key={f.id} value={f.id}>
-                {personLabel(f)}
-              </option>
-            ))}
+            {foremen.map((f) => {
+              const elsewhere = projectElsewhere(f);
+              return (
+                <option key={f.id} value={f.id} disabled={elsewhere !== null}>
+                  {`${personLabel(f)}${elsewhere ? ` — on ${elsewhere.name}` : ""}`}
+                </option>
+              );
+            })}
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
         </div>
-        {foremen.length === 0 && (
+        {foremen.length === 0 ? (
           <p className="text-xs text-amber-600">
             No Foreman accounts yet — create one in Accounts first.
           </p>
+        ) : (
+          foremen.every((f) => projectElsewhere(f)) && (
+            <p className="text-xs text-amber-600">
+              Every Foreman is already on a project — they&apos;re free again once it&apos;s
+              completed.
+            </p>
+          )
         )}
       </div>
 

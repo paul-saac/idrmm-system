@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import type { EquipmentStatus } from "@/lib/equipment/data";
+import { isAdminRole } from "@/lib/auth/roles";
 
 export type EquipmentActionState = {
   error?: string;
@@ -56,7 +57,7 @@ export async function createEquipment(
   formData: FormData
 ): Promise<EquipmentActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to add equipment." };
   }
 
@@ -93,7 +94,7 @@ export async function updateEquipment(
   formData: FormData
 ): Promise<EquipmentActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to edit equipment." };
   }
 
@@ -179,7 +180,7 @@ export async function deleteEquipment(
   _formData: FormData
 ): Promise<EquipmentActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to delete equipment." };
   }
 
@@ -189,6 +190,37 @@ export async function deleteEquipment(
   if (error) {
     console.error("[deleteEquipment] Supabase delete failed:", error.message);
     return { error: "Could not delete the equipment. Please try again." };
+  }
+
+  revalidateInventory();
+  return { success: true };
+}
+
+/** deleteEquipment for several items at once (the inventory table's
+ * checked rows). */
+export async function deleteEquipmentItems(
+  equipmentIds: number[]
+): Promise<EquipmentActionState> {
+  const profile = await getSessionProfile();
+  if (!profile || !isAdminRole(profile.role)) {
+    return { error: "You are not authorized to delete equipment." };
+  }
+
+  const ids = Array.isArray(equipmentIds)
+    ? equipmentIds.filter((id) => Number.isInteger(id) && id > 0)
+    : [];
+  if (ids.length === 0) {
+    return { error: "Select at least one item." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("equipment").delete().in("id", ids);
+
+  if (error) {
+    console.error("[deleteEquipmentItems] Supabase delete failed:", error.message);
+    return {
+      error: `Could not delete the item${ids.length === 1 ? "" : "s"}. Please try again.`,
+    };
   }
 
   revalidateInventory();
@@ -206,7 +238,7 @@ export async function assignEquipment(
   formData: FormData
 ): Promise<EquipmentActionState> {
   const profile = await getSessionProfile();
-  if (!profile || profile.role !== "admin") {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to assign equipment." };
   }
 

@@ -5,9 +5,19 @@ import { useRouter } from "next/navigation";
 import { Sparkles, Trash2 } from "lucide-react";
 import {
   updateTaskMaterialAssignments,
-  updateCategoryMaterialDirect,
+  updateCategoryMaterialAssignments,
 } from "@/lib/cost-estimate/actions";
-import type { CostCategory } from "@/lib/cost-estimate/data";
+import type { CostCategory, TaskMaterialAssignment } from "@/lib/cost-estimate/data";
+import {
+  DIVIDER,
+  GROUP_ROW,
+  GroupLabel,
+  MAIN_TASK_ROW,
+  STICKY_FOOTER,
+  SUBTASK_NAME_CELL,
+  TREE_CELL,
+  TreeLine,
+} from "@/components/projects/cost-estimate/breakdown-table-shared";
 
 function formatCurrency(amount: number | null | undefined) {
   return `₱${(amount ?? 0).toLocaleString("en-PH", { maximumFractionDigits: 0 })}`;
@@ -37,8 +47,9 @@ function nextKey() {
 
 type DraftLine = {
   // Local-only React key, never persisted — updateTaskMaterialAssignments
-  // deletes and reinserts a task's whole list on save, so there's no
-  // real id to track client-side between loads.
+  // (and updateCategoryMaterialAssignments) deletes and reinserts a whole
+  // list on save, so there's no real id to track client-side between
+  // loads.
   key: string;
   materialName: string;
   specification: string;
@@ -71,6 +82,42 @@ const EMPTY_DIRECT: DraftDirect = {
   amountOverride: "",
 };
 
+/** Whose material lines these are — a task's, or a standalone category's
+ * own (0058_category_material_lines.sql). */
+type LineOwner = { kind: "task" | "category"; id: number };
+
+function toDraftLine(m: TaskMaterialAssignment): DraftLine {
+  return {
+    key: nextKey(),
+    materialName: m.materialName,
+    specification: m.specification ?? "",
+    quantity: String(m.plannedQuantity),
+    unit: m.unit ?? "",
+    unitCost: String(m.unitCost),
+    amountOverride: m.amountOverride != null ? String(m.amountOverride) : "",
+  };
+}
+
+function toDirectInput(direct: DraftDirect) {
+  return {
+    quantity: parseNumber(direct.quantity),
+    unit: direct.unit || null,
+    unitCost: parseNumber(direct.unitCost),
+    amountOverride: direct.amountOverride ? parseNumber(direct.amountOverride) : null,
+  };
+}
+
+function toLineInput(line: DraftLine) {
+  return {
+    materialName: line.materialName,
+    specification: line.specification || null,
+    plannedQuantity: parseNumber(line.quantity),
+    unit: line.unit || null,
+    unitCost: parseNumber(line.unitCost),
+    amountOverride: line.amountOverride ? parseNumber(line.amountOverride) : null,
+  };
+}
+
 /**
  * Opened from the Cost Estimate Breakdown table's own "Material" column
  * header (see cost-estimate-view.tsx) — this is where a Bill of
@@ -87,20 +134,26 @@ const EMPTY_DIRECT: DraftDirect = {
  * are just differently-styled rows inside it, not separate nested boxes/
  * tables per task) — per an explicit request to read like an actual BOM
  * document instead of a stack of cards, with vertical column-divider
- * lines running through every row (category rows included — each is 5
- * real <td>s, not one colSpan cell, specifically so the grid stays
- * unbroken) rather than just the header. Category rows carry their own
- * typable Quantity/Unit/Unit Cost cells too (see CostCategory.
- * materialDirectQuantity's own doc comment) — same pattern as a
- * standalone task's own direct line, one level up, for a category with
- * no tasks yet (or a category-level lump sum); task rows carry the same
+ * lines running through every row (a real <td> per column, not one
+ * colSpan cell, so the grid stays unbroken; only a category's name spans
+ * the first two — the subtasks' tree column and their name column)
+ * rather than just the header. A category with no
+ * tasks yet carries its own typable Quantity/Unit/Unit Cost cells too
+ * (see CostCategory.materialDirectQuantity's own doc comment) — same
+ * pattern as a standalone task's own direct line, one level up — while
+ * one with tasks spans its name across those three instead, its Amount
+ * their subtotal (see below); task rows carry the same
  * Quantity/Unit/Unit Cost/Amount cells a material line does, editable
  * directly (for a lump-sum task with no breakdown, e.g. "Mobilization"
  * — see CostTask.materialDirectQuantity's own doc comment); each
- * material underneath is a plain row with the same cells, indented one
- * step further than its own task (pl-6) so the hierarchy stays scannable
- * — a category's own solid gray background (bg-zinc-100) marks it as a
- * section header on top of that. Every Amount cell is computed live from
+ * material underneath is a plain row with the same cells, its name in
+ * the same second column its task's sits in (the first is the tree),
+ * under its task's own, behind a gray left accent below its task's dark
+ * one (on a row tinted the Gantt chart's own today color) —
+ * category and task
+ * rows are group rows (categories a gray fill, tasks hanging off them on
+ * a light tree line — see TreeLine) on top of that. Every Amount cell is
+ * computed live from
  * quantity * unit cost as you type, same as a real spreadsheet — but,
  * unlike Quantity/Unit/Unit Cost, Amount has no column of its own
  * anywhere in the schema (see amountToQuantityUnitCostPatch's own doc
@@ -129,15 +182,12 @@ const EMPTY_DIRECT: DraftDirect = {
  * what stands in for the per-category Sub-total row that was removed (no
  * dedicated row for it, nor a dedicated remove-material column) — a
  * material line's own remove button instead lives inline at the end of
- * its Description cell, next to the material name input, so every
- * column stays sized to
- * its own header rather than reserving a column that's blank on every
- * row but a material line's.
+ * its Material cell, next to the material name input, rather than in a
+ * column of its own.
  *
- * No collapsing at all — every category, every task, and every material
- * line always renders, all at once (this is a Material Breakdown, a
- * flat data table meant to show everything, not a navigation tree the
- * user clicks open section by section). A category with no tasks yet,
+ * Styled like the Expenses tab's ledger tables (expense-table-shared.tsx)
+ * — every category and task is a group row, and every row always shows
+ * at once (nothing folds away). A category with no tasks yet,
  * or a task with no materials, still renders as its own row regardless
  * — a milestone, a zero-cost task, or a lump-sum task with nothing
  * broken out underneath (a real BOM's own "standalone" items, e.g.
@@ -156,8 +206,24 @@ const EMPTY_DIRECT: DraftDirect = {
  * Task/category creation itself still lives on the Gantt Chart only (see
  * CostEstimateView's own doc comment) — this only ever edits a task's
  * *material list* (and its own direct BOM line) or a category's own
- * direct BOM line, never adds/removes/renames either.
+ * direct BOM line (and, standalone, its own material list — Add Material
+ * on its row too), never adds/removes/renames either.
  */
+// The shared table look is breakdown-table-shared.tsx's; on top of it, a
+// material line's own row: a gray left accent on its name cell, the row
+// itself MATERIAL_ROW_BG.
+const ITEM_ROW =
+  "group border-y border-zinc-200 transition-colors hover:bg-[rgba(252,211,77,0.15)]";
+// The Gantt chart's own today color (its todayColor prop, 0.15) at about
+// half strength — the full color is its hover (ITEM_ROW).
+const MATERIAL_ROW_BG = "bg-[rgba(252,211,77,0.08)]";
+// Hidden until its own row is hovered (or it's reached by keyboard).
+const HOVER_ONLY = "opacity-0 group-hover:opacity-100 focus-visible:opacity-100";
+const CELL_INPUT =
+  "h-9 w-full bg-transparent px-4 text-right text-xs font-medium text-zinc-700 outline-none transition placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-transparent focus:text-zinc-700";
+const GROUP_BUTTON =
+  "inline-flex shrink-0 cursor-pointer items-center rounded-sm border border-zinc-200 bg-white h-6 px-2.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900";
+
 // A standalone top-level component, not nested inside
 // MaterialBreakdownModalContent — a component defined inside another
 // gets a fresh identity every render, which would remount this input
@@ -227,9 +293,8 @@ export function MaterialBreakdownModalContent({
    * opens — set when arriving here via the Edit Task form's own "See
    * All" button under Assigned Resources (see SubtaskForm's own
    * onViewMaterials prop), null for the plain "Material" column header
-   * trigger. Every task always renders here regardless (see this
-   * component's own doc comment on why nothing collapses), so there's
-   * never a need to expand anything before scrolling to it. */
+   * trigger. Nothing folds away (see this component's own doc comment),
+   * so the row is always there to scroll to. */
   highlightTaskId: number | null;
 }) {
   const router = useRouter();
@@ -237,7 +302,6 @@ export function MaterialBreakdownModalContent({
   // ref callback below, read only by the scroll-to-highlight effect.
   const taskRowRefs = useRef(new Map<number, HTMLTableRowElement>());
   const [flashTaskId, setFlashTaskId] = useState<number | null>(null);
-
   // Runs once per modal open (Modal only mounts children once `open` is
   // true — see its own doc comment — so this component's own mount IS
   // "the modal just opened"), not on every highlightTaskId identity
@@ -260,17 +324,19 @@ export function MaterialBreakdownModalContent({
       const initial: Record<number, DraftLine[]> = {};
       for (const category of categories) {
         for (const task of category.tasks) {
-          initial[task.id] = task.materialAssignments.map((m) => ({
-            key: nextKey(),
-            materialName: m.materialName,
-            specification: m.specification ?? "",
-            quantity: String(m.plannedQuantity),
-            unit: m.unit ?? "",
-            unitCost: String(m.unitCost),
-            amountOverride:
-              m.amountOverride != null ? String(m.amountOverride) : "",
-          }));
+          initial[task.id] = task.materialAssignments.map(toDraftLine);
         }
+      }
+      return initial;
+    }
+  );
+  // A standalone category's own itemized lines — draftByTask's own shape,
+  // one level up (0058_category_material_lines.sql).
+  const [draftByCategory, setDraftByCategory] = useState<Record<number, DraftLine[]>>(
+    () => {
+      const initial: Record<number, DraftLine[]> = {};
+      for (const category of categories) {
+        initial[category.id] = category.materialAssignments.map(toDraftLine);
       }
       return initial;
     }
@@ -298,9 +364,8 @@ export function MaterialBreakdownModalContent({
   });
   // A category's own direct BOM line — same idea as directByTask above,
   // one level up (see CostCategory.materialDirectQuantity's own doc
-  // comment). Saved separately (updateCategoryMaterialDirect), since a
-  // category isn't a task and has no material assignment rows of its
-  // own to delete/reinsert alongside it.
+  // comment). Saved with its own lines (draftByCategory) through
+  // updateCategoryMaterialAssignments.
   const [directByCategory, setDirectByCategory] = useState<
     Record<number, DraftDirect>
   >(() => {
@@ -388,10 +453,16 @@ export function MaterialBreakdownModalContent({
     updateCategoryDirect(categoryId, { amountOverride: typedAmount });
   }
 
-  function updateLine(taskId: number, key: string, patch: Partial<DraftLine>) {
-    setDraftByTask((prev) => ({
-      ...prev,
-      [taskId]: prev[taskId].map((line) =>
+  function editLines(owner: LineOwner, edit: (lines: DraftLine[]) => DraftLine[]) {
+    const setDraft = owner.kind === "task" ? setDraftByTask : setDraftByCategory;
+    setDraft((prev) => ({ ...prev, [owner.id]: edit(prev[owner.id] ?? []) }));
+    if (owner.kind === "task") markDirty(owner.id);
+    else markCategoryDirty(owner.id);
+  }
+
+  function updateLine(owner: LineOwner, key: string, patch: Partial<DraftLine>) {
+    editLines(owner, (lines) =>
+      lines.map((line) =>
         line.key === key
           ? {
               ...line,
@@ -399,40 +470,31 @@ export function MaterialBreakdownModalContent({
               ...(clearsOverride(patch) ? { amountOverride: "" } : {}),
             }
           : line
-      ),
-    }));
-    markDirty(taskId);
+      )
+    );
   }
 
-  function updateLineAmount(taskId: number, line: DraftLine, typedAmount: string) {
-    updateLine(taskId, line.key, { amountOverride: typedAmount });
+  function updateLineAmount(owner: LineOwner, line: DraftLine, typedAmount: string) {
+    updateLine(owner, line.key, { amountOverride: typedAmount });
   }
 
-  function removeLine(taskId: number, key: string) {
-    setDraftByTask((prev) => ({
-      ...prev,
-      [taskId]: prev[taskId].filter((line) => line.key !== key),
-    }));
-    markDirty(taskId);
+  function removeLine(owner: LineOwner, key: string) {
+    editLines(owner, (lines) => lines.filter((line) => line.key !== key));
   }
 
-  function addLine(taskId: number) {
-    setDraftByTask((prev) => ({
-      ...prev,
-      [taskId]: [
-        ...(prev[taskId] ?? []),
-        {
-          key: nextKey(),
-          materialName: "",
-          specification: "",
-          quantity: "",
-          unit: "",
-          unitCost: "",
-          amountOverride: "",
-        },
-      ],
-    }));
-    markDirty(taskId);
+  function addLine(owner: LineOwner) {
+    editLines(owner, (lines) => [
+      ...lines,
+      {
+        key: nextKey(),
+        materialName: "",
+        specification: "",
+        quantity: "",
+        unit: "",
+        unitCost: "",
+        amountOverride: "",
+      },
+    ]);
   }
 
   // Live, as-you-type totals — the whole point of an "excel-like" sheet
@@ -466,6 +528,7 @@ export function MaterialBreakdownModalContent({
   function categoryAmount(category: CostCategory) {
     return (
       categoryDirectAmount(category.id) +
+      (draftByCategory[category.id] ?? []).reduce((sum, line) => sum + lineAmount(line), 0) +
       category.tasks.reduce((sum, t) => sum + taskAmount(t.id), 0)
     );
   }
@@ -476,42 +539,22 @@ export function MaterialBreakdownModalContent({
     const [taskResults, categoryResults] = await Promise.all([
       Promise.all(
         Array.from(dirtyTaskIds).map((taskId) => {
-          const direct = directByTask[taskId] ?? EMPTY_DIRECT;
           return updateTaskMaterialAssignments(
             taskId,
             projectId,
-            {
-              quantity: parseNumber(direct.quantity),
-              unit: direct.unit || null,
-              unitCost: parseNumber(direct.unitCost),
-              amountOverride: direct.amountOverride
-                ? parseNumber(direct.amountOverride)
-                : null,
-            },
-            (draftByTask[taskId] ?? []).map((line) => ({
-              materialName: line.materialName,
-              specification: line.specification || null,
-              plannedQuantity: parseNumber(line.quantity),
-              unit: line.unit || null,
-              unitCost: parseNumber(line.unitCost),
-              amountOverride: line.amountOverride
-                ? parseNumber(line.amountOverride)
-                : null,
-            }))
+            toDirectInput(directByTask[taskId] ?? EMPTY_DIRECT),
+            (draftByTask[taskId] ?? []).map(toLineInput)
           );
         })
       ),
       Promise.all(
         Array.from(dirtyCategoryIds).map((categoryId) => {
-          const direct = directByCategory[categoryId] ?? EMPTY_DIRECT;
-          return updateCategoryMaterialDirect(categoryId, projectId, {
-            quantity: parseNumber(direct.quantity),
-            unit: direct.unit || null,
-            unitCost: parseNumber(direct.unitCost),
-            amountOverride: direct.amountOverride
-              ? parseNumber(direct.amountOverride)
-              : null,
-          });
+          return updateCategoryMaterialAssignments(
+            categoryId,
+            projectId,
+            toDirectInput(directByCategory[categoryId] ?? EMPTY_DIRECT),
+            (draftByCategory[categoryId] ?? []).map(toLineInput)
+          );
         })
       ),
     ]);
@@ -531,168 +574,252 @@ export function MaterialBreakdownModalContent({
     onClose();
   }
 
+  // One material line's own row — a task's (tree: whether its task's tree
+  // line carries on past it) or a standalone category's own.
+  function renderMaterialRow(
+    owner: LineOwner,
+    line: DraftLine,
+    { tree, flashing }: { tree: boolean; flashing: boolean }
+  ) {
+    return (
+      <tr
+        key={line.key}
+        className={`${ITEM_ROW} duration-1000 ${
+          flashing ? "bg-amber-100" : MATERIAL_ROW_BG
+        }`}
+      >
+        <td className={TREE_CELL}>{tree && <TreeLine />}</td>
+        <td className={`${DIVIDER} border-l-3 border-l-zinc-300 pr-2 pl-4`}>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              value={line.materialName}
+              onChange={(e) =>
+                updateLine(owner, line.key, {
+                  materialName: e.target.value,
+                })
+              }
+              placeholder="Material"
+              className="h-9 min-w-0 flex-1 bg-transparent text-xs font-medium text-zinc-700 outline-none placeholder:font-normal placeholder:text-zinc-300"
+            />
+            <button
+              type="button"
+              onClick={() => removeLine(owner, line.key)}
+              aria-label="Remove material"
+              className={`shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 ${HOVER_ONLY}`}
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </div>
+        </td>
+        <td className={DIVIDER}>
+          <input
+            type="number"
+            min={0}
+            value={line.quantity}
+            onChange={(e) =>
+              updateLine(owner, line.key, {
+                quantity: e.target.value,
+              })
+            }
+            className={CELL_INPUT}
+          />
+        </td>
+        <td className={DIVIDER}>
+          <input
+            type="text"
+            value={line.unit}
+            onChange={(e) =>
+              updateLine(owner, line.key, {
+                unit: e.target.value,
+              })
+            }
+            placeholder="—"
+            className={CELL_INPUT}
+          />
+        </td>
+        <td className={DIVIDER}>
+          <input
+            type="number"
+            min={0}
+            value={line.unitCost}
+            onChange={(e) =>
+              updateLine(owner, line.key, {
+                unitCost: e.target.value,
+              })
+            }
+            className={CELL_INPUT}
+          />
+        </td>
+        <td>
+          <AmountCell
+            focusKey={`material-${line.key}`}
+            computedAmount={lineAmount(line)}
+            overrideValue={line.amountOverride}
+            hasBreakdown={Boolean(line.quantity || line.unitCost)}
+            onChangeOverride={(value) =>
+              updateLineAmount(owner, line, value)
+            }
+            focusedAmountKey={focusedAmountKey}
+            setFocusedAmountKey={setFocusedAmountKey}
+            className={CELL_INPUT}
+          />
+        </td>
+      </tr>
+    );
+  }
+
   const grandTotal = categories.reduce(
     (sum, c) => sum + categoryAmount(c),
     0
   );
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="overflow-hidden rounded-md border border-zinc-200">
-        <table className="w-full table-fixed text-left text-sm">
+    <div className="flex min-h-full flex-col gap-5">
+      <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
+        <table className="w-full table-fixed text-left text-xs">
+          {/* The first column is the subtasks' tree (TreeLine): a
+              subtask's name and its materials' start right after it, the
+              header and category names spanning both. */}
           <colgroup>
+            <col className="w-9" />
             <col />
-            <col style={{ width: 90 }} />
-            <col style={{ width: 70 }} />
-            <col style={{ width: 100 }} />
-            <col style={{ width: 100 }} />
+            <col className="w-28" />
+            <col className="w-24" />
+            <col className="w-28" />
+            <col className="w-32" />
           </colgroup>
           <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
             <tr>
-              <th className="border-r border-b border-zinc-300 px-3 py-2">
-                Description
+              <th colSpan={2} className="border-r border-b border-zinc-200 px-4 py-2.5">
+                Task
               </th>
-              <th className="border-r border-b border-zinc-300 px-3 py-2 text-right">
+              <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">
                 Quantity
               </th>
-              <th className="border-r border-b border-zinc-300 px-3 py-2 text-right">
+              <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">
                 Unit
               </th>
-              <th className="border-r border-b border-zinc-300 px-3 py-2 text-right">
+              <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">
                 Unit Cost
               </th>
-              <th className="border-b border-zinc-300 px-3 py-2 text-right">
-                Amount
-              </th>
+              <th className="border-b border-zinc-200 px-4 py-2.5 text-right">Amount</th>
             </tr>
           </thead>
           <tbody>
             {categories.map((category) => {
               // Every task shows here regardless of whether it has its own
               // material lines (or, at this level, whether the category
-              // has any tasks at all yet) — same reasoning as a task's own
-              // chevron below: nothing to expand just means no chevron,
-              // never a hidden row.
+              // has any tasks at all yet) — never a hidden row.
               const tasks = category.tasks;
+              const categoryDirect = directByCategory[category.id] ?? EMPTY_DIRECT;
               return (
                 <Fragment key={category.id}>
-                  <tr className="border-y border-y-zinc-200 bg-zinc-100">
-                    <td className="border-r border-r-zinc-300 px-3 py-2 text-xs font-semibold text-zinc-600">
-                      {category.name}
+                  <tr className={MAIN_TASK_ROW}>
+                    {/* With subtasks, its name spans Quantity/Unit/Unit
+                        Cost too — its Amount is just their subtotal. */}
+                    <td
+                      colSpan={tasks.length > 0 ? 5 : 2}
+                      className={`${DIVIDER} px-4`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <GroupLabel label={category.name} />
+                        {tasks.length === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => addLine({ kind: "category", id: category.id })}
+                            className={`${GROUP_BUTTON} ${HOVER_ONLY}`}
+                          >
+                            Add Material
+                          </button>
+                        )}
+                      </div>
                     </td>
-                    <td className="border-r border-r-zinc-300">
-                      <input
-                        type="number"
-                        min={0}
-                        value={
-                          (directByCategory[category.id] ?? EMPTY_DIRECT)
-                            .quantity
-                        }
-                        onChange={(e) =>
-                          updateCategoryDirect(category.id, {
-                            quantity: e.target.value,
-                          })
-                        }
-                        placeholder="—"
-                        className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-medium text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
-                      />
-                    </td>
-                    <td className="border-r border-r-zinc-300">
-                      <input
-                        type="text"
-                        value={
-                          (directByCategory[category.id] ?? EMPTY_DIRECT).unit
-                        }
-                        onChange={(e) =>
-                          updateCategoryDirect(category.id, {
-                            unit: e.target.value,
-                          })
-                        }
-                        placeholder="—"
-                        className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-medium text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
-                      />
-                    </td>
-                    <td className="border-r border-r-zinc-300">
-                      <input
-                        type="number"
-                        min={0}
-                        value={
-                          (directByCategory[category.id] ?? EMPTY_DIRECT)
-                            .unitCost
-                        }
-                        onChange={(e) =>
-                          updateCategoryDirect(category.id, {
-                            unitCost: e.target.value,
-                          })
-                        }
-                        placeholder="—"
-                        className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-medium text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
-                      />
-                    </td>
+                    {tasks.length === 0 && (
+                      <>
+                        <td className={DIVIDER}>
+                          <input
+                            type="number"
+                            min={0}
+                            value={categoryDirect.quantity}
+                            onChange={(e) =>
+                              updateCategoryDirect(category.id, {
+                                quantity: e.target.value,
+                              })
+                            }
+                            placeholder="—"
+                            className={CELL_INPUT}
+                          />
+                        </td>
+                        <td className={DIVIDER}>
+                          <input
+                            type="text"
+                            value={categoryDirect.unit}
+                            onChange={(e) =>
+                              updateCategoryDirect(category.id, {
+                                unit: e.target.value,
+                              })
+                            }
+                            placeholder="—"
+                            className={CELL_INPUT}
+                          />
+                        </td>
+                        <td className={DIVIDER}>
+                          <input
+                            type="number"
+                            min={0}
+                            value={categoryDirect.unitCost}
+                            onChange={(e) =>
+                              updateCategoryDirect(category.id, {
+                                unitCost: e.target.value,
+                              })
+                            }
+                            placeholder="—"
+                            className={CELL_INPUT}
+                          />
+                        </td>
+                      </>
+                    )}
                     <td>
                       {tasks.length > 0 ? (
                         // A category with tasks shows their rolled-up
-                        // total, same as before — genuinely useful as a
-                        // section subtotal, unlike a task's own Amount
-                        // (which never rolls up its materials, since
-                        // those already sit right underneath it). Read-
-                        // only here rather than typable: editing this
-                        // number could only ever mean "add my own direct
-                        // line on top of the tasks' total," and typing a
-                        // number that then displays as something else
-                        // entirely (direct + rollup) would be far more
-                        // confusing than just not editing it here. Not
-                        // hoverable either, for the same reason — this
-                        // cell is never itself editable once a category
-                        // has tasks, so it shouldn't look interactive on
-                        // hover the way an editable cell does.
-                        <div className="px-3 py-1.5 text-right text-sm font-semibold whitespace-nowrap text-zinc-900">
+                        // total — a useful section subtotal, read-only
+                        // (typing here could only ever mean "my own direct
+                        // line on top of the tasks' total," then display
+                        // as something else entirely), so it doesn't look
+                        // interactive on hover either.
+                        <div className="px-4 py-2.5 text-right text-xs font-medium whitespace-nowrap text-zinc-700">
                           {formatCurrency(categoryAmount(category))}
                         </div>
                       ) : (
                         <AmountCell
                           focusKey={`category-${category.id}`}
                           computedAmount={categoryDirectAmount(category.id)}
-                          overrideValue={
-                            (directByCategory[category.id] ?? EMPTY_DIRECT)
-                              .amountOverride
-                          }
+                          overrideValue={categoryDirect.amountOverride}
                           hasBreakdown={Boolean(
-                            (directByCategory[category.id] ?? EMPTY_DIRECT)
-                              .quantity ||
-                              (directByCategory[category.id] ?? EMPTY_DIRECT)
-                                .unitCost
+                            categoryDirect.quantity || categoryDirect.unitCost
                           )}
                           onChangeOverride={(value) =>
                             updateCategoryAmount(category.id, value)
                           }
                           focusedAmountKey={focusedAmountKey}
                           setFocusedAmountKey={setFocusedAmountKey}
-                          className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-semibold text-zinc-900 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-900"
+                          className={CELL_INPUT}
                         />
                       )}
                     </td>
                   </tr>
-                  {tasks.map((task) => {
+                  {(draftByCategory[category.id] ?? []).map((line) =>
+                    renderMaterialRow({ kind: "category", id: category.id }, line, {
+                      tree: false,
+                      flashing: false,
+                    })
+                  )}
+                  {tasks.map((task, taskIndex) => {
                     const lines = draftByTask[task.id] ?? [];
                     const direct = directByTask[task.id] ?? EMPTY_DIRECT;
-                    // Every horizontal row divider in the table (task-to-
-                    // task, task-to-material, material-to-material) uses
-                    // this same color — zinc-300 is reserved for vertical
-                    // column dividers, so this stays one shade lighter
-                    // (zinc-200) than that, but still clearly visible
-                    // against a plain white row (zinc-100 all but
-                    // disappears there without an adjacent gray section
-                    // to contrast against) — no row boundary reads as
-                    // heavier than another. Side-specific (border-b-*),
-                    // not the bare border-zinc-* utility — cells that also
-                    // carry a border-r-zinc-300 (vertical divider) would
-                    // otherwise have ONE of the two colors silently win
-                    // for all four sides (Tailwind's bare border-color
-                    // utility isn't scoped to whichever side has a width
-                    // utility) — that's what caused the bottom edge to
-                    // render in the wrong, inconsistent color before.
-                    const taskBottomBorder = "border-b border-b-zinc-200";
+                    const flashing = flashTaskId === task.id;
+                    const lastTask = taskIndex === tasks.length - 1;
                     return (
                       <Fragment key={task.id}>
                         <tr
@@ -700,29 +827,26 @@ export function MaterialBreakdownModalContent({
                             if (el) taskRowRefs.current.set(task.id, el);
                             else taskRowRefs.current.delete(task.id);
                           }}
-                          className={
-                            flashTaskId === task.id
-                              ? "bg-amber-100 transition-colors duration-1000"
-                              : "transition-colors duration-1000"
-                          }
+                          className={`${GROUP_ROW} duration-1000 ${
+                            flashing ? "bg-amber-100" : "bg-white"
+                          }`}
                         >
-                          <td
-                            className={`border-r border-r-zinc-300 py-1.5 pr-3 pl-6 ${taskBottomBorder}`}
-                          >
-                            <div className="flex items-center gap-1.5">
-                              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-600">
-                                {task.name}
-                              </span>
+                          <td className={TREE_CELL}>
+                            <TreeLine branch end={lastTask} />
+                          </td>
+                          <td className={SUBTASK_NAME_CELL}>
+                            <div className="flex items-center justify-between gap-2">
+                              <GroupLabel label={task.name} />
                               <button
                                 type="button"
-                                onClick={() => addLine(task.id)}
-                                className="shrink-0 cursor-pointer rounded border border-zinc-300 px-2 py-0.5 text-[11px] font-medium text-zinc-500 transition hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-800"
+                                onClick={() => addLine({ kind: "task", id: task.id })}
+                                className={`${GROUP_BUTTON} ${HOVER_ONLY}`}
                               >
                                 Add Material
                               </button>
                             </div>
                           </td>
-                          <td className={`border-r border-r-zinc-300 ${taskBottomBorder}`}>
+                          <td className={DIVIDER}>
                             <input
                               type="number"
                               min={0}
@@ -731,10 +855,10 @@ export function MaterialBreakdownModalContent({
                                 updateDirect(task.id, { quantity: e.target.value })
                               }
                               placeholder="—"
-                              className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-medium text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
+                              className={CELL_INPUT}
                             />
                           </td>
-                          <td className={`border-r border-r-zinc-300 ${taskBottomBorder}`}>
+                          <td className={DIVIDER}>
                             <input
                               type="text"
                               value={direct.unit}
@@ -742,10 +866,10 @@ export function MaterialBreakdownModalContent({
                                 updateDirect(task.id, { unit: e.target.value })
                               }
                               placeholder="—"
-                              className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-medium text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
+                              className={CELL_INPUT}
                             />
                           </td>
-                          <td className={`border-r border-r-zinc-300 ${taskBottomBorder}`}>
+                          <td className={DIVIDER}>
                             <input
                               type="number"
                               min={0}
@@ -754,113 +878,28 @@ export function MaterialBreakdownModalContent({
                                 updateDirect(task.id, { unitCost: e.target.value })
                               }
                               placeholder="—"
-                              className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-medium text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-700"
+                              className={CELL_INPUT}
                             />
                           </td>
-                          <td className={taskBottomBorder}>
+                          <td>
                             <AmountCell
                               focusKey={`task-${task.id}`}
                               computedAmount={directAmount(task.id)}
                               overrideValue={direct.amountOverride}
-                              hasBreakdown={Boolean(
-                                direct.quantity || direct.unitCost
-                              )}
-                              onChangeOverride={(value) =>
-                                updateTaskAmount(task.id, value)
-                              }
+                              hasBreakdown={Boolean(direct.quantity || direct.unitCost)}
+                              onChangeOverride={(value) => updateTaskAmount(task.id, value)}
                               focusedAmountKey={focusedAmountKey}
                               setFocusedAmountKey={setFocusedAmountKey}
-                              className="w-full bg-transparent px-3 py-1.5 text-right text-sm font-semibold text-zinc-900 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-white focus:text-zinc-900"
+                              className={CELL_INPUT}
                             />
                           </td>
                         </tr>
-                        {lines.map((line) => (
-                          <tr
-                            key={line.key}
-                            className={`border-b border-b-zinc-200 border-l-2 border-l-zinc-900 transition-colors duration-1000 ${
-                              flashTaskId === task.id ? "bg-amber-100" : ""
-                            }`}
-                          >
-                            <td className="border-r border-r-zinc-300 pr-3 pl-9">
-                              <div className="flex items-center gap-1.5">
-                                <input
-                                  type="text"
-                                  value={line.materialName}
-                                  onChange={(e) =>
-                                    updateLine(task.id, line.key, {
-                                      materialName: e.target.value,
-                                    })
-                                  }
-                                  placeholder="Material"
-                                  className="min-w-0 flex-1 bg-transparent py-1.5 text-xs font-semibold text-zinc-600 outline-none focus:bg-zinc-50"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => removeLine(task.id, line.key)}
-                                  aria-label="Remove material"
-                                  className="mr-2 shrink-0 cursor-pointer rounded p-1 text-zinc-300 transition hover:bg-red-50 hover:text-red-600"
-                                >
-                                  <Trash2 className="size-3.5" />
-                                </button>
-                              </div>
-                            </td>
-                            <td className="border-r border-r-zinc-300">
-                              <input
-                                type="number"
-                                min={0}
-                                value={line.quantity}
-                                onChange={(e) =>
-                                  updateLine(task.id, line.key, {
-                                    quantity: e.target.value,
-                                  })
-                                }
-                                className="w-full bg-transparent px-3 py-1.5 text-right text-sm text-zinc-700 outline-none transition hover:bg-zinc-900 hover:text-white focus:bg-zinc-50 focus:text-zinc-700"
-                              />
-                            </td>
-                            <td className="border-r border-r-zinc-300">
-                              <input
-                                type="text"
-                                value={line.unit}
-                                onChange={(e) =>
-                                  updateLine(task.id, line.key, {
-                                    unit: e.target.value,
-                                  })
-                                }
-                                placeholder="—"
-                                className="w-full bg-transparent px-3 py-1.5 text-right text-sm text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-zinc-50 focus:text-zinc-700"
-                              />
-                            </td>
-                            <td className="border-r border-r-zinc-300">
-                              <input
-                                type="number"
-                                min={0}
-                                value={line.unitCost}
-                                onChange={(e) =>
-                                  updateLine(task.id, line.key, {
-                                    unitCost: e.target.value,
-                                  })
-                                }
-                                className="w-full bg-transparent px-3 py-1.5 text-right text-sm text-zinc-700 outline-none transition hover:bg-zinc-900 hover:text-white focus:bg-zinc-50 focus:text-zinc-700"
-                              />
-                            </td>
-                            <td>
-                              <AmountCell
-                                focusKey={`material-${line.key}`}
-                                computedAmount={lineAmount(line)}
-                                overrideValue={line.amountOverride}
-                                hasBreakdown={Boolean(
-                                  line.quantity || line.unitCost
-                                )}
-                                onChangeOverride={(value) =>
-                                  updateLineAmount(task.id, line, value)
-                                }
-                                focusedAmountKey={focusedAmountKey}
-                                setFocusedAmountKey={setFocusedAmountKey}
-                                className="w-full bg-transparent px-3 py-1 text-right text-sm text-zinc-700 outline-none transition placeholder:text-xs placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-zinc-50 focus:text-zinc-700"
-                              />
-                            </td>
-                          </tr>
-                        ))}
+                        {lines.map((line) =>
+                          renderMaterialRow({ kind: "task", id: task.id }, line, {
+                            tree: !lastTask,
+                            flashing,
+                          })
+                        )}
                       </Fragment>
                     );
                   })}
@@ -871,48 +910,50 @@ export function MaterialBreakdownModalContent({
         </table>
       </div>
 
-      {error && (
-        <p role="alert" className="text-sm text-red-600">
-          {error}
-        </p>
-      )}
+      <div className={STICKY_FOOTER}>
+        {error && (
+          <p role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+        )}
 
-      <div className="flex items-center justify-between gap-3 border-t border-zinc-200 pt-4">
-        <div className="text-sm">
-          <span className="font-medium text-zinc-500">
-            Total Material Cost (Project)
-          </span>{" "}
-          <span className="font-semibold text-zinc-900">
-            {formatCurrency(grandTotal)}
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onImportBom}
-            className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-800 bg-zinc-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-950"
-          >
-            <Sparkles className="size-3.5" />
-            Import
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={
-              pending ||
-              (dirtyTaskIds.size === 0 && dirtyCategoryIds.size === 0)
-            }
-            className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {pending ? "Saving..." : "Save Changes"}
-          </button>
+        <div className="flex items-center justify-between gap-3">
+          <div className="text-sm">
+            <span className="font-medium text-zinc-500">
+              Total Material Cost (Project)
+            </span>{" "}
+            <span className="font-semibold text-zinc-900">
+              {formatCurrency(grandTotal)}
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onImportBom}
+              className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+            >
+              <Sparkles className="size-3.5" />
+              Import
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={
+                pending ||
+                (dirtyTaskIds.size === 0 && dirtyCategoryIds.size === 0)
+              }
+              className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {pending ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
