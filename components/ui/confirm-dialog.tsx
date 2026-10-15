@@ -6,8 +6,9 @@ import { Modal } from "@/components/ui/modal";
  * "Are you sure?" in the app's own look, centered on the screen — in place
  * of the browser's window.confirm. Stays open while the action runs (its
  * button says so), and shows the action's error right here if it fails.
- * Render it beside whatever opened it, not inside that modal: each is its
- * own top-layer <dialog>, the newer one on top.
+ * Render it beside whatever opened it, or inside that modal's content:
+ * either way it's its own top-layer <dialog>, the newer one on top (Modal
+ * keeps a stacked dialog's clicks and closing to itself).
  */
 export function ConfirmDialog({
   open,

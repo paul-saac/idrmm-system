@@ -130,6 +130,27 @@ export function groupPlannedMaterials(
   return Array.from(byKey.values());
 }
 
+/**
+ * What these materials used cost at the estimate's own unit costs (each
+ * planned material's value ÷ its planned quantity) — the itemized part of
+ * a day's material cost, priced the same way in the progress window and
+ * on save. A material without a planned quantity has no unit cost, so
+ * isn't counted. To the centavo.
+ */
+export function itemizedMaterialCost(
+  planned: PlannedMaterial[],
+  /** Quantity used per material, keyed by materialKey. */
+  used: Record<string, number>
+): number {
+  let total = 0;
+  for (const material of planned) {
+    if (material.plannedQuantity <= 0) continue;
+    total += (used[material.key] ?? 0) * (material.plannedValue / material.plannedQuantity);
+  }
+  return Math.round(total * 100) / 100;
+}
+
+
 /** A task's four cost components — the same ones its weight comes from
  * (lib/cost-estimate/weights.ts). */
 export const COST_COMPONENTS = ["labor", "material", "equipment", "other"] as const;
@@ -208,11 +229,11 @@ function totalScheduledDays({
   return total > 0 ? total : null;
 }
 
-/** Expected progress (Automatic Progress): working days elapsed through
- * yesterday ÷ total working days, Start to End. A day only counts once
- * it's over — never today — so the number doesn't jump the moment a day
- * begins. Holidays never count, same as a non-working weekday. All null
- * when there's no planned Start/End yet. */
+/** Expected progress (Automatic Progress): working days so far — today
+ * included, from the moment it starts (12:00 AM) — ÷ total working days,
+ * Start to End; the same days automatic progress counts. Holidays never
+ * count, same as a non-working weekday. All null when there's no planned
+ * Start/End yet. */
 export function computeExpectedProgress({
   plannedStartDate,
   plannedEndDate,
@@ -232,11 +253,11 @@ export function computeExpectedProgress({
   const end = toLocalDate(plannedEndDate!);
   const now = startOfDay(today);
   const elapsed =
-    now <= start
+    now < start
       ? 0
-      : now > end
+      : now >= end
         ? total
-        : countWorkingDays(start, addDays(now, -1), workingDays, new Set(holidays));
+        : countWorkingDays(start, now, workingDays, new Set(holidays));
 
   return {
     elapsedWorkingDays: elapsed,
@@ -258,8 +279,8 @@ export type DailyPlan = {
  * Start..End gets planned ÷ total working days of everything (e.g. ₱1,000
  * of labor over 4 working days → ₱250 a day); any other day (outside the
  * schedule, a non-working weekday, a holiday) gets nothing. What the
- * Daily Progress Update's inputs start from, and what a past working day
- * with no saved entry counts on its own.
+ * Daily Progress Update's inputs start from, and what a working day with
+ * no saved entry counts on its own (today included, from 12:00 AM).
  */
 export function computeDailyPlan({
   plannedStartDate,
@@ -304,8 +325,9 @@ export function computeDailyPlan({
 }
 
 export type PercentCompleteBreakdown = {
-  /** Spend to date per cost component: every saved day's, plus each past
-   * working day without an entry counting its planned share. */
+  /** Spend to date per cost component: every saved day's, plus each
+   * working day so far (today included) without an entry counting its
+   * planned share. */
   costsToDate: CostAmounts;
   plannedCostTotal: number;
   /** Cost to date ÷ planned cost — how much of the budget is spent; %
@@ -326,8 +348,8 @@ export type PercentCompleteBreakdown = {
   timePercent: number | null;
   elapsedWorkingDays: number | null;
   totalWorkingDays: number | null;
-  /** Past working days that counted their planned share automatically
-   * (no saved entry). */
+  /** Working days so far (today included) that counted their planned
+   * share automatically (no saved entry). */
   automaticDays: number;
   /** % complete (0-100), from progressSource. */
   percentComplete: number;
@@ -347,11 +369,12 @@ export type PercentCompleteBreakdown = {
  * quantity. Its costs still count against their plan either way (over or
  * under budget), just not toward % complete.
  *
- * Automatic progress: every working day from Start through yesterday
- * that has no saved entry counts its planned share (computeDailyPlan) on
- * its own, so untouched, a task keeps pace with its schedule; a saved
- * entry overrides that day with what was actually typed (more, less, or
- * nothing at all — a rained-out day saved as 0 holds the task back).
+ * Automatic progress: every working day from Start through today that
+ * has no saved entry counts its planned share (computeDailyPlan) on its
+ * own — today from the moment it starts (12:00 AM) — so untouched, a task
+ * keeps pace with its schedule; a saved entry overrides that day with what
+ * was actually typed (more, less, or nothing at all — a rained-out day
+ * saved as 0 holds the task back).
  *
  * This is the task's OWN percent — its contribution to the project is
  * this times its weight (getProjectProgress, lib/progress/data.ts).
@@ -380,16 +403,16 @@ export function computeProgressBreakdown({
     today,
   });
 
-  // Elapsed working days with no saved entry — the logged days are left
-  // out exactly like holidays are.
+  // Elapsed working days (today included) with no saved entry — the
+  // logged days are left out exactly like holidays are.
   let automaticDays = 0;
   if (totalWorkingDays !== null && elapsedWorkingDays) {
     const start = toLocalDate(plannedStartDate!);
     const end = toLocalDate(plannedEndDate!);
-    const yesterday = addDays(startOfDay(today), -1);
+    const now = startOfDay(today);
     automaticDays = countWorkingDays(
       start,
-      yesterday < end ? yesterday : end,
+      now < end ? now : end,
       workingDays,
       new Set([...holidays, ...anchor.loggedDates])
     );

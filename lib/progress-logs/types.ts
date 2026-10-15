@@ -1,0 +1,26 @@
+import type { CostAmounts } from "@/lib/task-progress/calculate";
+
+/** Which task, or task-less phase (category), a history belongs to. */
+export type OverrideLogItem = { kind: "task"; id: number } | { kind: "category"; id: number };
+
+/** One row of the override history — a Daily Progress Update as it was
+ * saved (or deleted): who, exactly when, and what was entered. See
+ * 0071_progress_override_logs.sql. */
+export type OverrideLog = {
+  id: number;
+  action: "saved" | "deleted";
+  /** The day the update is for. */
+  entryDate: string;
+  /** Exactly when it was saved or deleted (an ISO timestamp). */
+  createdAt: string;
+  /** Their name as it was then — or, when that wasn't kept, their
+   * account's name (or its email's name part); null when unknown. */
+  savedByName: string | null;
+  /** Their account's role (e.g. "Administrator") — null when unknown. */
+  savedByRole: string | null;
+  quantityCompleted: number;
+  costs: CostAmounts;
+  materialsUsed: { name: string; unit: string | null; quantity: number }[];
+  /** Who worked that day, their hours and hourly rate then. */
+  attendance: { name: string; hours: number; rate: number }[];
+};

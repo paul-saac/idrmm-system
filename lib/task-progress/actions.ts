@@ -4,6 +4,10 @@ import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
+import { isAdminRole } from "@/lib/auth/roles";
+import { logOverride } from "@/lib/progress-logs/write";
+import { entryCosts } from "@/lib/task-progress/data";
+import { priceMaterialsUsed } from "@/lib/task-progress/material-cost";
 import { COST_COMPONENTS, type CostAmounts } from "@/lib/task-progress/calculate";
 import {
   replaceAttendance,
@@ -66,7 +70,9 @@ export async function recordTaskProgress(
   projectId: number,
   input: {
     quantityCompletedToday: number;
-    /** Labor's ignored — it's priced from `attendance`. */
+    /** Labor's ignored — it's priced from `attendance`; material is just
+     * typed only for a task without Material Breakdown lines — what's used
+     * is priced here. */
     costs: CostAmounts;
     materialsUsed: { name: string; unit: string | null; quantity: number }[];
     attendance: AttendanceInput;
@@ -105,6 +111,14 @@ export async function recordTaskProgress(
       return { error: crew.error };
     }
 
+    // Material cost: what was used, priced from the task's own Material
+    // Breakdown (like labor from attendance) — or, without any lines, typed.
+    const priced = await priceMaterialsUsed(supabase, { taskId }, input.materialsUsed);
+    if ("error" in priced) {
+      return { error: priced.error };
+    }
+    const materialCost = Math.round((priced.cost + input.costs.material) * 100) / 100;
+
     const { data: savedEntry, error: upsertError } = await supabase
       .from("task_progress_entries")
       .upsert(
@@ -113,7 +127,7 @@ export async function recordTaskProgress(
           entry_date: entryDate,
           quantity_completed: input.quantityCompletedToday,
           labor_cost: crew.laborCost,
-          material_cost: input.costs.material,
+          material_cost: materialCost,
           equipment_cost: input.costs.equipment,
           other_cost: input.costs.other,
           recorded_by: profile.id,
@@ -173,6 +187,83 @@ export async function recordTaskProgress(
         return { error: "Could not save materials used. Please try again." };
       }
     }
+
+    // Kept in the override history too — every save, not just the day's
+    // latest (0071).
+    await logOverride(supabase, profile, projectId, { kind: "task", id: taskId }, {
+      action: "saved",
+      entryDate,
+      quantityCompleted: input.quantityCompletedToday,
+      costs: {
+        labor: crew.laborCost,
+        material: materialCost,
+        equipment: input.costs.equipment,
+        other: input.costs.other,
+      },
+      materialsUsed: materialRows.map((row) => ({
+        name: row.material_name,
+        unit: row.unit,
+        quantity: row.quantity_used,
+      })),
+      attendance: crew.rows.map((row) => ({
+        name: row.worker_name,
+        hours: row.hours,
+        rate: row.hourly_rate,
+      })),
+    });
+
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
+/**
+ * Deletes one day's saved Daily Progress Update (an override) for a
+ * task — admins and super admins only (the Last override box's Delete).
+ * Its attendance and materials used go with it (on delete cascade), and
+ * the day goes back to automatic progress: a past working day counts its
+ * planned share again, today nothing until it's over.
+ */
+export async function deleteTaskProgressEntry(
+  taskId: number,
+  projectId: number,
+  entryDate: string
+): Promise<TaskProgressActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile || !isAdminRole(profile.role)) {
+      return { error: "Only admins can delete a progress override." };
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) {
+      return { error: "That override couldn't be found." };
+    }
+
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("task_progress_entries")
+      .delete()
+      .eq("task_id", taskId)
+      .eq("entry_date", entryDate)
+      .select("*");
+
+    if (error) {
+      logSupabaseError("[deleteTaskProgressEntry] Supabase delete failed", error);
+      return { error: "Could not delete the override. Please try again." };
+    }
+    if (!data || data.length === 0) {
+      return { error: "That override was already removed." };
+    }
+
+    // The history keeps who deleted it, when, and what it was (0071).
+    const removed = data[0];
+    await logOverride(supabase, profile, projectId, { kind: "task", id: taskId }, {
+      action: "deleted",
+      entryDate,
+      quantityCompleted: removed.quantity_completed ?? 0,
+      costs: entryCosts(removed),
+      materialsUsed: [],
+      attendance: [],
+    });
 
     revalidateProjectPaths(projectId);
     return { success: true };

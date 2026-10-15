@@ -445,10 +445,10 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       plannedStartDate: row.planned_start_date,
       plannedEndDate: row.planned_end_date,
       estimatedQuantity: row.estimated_quantity ?? 0,
-      // A task-less category's progress form has no materials-used
-      // inputs, so no planned material list here; its planned costs are
-      // its own (material: its direct line plus its itemized lines).
-      plannedMaterials: [],
+      // A task-less category's own Material Breakdown lines (what its
+      // progress form logs materials used against); its planned costs
+      // are its own (material: its direct line plus its itemized lines).
+      plannedMaterials: groupPlannedMaterials(materialAssignmentsByCategory.get(row.id) ?? []),
       plannedCosts: {
         labor: row.category_labor_estimate ?? 0,
         material: row.category_material_estimate ?? 0,

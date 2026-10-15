@@ -45,6 +45,8 @@ const SIZE_CLASS = {
   // A short question and its two buttons (ConfirmDialog).
   small: "max-w-md",
   default: "max-w-2xl",
+  // A form beside a side column (the progress window and its history).
+  wide: "max-w-5xl",
   large: "max-w-6xl",
 } as const;
 
@@ -72,6 +74,7 @@ export function Modal({
   size = "default",
   variant = "panel",
   menuItems,
+  bare = false,
   children,
 }: {
   open: boolean;
@@ -88,6 +91,10 @@ export function Modal({
   variant?: keyof typeof VARIANT_CLASS;
   /** Shows a ⋮ menu beside the close button with these actions. */
   menuItems?: ModalMenuItem[];
+  /** The body without its own padding or scrolling — for content laid
+   * out in columns that pad and scroll themselves (edge-to-edge dividers
+   * between them), within a panel's full height. */
+  bare?: boolean;
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -265,7 +272,7 @@ export function Modal({
       </div>
       {/* Grows to fit its content; only scrolls once the dialog would
           otherwise run off the top/bottom of the viewport. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <div className={bare ? "min-h-0 flex-1" : "min-h-0 flex-1 overflow-y-auto px-6 py-5"}>
         <HeaderSlotContext.Provider value={headerSlot}>
           <FooterSlotContext.Provider value={footerSlot}>
             {hasOpened && children}

@@ -7,11 +7,14 @@ import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
 import {
   CalendarDays,
+  ChartGantt,
   ChevronDown,
   ChevronRight,
+  Diamond,
   Plus,
   Redo2,
   Sparkles,
+  Trash2,
   Undo2,
 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
@@ -43,6 +46,7 @@ import {
   createTask,
   deleteCategory,
   deleteTask,
+  deleteScheduleItems,
 } from "@/lib/cost-estimate/actions";
 import { deleteProjectEvent } from "@/lib/project-events/actions";
 import {
@@ -52,8 +56,12 @@ import {
 } from "@/lib/cost-estimate/undo-redo-actions";
 import type { CostCategory, CostTask, TaskPriority } from "@/lib/cost-estimate/data";
 import { setTaskWorkers, setCategoryWorkers } from "@/lib/workers/actions";
-import { recordTaskProgress } from "@/lib/task-progress/actions";
-import { recordCategoryProgress } from "@/lib/category-progress/actions";
+import { deleteTaskProgressEntry, recordTaskProgress } from "@/lib/task-progress/actions";
+import { listOverrideLogs } from "@/lib/progress-logs/actions";
+import {
+  deleteCategoryProgressEntry,
+  recordCategoryProgress,
+} from "@/lib/category-progress/actions";
 import type {
   Worker,
   WorkerAssignment,
@@ -276,6 +284,91 @@ type TimelineView = "day" | "week" | "month" | "year";
 // just not offering it as a pickable option).
 const TIMELINE_VIEW_OPTIONS: readonly TimelineView[] = ["day", "month", "year"];
 
+// The two ways to view the project's schedule — the toolbar's view menu.
+const SCHEDULE_VIEWS = [
+  { calendar: false, label: "Gantt", icon: <ChartGantt className="size-4" /> },
+  { calendar: true, label: "Calendar", icon: <CalendarDays className="size-4" /> },
+];
+
+/** The toolbar's Gantt / Calendar menu, at its left edge. */
+function ScheduleViewMenu({
+  calendarView,
+  onChange,
+}: {
+  calendarView: boolean;
+  onChange: (calendarView: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const current = SCHEDULE_VIEWS.find((view) => view.calendar === calendarView) ?? SCHEDULE_VIEWS[0];
+
+  // A click anywhere outside the open menu, or Escape, closes it.
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) setOpen(false);
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((isOpen) => !isOpen)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Switch view"
+        className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 bg-white px-2.5 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
+      >
+        <span className="text-zinc-400">{current.icon}</span>
+        {current.label}
+        <ChevronDown
+          className={`size-4 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {/* z-10 clears the chart below (isolated in its own stacking
+          context) but stays under the page's sticky tabs bar (z-20). */}
+      {open && (
+        <div
+          role="menu"
+          className="absolute top-full left-0 z-10 mt-1 min-w-36 rounded border border-zinc-200 bg-white py-1 shadow-lg"
+        >
+          {SCHEDULE_VIEWS.map((view) => {
+            const selected = view.calendar === calendarView;
+            return (
+              <button
+                key={view.label}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected}
+                onClick={() => {
+                  setOpen(false);
+                  onChange(view.calendar);
+                }}
+                className={`flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-zinc-50 ${
+                  selected ? "font-medium text-zinc-900" : "text-zinc-600"
+                }`}
+              >
+                <span className="text-zinc-400">{view.icon}</span>
+                {view.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const VIEW_MODE: Record<TimelineView, ViewMode> = {
   day: ViewMode.Day,
   week: ViewMode.Week,
@@ -442,10 +535,11 @@ const MAX_PLANNED_YEAR = 2100;
 // No per-task `styles` override and no barCornerRadius prop below —
 // both deliberately left at the library's own defaults (barBackgroundColor
 // #b8c2cc / barProgressColor #a3a3ff for tasks, projectBackgroundColor
-// #fac465 / projectProgressColor #7db59a for phases, milestoneBackgroundColor
-// #f1c453, barCornerRadius 3 — confirmed directly by reading the compiled
-// bundle's own default props) so the chart matches gantt-task-react's own
-// reference look exactly instead of drifting from it.
+// #fac465 / projectProgressColor #7db59a for phases, barCornerRadius 3 —
+// confirmed directly by reading the compiled bundle's own default props)
+// so the chart matches gantt-task-react's own reference look exactly
+// instead of drifting from it. Milestones alone are recolored (blue, see
+// the <Gantt> below), to match the task list's milestone diamond.
 //
 // A larger custom barCornerRadius (10, tried earlier) broke visibly on
 // short-duration bars: a radius bigger than half a narrow bar's own
@@ -687,7 +781,7 @@ export function GanttChartView({
   /** Opens the shared "Import with AI" modal — same modal, same open
    * state (project-detail-view.tsx), as the entry point already in
    * Material Breakdown's own footer (see MaterialBreakdownModalContent's
-   * own onImportBom). This toolbar button is a second, more visible
+   * own onImportBom). The schedule header's button is a second, more visible
    * entry point into the identical flow, not a separate one. */
   onImportBom: () => void;
 }) {
@@ -922,7 +1016,7 @@ export function GanttChartView({
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [progressParam, pathname, router, searchParams]);
   // Gantt chart vs. Calendar view of the same tasks (the toolbar's
-  // calendar button) — see ProjectCalendarView.
+  // view menu, ScheduleViewMenu) — see ProjectCalendarView.
   const [calendarView, setCalendarView] = useState(false);
   const { isAdmin } = usePortal();
   // The Calendar view's Add event / event chip — a new event on a day,
@@ -936,7 +1030,7 @@ export function GanttChartView({
   // the bottom), which stays up while the delete runs and shows its error
   // if it fails.
   const [pendingDelete, setPendingDelete] = useState<{
-    kind: "phase" | "task" | "event";
+    kind: "phase" | "task" | "event" | "selection";
     name: string;
     remove: () => Promise<{ error?: string }>;
     close: () => void;
@@ -944,8 +1038,21 @@ export function GanttChartView({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // The task list's ticked rows (gantt-task-react row ids) — tasks, and
+  // phases without tasks — for the toolbar's Delete.
+  const [selectedRowIds, setSelectedRowIds] = useState<ReadonlySet<string>>(() => new Set());
+
+  function toggleRowSelected(rowId: string) {
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+  }
+
   function confirmAndDelete(
-    kind: "phase" | "task" | "event",
+    kind: "phase" | "task" | "event" | "selection",
     name: string,
     remove: () => Promise<{ error?: string }>,
     close: () => void
@@ -1390,25 +1497,22 @@ export function GanttChartView({
     return map;
   }, [categoriesForDisplay]);
 
-  // The whole project's progress, shown on the toolbar's right edge:
-  // every task's weight x its percent complete (a task-less category
-  // counts as its own task) — the same Earned Value rollup
-  // getProjectProgress (lib/progress/data.ts) uses.
-  const overallProgress = useMemo(() => {
-    let sum = 0;
+  // The schedule header's counts: each task (a task-less category
+  // counts as its own task) and the milestones.
+  const scheduleCounts = useMemo(() => {
+    let tasks = 0;
+    let milestones = 0;
     for (const category of categoriesForDisplay) {
-      if (category.tasks.length === 0) {
-        sum += (category.weight * category.percentComplete) / 100;
-        continue;
-      }
+      if (category.tasks.length === 0) tasks += 1;
       for (const task of category.tasks) {
-        sum += (task.weight * task.percentComplete) / 100;
+        if (task.isMilestone) milestones += 1;
+        else tasks += 1;
       }
     }
-    return Math.min(100, sum);
+    return { tasks, milestones };
   }, [categoriesForDisplay]);
 
-  // The Calendar view (toolbar's calendar button) — every dated task, and
+  // The Calendar view (the toolbar's view menu) — every dated task, and
   // every dated task-less category, as a bar across its own days. A
   // category with tasks isn't its own bar; its tasks are.
   const calendarItems = useMemo(() => {
@@ -1468,6 +1572,33 @@ export function GanttChartView({
     }
     return map;
   }, [categoriesForDisplay]);
+
+  // The ticked rows that still exist (and can still be ticked — a phase
+  // that's since gained tasks can't), split the way deleteScheduleItems
+  // takes them.
+  const selectedTaskIds: number[] = [];
+  const selectedCategoryIds: number[] = [];
+  for (const rowId of selectedRowIds) {
+    const task = taskById.get(rowId);
+    if (task) {
+      if (task.id > 0 && !task.isMilestone) selectedTaskIds.push(task.id);
+      continue;
+    }
+    const category = categoryById.get(rowId);
+    if (category && category.id > 0 && !category.hasTasks) selectedCategoryIds.push(category.id);
+  }
+  const selectedCount = selectedTaskIds.length + selectedCategoryIds.length;
+
+  function deleteSelected() {
+    const taskIds = selectedTaskIds;
+    const categoryIds = selectedCategoryIds;
+    confirmAndDelete(
+      "selection",
+      `${selectedCount} ${selectedCount === 1 ? "task" : "tasks"}`,
+      () => deleteScheduleItems(projectId, { taskIds, categoryIds }),
+      () => setSelectedRowIds(new Set())
+    );
+  }
 
   const workerById = useMemo(() => {
     const map = new Map<number, Worker>();
@@ -2695,6 +2826,9 @@ export function GanttChartView({
           // the `tasks` useMemo above). Defaults to locked if the lookup
           // somehow misses, matching the original always-locked behavior.
           const categoryDatesLocked = isProject && (category?.hasTasks ?? true);
+          // A phase with tasks nesting under it. A task-less one reads as
+          // a plain task row — ticked, not expanded.
+          const isGroup = isProject && (category?.hasTasks ?? true);
 
           return (
             <div
@@ -2708,41 +2842,65 @@ export function GanttChartView({
               // than its fill — border-zinc-100 on a bg-zinc-100 row
               // vanished, so back-to-back phases read as one gray block.
               className={`flex items-center border-b text-xs text-zinc-600 ${
-                isProject ? "border-zinc-200 bg-zinc-100" : "border-zinc-100"
+                isGroup ? "border-zinc-200 bg-zinc-100" : "border-zinc-100"
               }`}
             >
               <div
                 className="flex h-full shrink-0 items-center gap-1 border-r border-zinc-200 px-2 text-zinc-900"
                 style={{ width: columnWidths.text }}
               >
-                {/* The chevron itself only renders for a category that
-                    actually has tasks to expand/collapse — a task-less
-                    "standalone" category (e.g. MOBILIZATION) acts as a
-                    regular task row (see categoryDatesLocked's own doc
-                    comment above), so a chevron implying there's hidden
-                    content underneath it would be misleading. Still
-                    reserves the exact same size/gap either way (a
-                    same-size empty spacer in its place) so a
-                    standalone category's own name lines up with one
-                    that does have the chevron, rather than shifting
-                    left into the gap. */}
-                {isProject &&
-                  (category?.hasTasks ?? true ? (
-                    <button
-                      type="button"
-                      onClick={() => onExpanderClick(row)}
-                      aria-label={row.hideChildren ? "Expand phase" : "Collapse phase"}
-                      className="shrink-0 cursor-pointer text-zinc-400 hover:text-zinc-700"
+                {/* Every row's leading slot, all the same size so names
+                    line up: the chevron, only for a category that
+                    actually has tasks to expand/collapse; a blue diamond
+                    for a milestone; a checkbox for every other task and
+                    task-less "standalone" category (e.g. MOBILIZATION,
+                    a regular task row — see categoryDatesLocked's own
+                    doc comment above), ticking it for the toolbar's
+                    Delete; and an empty spacer for a filler row or one
+                    not saved yet (nothing real to delete). */}
+                {isGroup ? (
+                  <button
+                    type="button"
+                    onClick={() => onExpanderClick(row)}
+                    aria-label={row.hideChildren ? "Expand phase" : "Collapse phase"}
+                    className="mr-1.5 shrink-0 cursor-pointer text-zinc-400 hover:text-zinc-700"
+                  >
+                    {row.hideChildren ? (
+                      <ChevronRight className="size-3.5" />
+                    ) : (
+                      <ChevronDown className="size-3.5" />
+                    )}
+                  </button>
+                ) : task?.isMilestone ? (
+                  <Diamond aria-hidden className="mr-1.5 size-3.5 shrink-0 text-blue-600" />
+                ) : (isProject ? category?.id ?? 0 : task?.id ?? 0) > 0 ? (
+                  // Drawn, not the browser's own: square, light gray, and
+                  // a small check centered in it (same path as the
+                  // progress window's history markers).
+                  <span className="relative mr-1.5 size-3.5 shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={selectedRowIds.has(row.id)}
+                      onChange={() => toggleRowSelected(row.id)}
+                      aria-label={`Select ${row.name}`}
+                      className="peer block size-3.5 cursor-pointer appearance-none border border-zinc-300 bg-white transition checked:border-zinc-500 checked:bg-zinc-500 focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-zinc-400"
+                    />
+                    <svg
+                      aria-hidden
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="pointer-events-none absolute inset-0 size-3.5 text-white opacity-0 peer-checked:opacity-100"
                     >
-                      {row.hideChildren ? (
-                        <ChevronRight className="size-3.5" />
-                      ) : (
-                        <ChevronDown className="size-3.5" />
-                      )}
-                    </button>
-                  ) : (
-                    <span className="size-3.5 shrink-0" aria-hidden="true" />
-                  ))}
+                      <path d="M4.5 8 7 10.5l4.5-5" />
+                    </svg>
+                  </span>
+                ) : (
+                  <span className="mr-1.5 size-3.5 shrink-0" aria-hidden="true" />
+                )}
                 {isProject && category && editingCategoryId === category.id ? (
                   // Shown either right after handleAddPhase's own create
                   // call succeeds, or any time the name button just below
@@ -2773,14 +2931,18 @@ export function GanttChartView({
                       else if (e.key === "Escape") setEditingCategoryId(null);
                     }}
                     aria-label="Phase name"
-                    className="h-full min-w-0 flex-1 border-none bg-white px-1 text-xs font-bold text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400"
+                    className={`h-full min-w-0 flex-1 border-none bg-white px-1 text-xs text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400 ${
+                      isGroup ? "font-bold" : "font-medium"
+                    }`}
                   />
                 ) : isProject && category && category.id > 0 ? (
                   <button
                     type="button"
                     onClick={() => setEditingCategoryId(category.id)}
                     title="Click to rename"
-                    className="min-w-0 flex-1 cursor-pointer truncate text-left font-bold transition hover:text-zinc-600"
+                    className={`min-w-0 flex-1 cursor-pointer truncate text-left transition hover:text-zinc-600 ${
+                      isGroup ? "font-bold" : "font-medium"
+                    }`}
                   >
                     {/* pendingCategoryNameOverrides' own doc comment (see
                         usePendingOverrides) — without this, closing the
@@ -2797,13 +2959,15 @@ export function GanttChartView({
                   // the button above itself the instant the real id
                   // lands (categoryById/tasks re-derive from the exact
                   // same pendingNewPhase update that swaps it in).
-                  <span className="min-w-0 flex-1 truncate text-left font-bold">
+                  <span
+                    className={`min-w-0 flex-1 truncate text-left ${isGroup ? "font-bold" : "font-medium"}`}
+                  >
                     {row.name}
                   </span>
                 ) : !isProject && task && editingTaskId === task.id ? (
                   // Same inline rename input as a phase's own name above,
                   // just indented to match a task row's own nesting level.
-                  // ml-6 (margin, not the pl-6 padding the static span/
+                  // ml-4 (margin, not the pl-4 padding the static span/
                   // button below use) so the input's own outline box
                   // starts at the indent instead of spanning the full
                   // cell width with blank padded space inside it — with
@@ -2824,7 +2988,7 @@ export function GanttChartView({
                       else if (e.key === "Escape") setEditingTaskId(null);
                     }}
                     aria-label="Task name"
-                    className="h-full min-w-0 flex-1 border-none bg-white ml-6 px-1 text-xs font-medium text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400"
+                    className="h-full min-w-0 flex-1 border-none bg-white ml-4 px-1 text-xs font-medium text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400"
                   />
                 ) : !isProject && task && task.id > 0 ? (
                   <button
@@ -2832,15 +2996,20 @@ export function GanttChartView({
                     onClick={() => setEditingTaskId(task.id)}
                     title="Click to rename"
                     className={
-                      // Same pl-6 nesting-indent reasoning as the former
+                      // Same pl-4 nesting-indent reasoning as the former
                       // plain span here (phase names sit flush left of
                       // their own chevron, so an unindented task name
                       // read as the same hierarchy level instead of
                       // belonging *under* its phase), now on a button
                       // since the name itself is clickable-to-rename —
                       // same convention as a phase's own name button
-                      // just above, not bold since a task row isn't.
-                      "min-w-0 flex-1 cursor-pointer truncate pl-6 text-left font-medium transition hover:text-zinc-600"
+                      // just above, not bold since a task row isn't. A
+                      // milestone's name is blue, like its diamond.
+                      `min-w-0 flex-1 cursor-pointer truncate pl-4 text-left font-medium transition ${
+                        task.isMilestone
+                          ? "text-blue-600 hover:text-blue-500"
+                          : "hover:text-zinc-600"
+                      }`
                     }
                   >
                     {/* pendingNameOverrides' own doc comment (see
@@ -2857,7 +3026,7 @@ export function GanttChartView({
                   // comment — renaming it here would have nothing real
                   // to persist against yet) — plain, unclickable either
                   // way.
-                  <span className="min-w-0 flex-1 truncate pl-6 font-medium">
+                  <span className="min-w-0 flex-1 truncate pl-4 font-medium">
                     {row.name}
                   </span>
                 )}
@@ -3504,12 +3673,29 @@ export function GanttChartView({
   }
 
   return (
-    // No -mx-8 of its own — the Overview tab's whole content block
-    // (project-detail-view.tsx) already breaks out to the page's true
-    // left/right edges, this component included, so adding it again
-    // here would double the offset and push this chart's content past
-    // the edge (clipped by its own overflow-hidden wrapper below).
+    // Inset in the page's own padding, on the gray content area under
+    // the Cost overview card (project-detail-view.tsx).
     <div className="flex flex-col gap-3">
+      {/* The section's header: its name and counts, and Import with AI. */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-baseline gap-3">
+          <h2 className="text-base font-semibold text-zinc-900">Project schedule</h2>
+          <span className="text-xs text-zinc-400">
+            {scheduleCounts.tasks} {scheduleCounts.tasks === 1 ? "task" : "tasks"} ·{" "}
+            {scheduleCounts.milestones}{" "}
+            {scheduleCounts.milestones === 1 ? "milestone" : "milestones"}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onImportBom}
+          title="Import a document with AI"
+          className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 bg-white px-2.5 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+        >
+          <Sparkles className="size-4" />
+          Import with AI
+        </button>
+      </div>
       {/* Toolbar + whatever follows (the chart, or the empty-state
           placeholder) share this one un-gapped flex column so the
           toolbar sits flush against it, no visible seam — a plain
@@ -3520,19 +3706,21 @@ export function GanttChartView({
           border, same as adjacent bordered rows elsewhere in this
           chart. */}
       <div className="flex flex-col">
-        {/* Deliberately just Undo/Redo/Import — a reference
+        {/* Deliberately just the view menu, Undo/Redo and zoom — a reference
             toolbar image with ~25 icons (text color, cut/copy/paste,
             zoom, print, share, lock, settings, ...) was the original
             ask, but none of those other actions have a real feature
             behind them in this app, so they're not here as decoration. */}
-        <div className="flex items-center gap-1 border border-t-2 border-zinc-200 border-t-zinc-900 bg-zinc-50 px-2 py-1.5">
+        <div className="flex items-center gap-1.5 border border-zinc-200 bg-zinc-50 px-3 py-2">
+          <ScheduleViewMenu calendarView={calendarView} onChange={setCalendarView} />
+          <div className="mx-1.5 h-6 w-px bg-zinc-200" />
           <button
             type="button"
             onClick={handleUndo}
             disabled={!historyReady || !effectiveCanUndo || isUndoRedoPending}
             aria-label="Undo"
             title="Undo (Ctrl+Z)"
-            className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
+            className="cursor-pointer rounded p-2 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
           >
             <Undo2 className="size-4" />
           </button>
@@ -3542,13 +3730,13 @@ export function GanttChartView({
             disabled={!historyReady || !effectiveCanRedo || isUndoRedoPending}
             aria-label="Redo"
             title="Redo (Ctrl+Y)"
-            className="cursor-pointer rounded p-1.5 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
+            className="cursor-pointer rounded p-2 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
           >
             <Redo2 className="size-4" />
           </button>
-          <div className="mx-1 h-5 w-px bg-zinc-200" />
-          {/* Week isn't offered here — see the `view` state's own doc
-              comment above for why. */}
+          {/* Zoom is the Gantt view's alone. Week isn't offered here —
+              see the `view` state's own doc comment above for why. */}
+          {!calendarView && <div className="mx-1.5 h-6 w-px bg-zinc-200" />}
           {!calendarView && TIMELINE_VIEW_OPTIONS.map((option) => (
             <button
               key={option}
@@ -3556,7 +3744,7 @@ export function GanttChartView({
               onClick={() => setView(option)}
               aria-pressed={view === option}
               title={`Zoom to ${option}`}
-              className={`cursor-pointer rounded px-2 py-1 text-xs font-medium capitalize transition ${
+              className={`cursor-pointer rounded px-3 py-1.5 text-sm font-medium capitalize transition ${
                 view === option
                   ? "bg-zinc-900 text-white"
                   : "text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
@@ -3565,45 +3753,17 @@ export function GanttChartView({
               {option}
             </button>
           ))}
-          {!calendarView && <div className="mx-1 h-5 w-px bg-zinc-200" />}
-          <button
-            type="button"
-            onClick={() => setCalendarView((open) => !open)}
-            aria-pressed={calendarView}
-            aria-label="Calendar view"
-            title={calendarView ? "Back to the Gantt chart" : "Calendar view"}
-            className={`cursor-pointer rounded p-1.5 transition ${
-              calendarView
-                ? "bg-zinc-900 text-white"
-                : "text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900"
-            }`}
-          >
-            <CalendarDays className="size-4" />
-          </button>
-          <div className="ml-auto flex items-center gap-1">
-            {/* Filled black, unlike every other plain/ghost button in this
-                toolbar — deliberately stands out as the one action that
-                leaves the chart entirely (opens a different modal/flow)
-                rather than editing it in place, same bg-zinc-900 treatment
-                "Process with AI"/"Confirm & Create Tasks" use elsewhere in
-                this same flow. */}
+          {/* Only while something's ticked in the task list. */}
+          {!calendarView && selectedCount > 0 && (
             <button
               type="button"
-              onClick={onImportBom}
-              title="Import a document with AI"
-              className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-2 py-1.5 text-xs font-medium text-white transition hover:bg-zinc-800"
+              onClick={deleteSelected}
+              className="ml-auto flex cursor-pointer items-center gap-1.5 rounded border border-red-200 bg-white px-2.5 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50"
             >
-              <Sparkles className="size-4" />
-              Import with AI
+              <Trash2 className="size-4" />
+              Delete {selectedCount} selected
             </button>
-            <div className="mx-2 h-5 w-px bg-zinc-200" />
-            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-              <span>Overall progress</span>
-              <span className="font-semibold text-zinc-900 tabular-nums">
-                {overallProgress.toFixed(2)}%
-              </span>
-            </div>
-          </div>
+          )}
         </div>
 
         {/* Always the real chart, even with zero phases yet — a plain
@@ -3733,6 +3893,10 @@ export function GanttChartView({
                   listCellWidth={showTaskList ? `${visiblePanelWidth}px` : ""}
                   columnWidth={effectiveColumnWidth}
                   todayColor="rgba(252, 211, 77, 0.15)"
+                  // Blue like the task list's milestone diamond and name
+                  // (Tailwind's blue-600 / blue-700).
+                  milestoneBackgroundColor="#155dfc"
+                  milestoneBackgroundSelectedColor="#1447e6"
                   TooltipContent={GanttTooltipContent}
                   TaskListHeader={CustomTaskListHeader}
                   TaskListTable={CustomTaskListTable}
@@ -3825,13 +3989,19 @@ export function GanttChartView({
 
       <ConfirmDialog
         open={pendingDelete !== null}
-        title={`Delete this ${pendingDelete?.kind ?? "item"}?`}
+        title={
+          pendingDelete?.kind === "selection"
+            ? `Delete ${pendingDelete.name}?`
+            : `Delete this ${pendingDelete?.kind ?? "item"}?`
+        }
         message={
           pendingDelete?.kind === "phase"
             ? `"${pendingDelete.name}" and every task in it will be deleted, along with their progress. This can't be undone.`
             : pendingDelete?.kind === "task"
               ? `"${pendingDelete.name}" will be deleted, along with its progress. This can't be undone.`
-              : `"${pendingDelete?.name ?? ""}" will be deleted. This can't be undone.`
+              : pendingDelete?.kind === "selection"
+                ? "Every ticked task will be deleted, along with its progress. This can't be undone."
+                : `"${pendingDelete?.name ?? ""}" will be deleted. This can't be undone.`
         }
         pending={deleting}
         error={deleteError}
@@ -3965,6 +4135,10 @@ export function GanttChartView({
       <Modal
         open={progressModal !== null}
         onClose={() => setProgressModal(null)}
+        // Wide: the day's log on the left, its override history in a
+        // column of its own on the right.
+        size="wide"
+        bare
         title={
           progressModal
             ? progressModal.kind === "task"
@@ -4002,6 +4176,16 @@ export function GanttChartView({
             onSave={(input) =>
               recordTaskProgress(progressModal.task.id, projectId, input)
             }
+            // Admins and super admins can delete an override; foremen can't.
+            onDeleteOverride={
+              isAdmin
+                ? (entryDate) =>
+                    deleteTaskProgressEntry(progressModal.task.id, projectId, entryDate)
+                : undefined
+            }
+            loadOverrideHistory={() =>
+              listOverrideLogs(projectId, { kind: "task", id: progressModal.task.id })
+            }
             onClose={() => setProgressModal(null)}
           />
         )}
@@ -4011,9 +4195,11 @@ export function GanttChartView({
             unit={progressModal.category.unit}
             plannedStartDate={progressModal.category.plannedStartDate}
             plannedEndDate={progressModal.category.plannedEndDate}
-            // A task-less category has no planned material list of its
-            // own; its planned costs are its own direct line's.
-            plannedMaterials={[]}
+            // A task-less category's own Material Breakdown lines — its
+            // Materials used inputs, the same as a task's.
+            plannedMaterials={groupPlannedMaterials(
+              progressModal.category.materialAssignments
+            )}
             plannedCosts={{
               labor: progressModal.category.categoryLaborEstimate,
               material: progressModal.category.categoryMaterialEstimate,
@@ -4039,7 +4225,17 @@ export function GanttChartView({
                 quantityCompletedToday: input.quantityCompletedToday,
                 costs: input.costs,
                 attendance: input.attendance,
+                materialsUsed: input.materialsUsed,
               })
+            }
+            onDeleteOverride={
+              isAdmin
+                ? (entryDate) =>
+                    deleteCategoryProgressEntry(progressModal.category.id, projectId, entryDate)
+                : undefined
+            }
+            loadOverrideHistory={() =>
+              listOverrideLogs(projectId, { kind: "category", id: progressModal.category.id })
             }
             onClose={() => setProgressModal(null)}
           />

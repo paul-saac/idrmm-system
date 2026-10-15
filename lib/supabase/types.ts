@@ -704,6 +704,69 @@ export interface Database {
         Update: never;
         Relationships: [];
       };
+      category_progress_material_entries: {
+        // Same as task_progress_material_entries above, one level up —
+        // materials used on a task-less phase's own day, matched to its
+        // planned lines by name + unit. See 0070.
+        Row: {
+          id: number;
+          progress_entry_id: number;
+          material_name: string;
+          unit: string | null;
+          quantity_used: number;
+          created_at: string;
+        };
+        Insert: {
+          progress_entry_id: number;
+          material_name: string;
+          unit?: string | null;
+          quantity_used?: number;
+        };
+        Update: never;
+        Relationships: [];
+      };
+      progress_override_logs: {
+        // The override history — every saved or deleted Daily Progress
+        // Update, who and exactly when, append-only. See 0071.
+        Row: {
+          id: number;
+          project_id: number;
+          task_id: number | null;
+          category_id: number | null;
+          entry_date: string;
+          action: "saved" | "deleted";
+          quantity_completed: number;
+          labor_cost: number;
+          material_cost: number;
+          equipment_cost: number;
+          other_cost: number;
+          /** [{ name, unit, quantity }] */
+          materials_used: unknown;
+          /** [{ name, hours, rate }] */
+          attendance: unknown;
+          saved_by: string | null;
+          saved_by_name: string | null;
+          created_at: string;
+        };
+        Insert: {
+          project_id: number;
+          task_id?: number | null;
+          category_id?: number | null;
+          entry_date: string;
+          action: "saved" | "deleted";
+          quantity_completed?: number;
+          labor_cost?: number;
+          material_cost?: number;
+          equipment_cost?: number;
+          other_cost?: number;
+          materials_used?: unknown;
+          attendance?: unknown;
+          saved_by?: string | null;
+          saved_by_name?: string | null;
+        };
+        Update: never;
+        Relationships: [];
+      };
       category_progress_entries: {
         // Same idea as task_progress_entries above, one level up — see
         // 0048_category_progress_tracking.sql.

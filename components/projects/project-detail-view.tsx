@@ -4,12 +4,12 @@ import { useActionState, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Trash2, LayoutGrid, CircleDollarSign, CalendarDays, PiggyBank, ChevronDown } from "lucide-react";
-import { EditIcon } from "@/components/icons/edit-icon";
+import { Trash2, LayoutGrid, CircleDollarSign, CalendarDays, PiggyBank, ChevronRight, Wallet } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { HeaderActions } from "@/components/auth/header-actions";
 import { usePortal } from "@/components/portal/portal-context";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
+import { ProjectHeader } from "@/components/projects/project-header";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
 import {
   ImportBomModalContent,
@@ -68,10 +68,6 @@ import type {
   OtherExpenseGroup,
 } from "@/lib/expenses/data";
 import { deleteProject, type ProjectActionState } from "@/lib/projects/actions";
-import {
-  projectStatusLabel,
-  projectStatusBadgeClasses,
-} from "@/lib/projects/status";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
 import type { CostEstimate } from "@/lib/cost-estimate/data";
@@ -432,8 +428,8 @@ export function ProjectDetailView({
   // into one collapsible card (per adviser feedback) — PM/Foreman/
   // progress/dates used to sit in their own "General Information" card
   // above this, but that's now redundant with the sticky project header,
-  // which already shows all of it.
-  const [costOverviewOpen, setCostOverviewOpen] = useState(true);
+  // which already shows all of it. Closed until "View breakdown".
+  const [costOverviewOpen, setCostOverviewOpen] = useState(false);
   // Opens the shared "Import with AI" modal from the Material Breakdown
   // modal's own footer (see MaterialBreakdownModalContent) — lifted up
   // here rather than owned by CostEstimateView so the same modal
@@ -499,7 +495,9 @@ export function ProjectDetailView({
     // no matter how far the content below scrolled. Both now live inside
     // this one scroll container instead, so the header scrolls away with
     // everything else, same as a plain document.
-    <div className="flex-1 overflow-y-auto">
+    // Gray under the white project header — the content area every tab
+    // sits on.
+    <div className="flex-1 overflow-y-auto bg-zinc-100">
       <header className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-8 py-5">
         <nav className="flex items-center gap-1.5 text-base">
           <Link
@@ -515,66 +513,20 @@ export function ProjectDetailView({
       </header>
 
       <main>
-        {/* The app's own "black" (bg-zinc-900, remapped in globals.css
-            to a warm #3B3939 — see AdminSidebar's own doc comment on
-            why the sidebar itself deliberately opts OUT of this token)
-            — same color as the active SubTabsRow pill (e.g. "Progress
-            Overview"), applied here too so both read as the same
-            "black" rather than two different near-blacks. A one-off
-            dark header purely for visual variety, not tied to any
-            state (status, theme, etc). */}
         {/* No rounding at all — this block sits flush against the
             breadcrumb header directly above it (bg-zinc-50, no gap
             between them) and against the sticky tabs block directly
-            below it (same bg-zinc-900), so any rounded corner here —
+            below it (same bg-white), so any rounded corner here —
             top or bottom — just pokes a stray notch of the page's own
             background through rather than reading as a deliberate
             floating card. */}
-        <div className="border border-none pt-6 bg-zinc-900">
-          <div className="flex items-start justify-between gap-3 mx-8">
-            <div className="flex flex-wrap items-center gap-3.5">
-              <h1 className="text-2xl font-semibold text-white">
-                {project.name}
-              </h1>
-              <span
-                className={`rounded-xs px-2.5 py-1 text-xs font-medium ${projectStatusBadgeClasses(project.status)}`}
-              >
-                {projectStatusLabel(project.status)}
-              </span>
-            </div>
-            {/* Delete now lives inside the Edit Project modal instead of
-                sitting here as its own button — same "Delete lives inside
-                this modal" convention as the Gantt Chart's SubtaskForm. */}
-            {isAdmin && (
-              <button
-                type="button"
-                onClick={() => setEditOpen(true)}
-                aria-label="Edit project"
-                title="Edit project"
-                className="flex flex-shrink-0 cursor-pointer items-center justify-center rounded border border-white/15 p-2 text-zinc-400 transition hover:border-white/25 hover:bg-white/10 hover:text-white"
-              >
-                <EditIcon className="size-4" />
-              </button>
-            )}
-          </div>
-
-          <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-sm mx-8">
-            {project.location && (
-              <span className="text-zinc-400">{project.location}</span>
-            )}
-            <span className="text-zinc-600">|</span>
-            <span className="text-zinc-400">
-              <span className="text-zinc-200">Project Manager:</span>{" "}
-              {project.projectManagerName ?? "—"}
-            </span>
-            <span className="text-zinc-600">|</span>
-            <span className="text-zinc-400">
-              <span className="text-zinc-200">Foreman:</span>{" "}
-              {project.foremanName ?? "—"}
-            </span>
-          </div>
-
-        </div>
+        <ProjectHeader
+          project={project}
+          categories={costEstimate.categories}
+          workers={workers}
+          workerAssignments={workerAssignments}
+          onEdit={isAdmin ? () => setEditOpen(true) : undefined}
+        />
 
         {/* Pinned so the main tabs stay reachable while everything below
             (the active sub-tabs row included) scrolls underneath —
@@ -582,27 +534,26 @@ export function ProjectDetailView({
             keeps it from sitting flush against the very top edge once
             stuck (padding, not margin — a margin on the child here would
             collapse away and leave no gap once actually stuck). Same
-            dark bg as the block above so the two read as one continuous
-            header once stuck; z-20 is well below the Modal (native
-            <dialog>, browser top layer) so Edit Project etc. are
-            unaffected. */}
-        <div className="sticky top-0 z-20 bg-zinc-900 pt-3">
-          <div className="mt-5">
-            <div className="flex gap-10 px-8">
-              {VISIBLE_MAIN_TABS.map((tab) => (
-                <button
-                  key={tab.value}
-                  type="button"
-                  onClick={() => setActiveTab(tab.value)}
-                  className={`cursor-pointer border-b-2 pb-2 text-xs font-medium transition ${activeTab === tab.value
-                    ? "border-white text-white"
-                    : "border-transparent text-zinc-400 hover:text-zinc-200"
-                    }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
+            white bg as the block above so the two read as one continuous
+            header; the line along its bottom is an inset shadow so the
+            open tab's underline covers its stretch of it (as on Team).
+            z-20 is well below the Modal (native <dialog>, browser top
+            layer) so Edit Project etc. are unaffected. */}
+        <div className="sticky top-0 z-20 bg-white pt-3 shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
+          <div className="flex gap-10 px-8">
+            {VISIBLE_MAIN_TABS.map((tab) => (
+              <button
+                key={tab.value}
+                type="button"
+                onClick={() => setActiveTab(tab.value)}
+                className={`cursor-pointer border-b-2 pb-2 text-xs font-medium transition ${activeTab === tab.value
+                  ? "border-zinc-900 text-zinc-900"
+                  : "border-transparent text-zinc-400 hover:border-zinc-300 hover:text-zinc-900"
+                  }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -729,36 +680,34 @@ export function ProjectDetailView({
             <OtherExpensesView projectId={project.id} groups={otherExpenses} />
           )
         ) : (
-          // -mx-8 cancels the parent's own px-8 so this tab's content
-          // (unlike every other tab's) runs edge-to-edge instead of
-          // sitting inset — only this Overview tab was asked to bleed
-          // full-width. No gap between children either — the Cost
-          // Overview card sits flush against the Gantt Chart below it,
-          // no divider line between them.
-          <div className="-mx-8 flex flex-col">
-            {/* No border on any side — the sticky tabs bar right above
-                already has its own bottom border (a top border here
-                would double it), the Gantt Chart sits flush against
-                this card's bottom with nothing dividing them, and it's
-                already edge-to-edge left/right with nothing beside it
-                to divide from either. */}
-            <div className="bg-zinc-50">
+          // Inset in the page's padding on the gray content area: the
+          // Cost overview card, then the Gantt Chart's own section.
+          <div className="flex flex-col gap-6 pt-6">
+            <div className="rounded border border-zinc-200 bg-white">
               <button
                 type="button"
                 onClick={() => setCostOverviewOpen((open) => !open)}
                 aria-expanded={costOverviewOpen}
-                className={`flex w-full cursor-pointer items-center justify-between px-5 py-3.5 text-left transition hover:bg-zinc-200 ${costOverviewOpen ? "border-b border-zinc-200" : ""}`}
+                className="flex w-full cursor-pointer items-center gap-3 px-5 py-3.5 text-left transition hover:bg-zinc-50"
               >
-                <span className="text-sm font-semibold text-zinc-900">
-                  Cost Overview
+                <Wallet aria-hidden className="size-4 shrink-0 text-zinc-400" />
+                <span className="shrink-0 text-sm font-semibold text-zinc-900">
+                  Cost overview
                 </span>
-                <ChevronDown
-                  className={`size-4 flex-shrink-0 text-zinc-400 transition-transform ${costOverviewOpen ? "" : "-rotate-90"}`}
-                />
+                <span className="min-w-0 truncate text-sm text-zinc-400">
+                  Estimated cost, budget & actual spend
+                </span>
+                <span className="ml-auto flex shrink-0 items-center gap-1 text-sm font-medium text-zinc-700">
+                  {costOverviewOpen ? "Hide breakdown" : "View breakdown"}
+                  <ChevronRight
+                    aria-hidden
+                    className={`size-4 transition-transform ${costOverviewOpen ? "rotate-90" : ""}`}
+                  />
+                </span>
               </button>
 
               {costOverviewOpen && (
-                <div>
+                <div className="border-t border-zinc-200">
                   <div className="grid grid-cols-1 divide-y divide-zinc-200 border-b-2 border-zinc-900 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
                     <StatCard
                       label="Total Estimated Cost"

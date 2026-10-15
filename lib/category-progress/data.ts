@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { ZERO_COSTS, type ProgressAnchor } from "@/lib/task-progress/calculate";
+import { ZERO_COSTS, materialKey, type ProgressAnchor } from "@/lib/task-progress/calculate";
 import {
   attendanceByEntry,
   entryCosts,
@@ -13,16 +13,17 @@ import {
  * tasks — see 0048_category_progress_tracking.sql's own comment) is
  * simply absent.
  *
- * cumulativeMaterialUsage is always empty here — a task-less category
- * has no planned material list of its own to log usage against (just
- * its single direct line, see CostCategory.materialDirectQuantity). */
+ * cumulativeMaterialUsage sums what each update logged against the
+ * category's own Material Breakdown lines (0070), keyed by materialKey —
+ * the same as a task's. */
 export type CategoryProgressAnchors = Record<number, ProgressAnchor>;
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
-/** Every entry for these categories, oldest first. "*" rather than a
+/** Every entry for these categories, oldest first, each with its own
+ * day's material usage attached (keyed by materialKey). "*" rather than a
  * column list, so a DB missing a newer column (e.g. 0057's costs) still
- * loads. */
+ * loads; a DB without 0070 yet just reads no materials used. */
 async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
   const { data, error } = await supabase
     .from("category_progress_entries")
@@ -33,7 +34,34 @@ async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
   if (error) {
     console.error("[category-progress] entries query failed:", error.message);
   }
-  return data ?? [];
+  const rows = data ?? [];
+
+  const materialsByEntry = new Map<number, Record<string, number>>();
+  if (rows.length > 0) {
+    const { data: materialRows, error: materialsError } = await supabase
+      .from("category_progress_material_entries")
+      .select("progress_entry_id, material_name, unit, quantity_used")
+      .in(
+        "progress_entry_id",
+        rows.map((row) => row.id)
+      );
+
+    if (materialsError) {
+      console.error(
+        "[category-progress] material entries query failed:",
+        materialsError.message
+      );
+    }
+
+    for (const row of materialRows ?? []) {
+      const usage = materialsByEntry.get(row.progress_entry_id) ?? {};
+      const key = materialKey(row.material_name, row.unit);
+      usage[key] = (usage[key] ?? 0) + (row.quantity_used ?? 0);
+      materialsByEntry.set(row.progress_entry_id, usage);
+    }
+  }
+
+  return rows.map((row) => ({ ...row, materialUsage: materialsByEntry.get(row.id) ?? {} }));
 }
 
 function emptyAnchor(): ProgressAnchor & { loggedDates: string[] } {
@@ -51,6 +79,9 @@ function addRow(
 ) {
   const costs = entryCosts(row);
   anchor.cumulativeQuantityCompleted += row.quantity_completed ?? 0;
+  for (const [key, quantity] of Object.entries(row.materialUsage)) {
+    anchor.cumulativeMaterialUsage[key] = (anchor.cumulativeMaterialUsage[key] ?? 0) + quantity;
+  }
   anchor.cumulativeCosts.labor += costs.labor;
   anchor.cumulativeCosts.material += costs.material;
   anchor.cumulativeCosts.equipment += costs.equipment;
@@ -122,7 +153,7 @@ export async function listCategoryProgressToday(
       progress.today = {
         quantityCompleted: row.quantity_completed ?? 0,
         costs: entryCosts(row),
-        materialUsage: {},
+        materialUsage: row.materialUsage,
       };
       todayEntryCategory.set(row.id, row.category_id);
     }
@@ -144,7 +175,7 @@ export async function listCategoryProgressToday(
     result[categoryId].latest = {
       quantityCompleted: row.quantity_completed ?? 0,
       costs: entryCosts(row),
-      materialUsage: {},
+      materialUsage: row.materialUsage,
       entryDate: row.entry_date,
       savedByName: (row.recorded_by && names.get(row.recorded_by)) || null,
     };

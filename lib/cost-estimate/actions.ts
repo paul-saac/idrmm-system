@@ -1158,6 +1158,72 @@ export async function deleteTask(
   });
 }
 
+/**
+ * The Gantt chart's Delete for its ticked rows — tasks, and phases
+ * without tasks — all in one go, as one undo step. Only this project's
+ * rows are touched, whatever ids come in.
+ */
+export async function deleteScheduleItems(
+  projectId: number,
+  items: { taskIds: number[]; categoryIds: number[] }
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) {
+      return { error: "You are not authorized to manage cost estimates." };
+    }
+
+    const taskIds = (items?.taskIds ?? []).filter((id) => Number.isInteger(id));
+    const categoryIds = (items?.categoryIds ?? []).filter((id) => Number.isInteger(id));
+    if (taskIds.length === 0 && categoryIds.length === 0) return { success: true };
+
+    const supabase = await createClient();
+
+    if (taskIds.length > 0) {
+      const { error } = await supabase
+        .from("estimate_tasks")
+        .delete()
+        .eq("project_id", projectId)
+        .in("id", taskIds);
+
+      if (error) {
+        logSupabaseError("[deleteScheduleItems] Supabase task delete failed", error);
+        return { error: "Could not delete the selected tasks. Please try again." };
+      }
+    }
+
+    if (categoryIds.length > 0) {
+      // Anything still in one of these phases goes with it, the same as
+      // deleteCategory.
+      const { error: tasksError } = await supabase
+        .from("estimate_tasks")
+        .delete()
+        .eq("project_id", projectId)
+        .in("category_id", categoryIds);
+
+      if (tasksError) {
+        logSupabaseError("[deleteScheduleItems] Supabase phase tasks delete failed", tasksError);
+        return { error: "Could not delete the selected tasks. Please try again." };
+      }
+
+      const { error } = await supabase
+        .from("estimate_categories")
+        .delete()
+        .eq("project_id", projectId)
+        .in("id", categoryIds);
+
+      if (error) {
+        logSupabaseError("[deleteScheduleItems] Supabase phase delete failed", error);
+        return { error: "Could not delete the selected tasks. Please try again." };
+      }
+    }
+
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
 type MaterialDirectInput = {
   quantity: number;
   unit: string | null;
