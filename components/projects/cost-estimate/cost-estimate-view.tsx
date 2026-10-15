@@ -273,7 +273,7 @@ export function CostEstimateView({
                     style={{ width: categoriesWidth }}
                     className="relative border-r border-zinc-200 px-4 py-2.5"
                   >
-                    Categories
+                    Tasks
                     {/* The one resize handle in this table — a wider
                         invisible drag target than the border itself, so
                         it's actually easy to grab. */}

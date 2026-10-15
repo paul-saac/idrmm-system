@@ -9,7 +9,9 @@ import {
   groupAssignmentsByWorker,
 } from "@/components/team/availability";
 import { usePortal } from "@/components/portal/portal-context";
-import type { Worker, WorkerAssignment } from "@/lib/workers/data";
+import { Checkbox, SectionLabel } from "@/components/ui/list-table";
+import { memberSections } from "@/lib/workers/sections";
+import type { MemberGroup, Worker, WorkerAssignment } from "@/lib/workers/data";
 import type { WorkerActionState } from "@/lib/workers/actions";
 
 function formatDateRange(start: Date, end: Date) {
@@ -42,9 +44,13 @@ export function AssignWorkersModalContent({
   assignments,
   current,
   assignedWorkerIds,
+  groups = [],
   onSave,
   onClose,
 }: {
+  /** The Team's groups (crews): one click adds everyone in one (or, when
+   * they're all already picked, takes them off). */
+  groups?: MemberGroup[];
   /** The task or category name shown in this modal's own intro line —
    * "Assign workers to <rowName>." */
   rowName: string;
@@ -79,13 +85,15 @@ export function AssignWorkersModalContent({
   );
 
   const q = query.trim().toLowerCase();
-  const visibleWorkers = q
-    ? workers.filter(
-        (worker) =>
-          worker.fullName.toLowerCase().includes(q) ||
-          (worker.title ?? "").toLowerCase().includes(q)
-      )
-    : workers;
+  const sections = memberSections(
+    q
+      ? workers.filter(
+          (worker) =>
+            worker.fullName.toLowerCase().includes(q) ||
+            (worker.title ?? "").toLowerCase().includes(q)
+        )
+      : workers
+  );
 
   function toggle(workerId: number) {
     setSelected((prev) => {
@@ -94,6 +102,28 @@ export function AssignWorkersModalContent({
         next.delete(workerId);
       } else {
         next.add(workerId);
+      }
+      return next;
+    });
+  }
+
+  // Only groups with someone on the Team still in them.
+  const workerIds = new Set(workers.map((worker) => worker.id));
+  const crews = groups
+    .map((group) => ({
+      id: group.id,
+      name: group.name,
+      ids: group.memberIds.filter((id) => workerIds.has(id)),
+    }))
+    .filter((group) => group.ids.length > 0);
+
+  function toggleGroup(ids: number[]) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const all = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (all) next.delete(id);
+        else next.add(id);
       }
       return next;
     });
@@ -135,37 +165,77 @@ export function AssignWorkersModalContent({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search"
               aria-label="Search the team"
-              className="w-full rounded-md border border-zinc-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+              className="w-full rounded-md border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             />
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-            {visibleWorkers.map((worker) => {
-              const others = otherAssignments.get(worker.id) ?? [];
-              return (
-                <label
-                  key={worker.id}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-50"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(worker.id)}
-                    onChange={() => toggle(worker.id)}
-                    className="size-4 shrink-0 cursor-pointer rounded border-zinc-300 text-zinc-900 focus:ring-2 focus:ring-zinc-200"
-                  />
-                  <span className="truncate">{worker.fullName}</span>
-                  {worker.title && (
-                    <span className="shrink-0 text-xs text-zinc-400">{worker.title}</span>
-                  )}
-                  <span
-                    className="ml-auto shrink-0"
-                    title={others.length > 0 ? others.map(describeAssignment).join("\n") : undefined}
-                  >
-                    <AvailabilityBadge assigned={others.length > 0} />
-                  </span>
-                </label>
-              );
-            })}
+          {crews.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-zinc-500">Groups</span>
+              <div className="flex flex-wrap gap-2">
+                {crews.map((group) => {
+                  const all = group.ids.every((id) => selected.has(id));
+                  return (
+                    <button
+                      key={group.id}
+                      type="button"
+                      onClick={() => toggleGroup(group.ids)}
+                      aria-pressed={all}
+                      title={all ? "Take this group off" : "Add everyone in this group"}
+                      className={`flex cursor-pointer items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition ${
+                        all
+                          ? "border-zinc-900 bg-zinc-900 text-white"
+                          : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-400"
+                      }`}
+                    >
+                      {group.name}
+                      <span className={all ? "text-zinc-300" : "text-zinc-400"}>
+                        {group.ids.length}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Labeled by the Team's own sections. */}
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+            {sections.length === 0 && (
+              <p className="py-4 text-center text-sm text-zinc-400">No members match.</p>
+            )}
+            {sections.map((section) => (
+              <div key={section.key} className="flex flex-col gap-0.5">
+                <SectionLabel label={section.label} />
+                {section.members.map((worker) => {
+                  const others = otherAssignments.get(worker.id) ?? [];
+                  return (
+                    <label
+                      key={worker.id}
+                      className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-50"
+                    >
+                      <Checkbox
+                        checked={selected.has(worker.id)}
+                        onChange={() => toggle(worker.id)}
+                        label={`Select ${worker.fullName}`}
+                      />
+                      <span className="truncate">{worker.fullName}</span>
+                      {worker.title && (
+                        <span className="shrink-0 text-xs text-zinc-400">{worker.title}</span>
+                      )}
+                      <span
+                        className="ml-auto shrink-0"
+                        title={
+                          others.length > 0 ? others.map(describeAssignment).join("\n") : undefined
+                        }
+                      >
+                        <AvailabilityBadge assigned={others.length > 0} />
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </>
       )}

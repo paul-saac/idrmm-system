@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Bell, CheckCheck } from "lucide-react";
 import { usePortal } from "@/components/portal/portal-context";
 import { NotificationList } from "@/components/notifications/notification-list";
-import { useNotifications } from "@/components/notifications/use-notifications";
+import { useNotifications } from "@/components/notifications/notifications-provider";
 import type { AppNotification } from "@/lib/notifications/actions";
 import { dateBucket } from "@/lib/time-ago";
 
@@ -87,13 +87,20 @@ export function NotificationBell() {
         aria-expanded={open}
         className="flex size-10 cursor-pointer items-center justify-center text-zinc-400 transition hover:text-zinc-700"
       >
-        {/* A plain red dot on the bell's own top-right — no ring, since
-            headers differ in background (white, or the project page's
-            zinc-50) and a ring would show as a halo on one of them. */}
+        {/* A red badge with the unread count (99+ past that) on the bell's
+            own top-right — no ring, since headers differ in background
+            (white, or the project page's zinc-50) and a ring would show as
+            a halo on one of them. The button's aria-label already says the
+            count, so the badge is hidden from screen readers. */}
         <span className="relative flex">
           <Bell className="size-5" />
           {unreadCount > 0 && (
-            <span className="absolute top-0 right-0 size-2 rounded-full bg-red-600" />
+            <span
+              aria-hidden
+              className="absolute -top-1.5 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] leading-none font-semibold text-white tabular-nums"
+            >
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
           )}
         </span>
       </button>

@@ -1,16 +1,23 @@
 import type { Metadata } from "next";
 import { listAccountsByRole } from "@/lib/accounts/data";
-import { listAssignments, listWorkers } from "@/lib/workers/data";
+import {
+  listAssignments,
+  listHoursWorked,
+  listMemberGroups,
+  listWorkers,
+} from "@/lib/workers/data";
 import { AdminPageHeader } from "@/components/admin/page-header";
 import { TeamBrowser } from "@/components/team/team-browser";
 
 export const metadata: Metadata = { title: "Team" };
 
 export default async function AdminTeamPage() {
-  const [members, assignments, accountRows] = await Promise.all([
+  const [members, assignments, accountRows, groups, hoursWorked] = await Promise.all([
     listWorkers(),
     listAssignments(),
     listAccountsByRole(["project_manager", "foreman"]),
+    listMemberGroups(),
+    listHoursWorked(),
   ]);
   // Only what the Team page needs of each account — a member can be
   // linked to one (see LinkableAccount).
@@ -26,7 +33,13 @@ export default async function AdminTeamPage() {
     <>
       <AdminPageHeader title="Team" />
       <main className="flex-1 overflow-y-auto px-8 py-6">
-        <TeamBrowser members={members} assignments={assignments} accounts={accounts} />
+        <TeamBrowser
+          members={members}
+          assignments={assignments}
+          accounts={accounts}
+          memberGroups={groups}
+          hoursWorked={hoursWorked}
+        />
       </main>
     </>
   );

@@ -6,22 +6,27 @@ import { usePathname } from "next/navigation";
 import { LayoutGrid, Folder, HardHat, Users, BarChart3, Wrench } from "lucide-react";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 
-// Paths are relative to the portal's own base path. Team and Accounts are
-// admin-only — a foreman only manages the projects assigned to them, not
-// the company's people or users.
-const NAV_ITEMS = [
-  { path: "", label: "Dashboard", icon: LayoutGrid, adminOnly: false },
-  { path: "/projects", label: "Projects", icon: Folder, adminOnly: false },
-  { path: "/team", label: "Team", icon: HardHat, adminOnly: true },
-  { path: "/accounts", label: "Accounts", icon: Users, adminOnly: true },
-  { path: "/reports", label: "Reports", icon: BarChart3, adminOnly: false },
-  { path: "/inventory", label: "Inventory", icon: Wrench, adminOnly: false },
+// Paths are relative to the portal's own base path, each item in the
+// portals that have it: a foreman manages the projects assigned to them,
+// not the company's people or users; a project manager's portal so far
+// is the Team (members to view, groups to manage).
+const NAV_ITEMS: {
+  path: string;
+  label: string;
+  icon: typeof LayoutGrid;
+  portals: PortalBasePath[];
+}[] = [
+  { path: "", label: "Dashboard", icon: LayoutGrid, portals: ["/admin", "/foreman", "/project-manager"] },
+  { path: "/projects", label: "Projects", icon: Folder, portals: ["/admin", "/foreman"] },
+  { path: "/team", label: "Team", icon: HardHat, portals: ["/admin", "/project-manager"] },
+  { path: "/accounts", label: "Accounts", icon: Users, portals: ["/admin"] },
+  { path: "/reports", label: "Reports", icon: BarChart3, portals: ["/admin", "/foreman"] },
+  { path: "/inventory", label: "Inventory", icon: Wrench, portals: ["/admin", "/foreman"] },
 ];
 
 export function PortalSidebar({ basePath }: { basePath: PortalBasePath }) {
   const pathname = usePathname();
-  const isAdmin = basePath === "/admin";
-  const navItems = NAV_ITEMS.filter((item) => isAdmin || !item.adminOnly);
+  const navItems = NAV_ITEMS.filter((item) => item.portals.includes(basePath));
 
   // Sits collapsed (icon rail) at rest, expands on hover. No
   // localStorage here — unlike a click-to-toggle preference, "currently

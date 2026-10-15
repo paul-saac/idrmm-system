@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { usePortal } from "@/components/portal/portal-context";
 import { NotificationList } from "@/components/notifications/notification-list";
-import { useNotifications } from "@/components/notifications/use-notifications";
+import { useNotifications } from "@/components/notifications/notifications-provider";
 import type { AppNotification } from "@/lib/notifications/actions";
 
 const SHOWN = 5;

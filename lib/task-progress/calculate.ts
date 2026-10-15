@@ -167,9 +167,9 @@ export const EMPTY_PROGRESS_ANCHOR: ProgressAnchor = {
 };
 
 export type ScheduleStatus = "ahead" | "on_track" | "behind";
-/** What % complete is measured from: the task's cost when it has any
- * planned (every weighted task does), else its planned quantity, else its
- * planned materials. */
+/** What % complete is measured from: the task's planned quantity when it
+ * has one (the physical work done), else its cost, else its planned
+ * materials. */
 export type ProgressSource = "cost" | "quantity" | "materials" | "none";
 
 // How far actual may drift from expected (in percentage points) and
@@ -308,11 +308,13 @@ export type PercentCompleteBreakdown = {
    * working day without an entry counting its planned share. */
   costsToDate: CostAmounts;
   plannedCostTotal: number;
-  /** Cost to date ÷ planned cost — the cost-to-cost method. Null when
-   * nothing is planned to measure against. */
+  /** Cost to date ÷ planned cost — how much of the budget is spent; %
+   * complete only for a task with no planned quantity. Null when nothing
+   * is planned to measure against. */
   costPercent: number | null;
   quantityToDate: number;
-  /** Quantity to date ÷ planned quantity. Null without a planned one. */
+  /** Quantity to date ÷ planned quantity — % complete whenever there's a
+   * planned quantity. Null without one. */
   quantityPercent: number | null;
   materialUsageToDate: Record<string, number>;
   /** How much of the planned materials is used, each capped at 100% and
@@ -338,10 +340,12 @@ export type PercentCompleteBreakdown = {
 /**
  * A task's own progress from its Daily Progress Updates.
  *
- * % complete is cost to date ÷ planned cost (labor + material + equipment
- * + other) — the cost-to-cost method, the standard percentage-of-
- * completion measure for construction contracts — falling back to
- * quantity, then materials, for a task with no cost planned.
+ * % complete is quantity done to date ÷ planned quantity — the physical
+ * work done (units completed), the usual way site progress is measured —
+ * falling back to cost to date ÷ planned cost (labor + material +
+ * equipment + other), then materials, for a task with no planned
+ * quantity. Its costs still count against their plan either way (over or
+ * under budget), just not toward % complete.
  *
  * Automatic progress: every working day from Start through yesterday
  * that has no saved entry counts its planned share (computeDailyPlan) on
@@ -430,10 +434,10 @@ export function computeProgressBreakdown({
   }
 
   const progressSource: ProgressSource =
-    costPercent !== null
-      ? "cost"
-      : quantityPercent !== null
-        ? "quantity"
+    quantityPercent !== null
+      ? "quantity"
+      : costPercent !== null
+        ? "cost"
         : materialsPercent !== null
           ? "materials"
           : "none";

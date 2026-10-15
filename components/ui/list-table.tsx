@@ -32,7 +32,7 @@ export const BLANK = <span className="text-zinc-300">—</span>;
 
 /** A light gray box, black with a white tick once checked (a dash when
  * only some of the rows are). */
-function Checkbox({
+export function Checkbox({
   checked,
   indeterminate = false,
   onChange,
@@ -81,8 +81,11 @@ export function SelectAllCell({
   label: string;
 }) {
   return (
-    <th className="p-0">
-      <label className="flex h-9 cursor-pointer items-center px-3">
+    // w-px: the column shrinks to the box and its even padding — a table
+    // laid out by its content otherwise hands it spare width, leaving the
+    // box off to the left.
+    <th className="w-px p-0">
+      <label className="flex h-9 cursor-pointer items-center justify-center px-3">
         <Checkbox
           checked={checked}
           indeterminate={indeterminate}
@@ -109,13 +112,27 @@ export function SelectCell({
 }) {
   return (
     <td
-      className={`p-0 ${checked ? "shadow-[inset_2px_0_0_var(--color-zinc-900)]" : ""}`}
+      className={`w-px p-0 ${checked ? "shadow-[inset_2px_0_0_var(--color-zinc-900)]" : ""}`}
       onClick={(e) => e.stopPropagation()}
     >
-      <label className="flex h-10 cursor-pointer items-center px-3">
+      <label className="flex h-10 cursor-pointer items-center justify-center px-3">
         <Checkbox checked={checked} onChange={onChange} label={label} />
       </label>
     </td>
+  );
+}
+
+/** A section's heading in a list of members (a group's window, the Gantt
+ * chart's Assign picker) — its name in small capitals with a thin line
+ * running on to the edge, pinned to the top while its section scrolls by. */
+export function SectionLabel({ label }: { label: string }) {
+  return (
+    <div className="sticky top-0 z-10 flex items-center gap-3 bg-white px-2 py-1.5">
+      <span className="shrink-0 text-xs font-semibold tracking-wider text-zinc-600 uppercase">
+        {label}
+      </span>
+      <span aria-hidden="true" className="h-px flex-1 bg-zinc-200" />
+    </div>
   );
 }
 

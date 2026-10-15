@@ -5,6 +5,11 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { COST_COMPONENTS, type CostAmounts } from "@/lib/task-progress/calculate";
+import {
+  replaceAttendance,
+  resolveAttendance,
+  type AttendanceInput,
+} from "@/lib/task-progress/attendance";
 
 export type TaskProgressActionState = {
   error?: string;
@@ -52,15 +57,19 @@ function todayIso() {
  *
  * The day's spend per cost component (0057_progress_entry_costs.sql) is
  * what the task's % complete is measured from — saving a day overrides
- * its automatic planned share (see computeProgressBreakdown).
+ * its automatic planned share (see computeProgressBreakdown). Its labor
+ * isn't typed: it's priced here from who worked (attendance, 0068) at
+ * each one's own daily rate, and their attendance saved with it.
  */
 export async function recordTaskProgress(
   taskId: number,
   projectId: number,
   input: {
     quantityCompletedToday: number;
+    /** Labor's ignored — it's priced from `attendance`. */
     costs: CostAmounts;
     materialsUsed: { name: string; unit: string | null; quantity: number }[];
+    attendance: AttendanceInput;
   }
 ): Promise<TaskProgressActionState> {
   return safely(async () => {
@@ -91,6 +100,11 @@ export async function recordTaskProgress(
     const supabase = await createClient();
     const entryDate = todayIso();
 
+    const crew = await resolveAttendance(supabase, input.attendance, entryDate, { taskId });
+    if ("error" in crew) {
+      return { error: crew.error };
+    }
+
     const { data: savedEntry, error: upsertError } = await supabase
       .from("task_progress_entries")
       .upsert(
@@ -98,7 +112,7 @@ export async function recordTaskProgress(
           task_id: taskId,
           entry_date: entryDate,
           quantity_completed: input.quantityCompletedToday,
-          labor_cost: input.costs.labor,
+          labor_cost: crew.laborCost,
           material_cost: input.costs.material,
           equipment_cost: input.costs.equipment,
           other_cost: input.costs.other,
@@ -117,6 +131,11 @@ export async function recordTaskProgress(
         );
       }
       return { error: "Could not save progress. Please try again." };
+    }
+
+    const attendanceError = await replaceAttendance(supabase, "task", savedEntry.id, crew.rows);
+    if (attendanceError) {
+      return { error: attendanceError };
     }
 
     const { error: deleteError } = await supabase

@@ -242,18 +242,19 @@ export async function deleteCategory(
 
     const supabase = await createClient();
 
-    // Block deleting a category that still has task items rather than
-    // silently cascading the delete — the task items are real cost data
-    // the user entered, so losing them needs to be an explicit choice.
-    const { count } = await supabase
+    // Its task items go with it — they're real cost data the user
+    // entered, but losing them is already an explicit choice: the Gantt
+    // chart's Delete asks first (ConfirmDialog, which says every task in
+    // the phase goes too). Deleted the same way deleteTask deletes one,
+    // so whatever hangs off a task goes with it as it does there.
+    const { error: tasksError } = await supabase
       .from("estimate_tasks")
-      .select("id", { count: "exact", head: true })
+      .delete()
       .eq("category_id", categoryId);
 
-    if (count && count > 0) {
-      return {
-        error: `Move or delete this category's ${count} task item${count === 1 ? "" : "s"} first.`,
-      };
+    if (tasksError) {
+      logSupabaseError("[deleteCategory] Supabase task items delete failed", tasksError);
+      return { error: "Could not delete the phase's task items. Please try again." };
     }
 
     const { error } = await supabase

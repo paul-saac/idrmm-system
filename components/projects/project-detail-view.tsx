@@ -81,6 +81,7 @@ import type { DailyLogSummary, SurveyQuestion } from "@/lib/daily-logs/data";
 import type {
   Worker,
   WorkerAssignment,
+  MemberGroup,
   TaskWorkerAssignments,
   CategoryWorkerAssignments,
 } from "@/lib/workers/data";
@@ -292,6 +293,7 @@ export function ProjectDetailView({
   ganttCanRedo,
   workers,
   workerAssignments,
+  memberGroups,
   taskWorkerAssignments,
   categoryWorkerAssignments,
   taskProgressToday,
@@ -343,6 +345,9 @@ export function ProjectDetailView({
   workers: Worker[];
   /** Every Team member's open assignments — see lib/workers/data.ts. */
   workerAssignments: WorkerAssignment[];
+  /** The Team's groups (crews) — the Assign picker adds a whole one at
+   * once. */
+  memberGroups: MemberGroup[];
   taskWorkerAssignments: TaskWorkerAssignments;
   /** Same idea, one level up — see CategoryWorkerAssignments's own doc
    * comment. */
@@ -816,6 +821,7 @@ export function ProjectDetailView({
               canRedo={ganttCanRedo}
               workers={workers}
               workerAssignments={workerAssignments}
+              memberGroups={memberGroups}
               taskWorkerAssignments={taskWorkerAssignments}
               categoryWorkerAssignments={categoryWorkerAssignments}
               taskProgressToday={taskProgressToday}

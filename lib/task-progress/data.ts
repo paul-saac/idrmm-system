@@ -37,11 +37,53 @@ export type LatestOverride = ProgressDayEntry & {
 export type TaskProgressToday = ProgressAnchor & {
   today: ProgressDayEntry | null;
   latest: LatestOverride | null;
+  /** Who's saved as working today (0068_progress_attendance.sql) — empty
+   * when nobody, or nothing's saved yet today. */
+  todayAttendance: AttendanceMark[];
 };
+
+/** One person on a day's saved attendance — the hours they worked. */
+export type AttendanceMark = {
+  workerId: number | null;
+  workerName: string;
+  hours: number;
+};
+
+/** Saved attendance for these progress entries, by entry id — empty
+ * before 0068 has run. */
+export async function attendanceByEntry(
+  supabase: Supabase,
+  kind: "task" | "category",
+  entryIds: number[]
+): Promise<Map<number, AttendanceMark[]>> {
+  const byEntry = new Map<number, AttendanceMark[]>();
+  if (entryIds.length === 0) return byEntry;
+  const { data } =
+    kind === "task"
+      ? await supabase
+          .from("task_progress_attendance")
+          .select("progress_entry_id, worker_id, worker_name, hours")
+          .in("progress_entry_id", entryIds)
+      : await supabase
+          .from("category_progress_attendance")
+          .select("progress_entry_id, worker_id, worker_name, hours")
+          .in("progress_entry_id", entryIds);
+  for (const row of data ?? []) {
+    const list = byEntry.get(row.progress_entry_id) ?? [];
+    list.push({
+      workerId: row.worker_id,
+      workerName: row.worker_name,
+      hours: Number(row.hours),
+    });
+    byEntry.set(row.progress_entry_id, list);
+  }
+  return byEntry;
+}
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
 type Entry = ProgressDayEntry & {
+  id: number;
   taskId: number;
   entryDate: string;
   recordedBy: string | null;
@@ -133,6 +175,7 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
   }
 
   return rows.map((row) => ({
+    id: row.id,
     taskId: row.task_id,
     entryDate: row.entry_date,
     quantityCompleted: row.quantity_completed ?? 0,
@@ -214,10 +257,12 @@ export async function listTaskProgressToday(
   const result: Record<number, ReturnType<typeof emptyAnchor> & {
     today: ProgressDayEntry | null;
     latest: LatestOverride | null;
+    todayAttendance: AttendanceMark[];
   }> = {};
   for (const taskId of taskIds) {
-    result[taskId] = { ...emptyAnchor(), today: null, latest: null };
+    result[taskId] = { ...emptyAnchor(), today: null, latest: null, todayAttendance: [] };
   }
+  const todayEntryTask = new Map<number, number>();
   // Oldest first, so each task's last entry is its latest override.
   const latestByTask = new Map<number, Entry>();
   for (const entry of entries) {
@@ -231,7 +276,17 @@ export async function listTaskProgressToday(
         costs: entry.costs,
         materialUsage: entry.materialUsage,
       };
+      todayEntryTask.set(entry.id, entry.taskId);
     }
+  }
+  const attendance = await attendanceByEntry(
+    supabase,
+    "task",
+    Array.from(todayEntryTask.keys())
+  );
+  for (const [entryId, marks] of attendance) {
+    const taskId = todayEntryTask.get(entryId);
+    if (taskId !== undefined) result[taskId].todayAttendance = marks;
   }
   const names = await savedByNames(
     supabase,

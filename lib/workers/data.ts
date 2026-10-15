@@ -6,6 +6,7 @@ import {
   type EmploymentType,
   type MemberCategory,
 } from "@/lib/workers/presets";
+import { DEFAULT_WORK_HOURS } from "@/lib/workers/schedule";
 
 /** One member of the company Team (the admin's Team page) — assigned
  * straight to tasks/phases from the Gantt chart. See 0059_company_team.sql
@@ -25,6 +26,13 @@ export type Worker = {
   /** Their own login account, when they have one (a project manager's
    * or foreman's). */
   profileId: string | null;
+  /** Default Rate, pesos an hour — what an hour on a task costs (see
+   * 0069_hourly_rates_work_hours.sql). Null until it's set;
+   * subcontractors, paid per contract, have none. */
+  hourlyRate: number | null;
+  /** Working Days: hours each day of the week, Monday first (7 values) —
+   * where a day's attendance on a task starts. */
+  workHours: number[];
 };
 
 /** One task or phase a member is (or was) on. Open while its project
@@ -82,6 +90,32 @@ export async function listWorkers(): Promise<Worker[]> {
     employmentType: row.employment_type ?? "employee",
     subcontractorCompany: row.subcontractor_company ?? null,
     profileId: row.profile_id ?? null,
+    hourlyRate: row.hourly_rate ?? null,
+    workHours:
+      Array.isArray(row.work_hours) && row.work_hours.length === 7
+        ? row.work_hours.map((hours) => Number(hours) || 0)
+        : DEFAULT_WORK_HOURS,
+  }));
+}
+
+/** A member's hours on one project, from their recorded attendance. */
+export type HoursWorked = {
+  workerId: number;
+  projectId: number;
+  projectName: string;
+  hours: number;
+};
+
+/** Every member's hours worked, per project — empty until 0069 has run. */
+export async function listHoursWorked(): Promise<HoursWorked[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("team_hours_worked");
+  if (error) return [];
+  return (data ?? []).map((row) => ({
+    workerId: row.worker_id,
+    projectId: row.project_id,
+    projectName: row.project_name,
+    hours: Number(row.hours) || 0,
   }));
 }
 
@@ -103,6 +137,43 @@ export async function listAssignments(): Promise<WorkerAssignment[]> {
     startDate: row.start_date,
     endDate: row.end_date,
     open: !row.project_completed && (row.end_date === null || row.end_date >= today),
+  }));
+}
+
+/** A crew on the Team page's Groups tab — see 0067_member_groups.sql.
+ * Someone can be in any number of them. */
+export type MemberGroup = {
+  id: number;
+  name: string;
+  description: string | null;
+  memberIds: number[];
+  createdByName: string | null;
+};
+
+/** Every group, by name — empty until 0067 has run. */
+export async function listMemberGroups(): Promise<MemberGroup[]> {
+  const supabase = await createClient();
+  const [groups, links] = await Promise.all([
+    supabase
+      .from("member_groups")
+      .select("id, name, description, created_by_name")
+      .order("name", { ascending: true }),
+    supabase.from("member_group_members").select("group_id, worker_id"),
+  ]);
+  if (groups.error) return [];
+
+  const membersByGroup = new Map<number, number[]>();
+  for (const link of links.data ?? []) {
+    const list = membersByGroup.get(link.group_id) ?? [];
+    list.push(link.worker_id);
+    membersByGroup.set(link.group_id, list);
+  }
+  return (groups.data ?? []).map((group) => ({
+    id: group.id,
+    name: group.name,
+    description: group.description,
+    memberIds: membersByGroup.get(group.id) ?? [],
+    createdByName: group.created_by_name,
   }));
 }
 

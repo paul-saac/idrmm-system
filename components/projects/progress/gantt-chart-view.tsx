@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
 import { AssignWorkersModalContent } from "@/components/projects/progress/assign-workers-modal-content";
@@ -56,6 +57,7 @@ import { recordCategoryProgress } from "@/lib/category-progress/actions";
 import type {
   Worker,
   WorkerAssignment,
+  MemberGroup,
   TaskWorkerAssignments,
   CategoryWorkerAssignments,
 } from "@/lib/workers/data";
@@ -145,6 +147,7 @@ const EMPTY_PROGRESS_TODAY: TaskProgressToday = {
   ...EMPTY_PROGRESS_ANCHOR,
   today: null,
   latest: null,
+  todayAttendance: [],
 };
 
 function toDate(iso: string) {
@@ -609,6 +612,7 @@ export function GanttChartView({
   canRedo,
   workers,
   workerAssignments,
+  memberGroups,
   taskWorkerAssignments,
   categoryWorkerAssignments,
   taskProgressToday,
@@ -656,6 +660,9 @@ export function GanttChartView({
   /** Every member's open assignments, any project — their availability
    * in the Assigned picker. */
   workerAssignments: WorkerAssignment[];
+  /** The Team's groups (crews) — the Assign picker adds a whole one at
+   * once. */
+  memberGroups: MemberGroup[];
   taskWorkerAssignments: TaskWorkerAssignments;
   /** Same idea, one level up — see CategoryWorkerAssignments's own doc
    * comment. */
@@ -925,19 +932,40 @@ export function GanttChartView({
   >(null);
 
   // Delete from a modal's own ⋮ menu (Edit Phase / Edit Task / Edit
-  // Event) — asks first, the same confirm the old footer Delete used.
-  async function confirmAndDelete(
+  // Event) — asks first, in a centered ConfirmDialog (see its render at
+  // the bottom), which stays up while the delete runs and shows its error
+  // if it fails.
+  const [pendingDelete, setPendingDelete] = useState<{
+    kind: "phase" | "task" | "event";
+    name: string;
+    remove: () => Promise<{ error?: string }>;
+    close: () => void;
+  } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  function confirmAndDelete(
+    kind: "phase" | "task" | "event",
     name: string,
     remove: () => Promise<{ error?: string }>,
     close: () => void
   ) {
-    if (!window.confirm(`Delete "${name}"?`)) return;
-    const result = await remove();
+    setDeleteError(null);
+    setPendingDelete({ kind, name, remove, close });
+  }
+
+  async function runPendingDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    const result = await pendingDelete.remove();
+    setDeleting(false);
     if (result.error) {
-      window.alert(result.error);
+      setDeleteError(result.error);
       return;
     }
-    close();
+    pendingDelete.close();
+    setPendingDelete(null);
     router.refresh();
   }
 
@@ -1552,12 +1580,11 @@ export function GanttChartView({
   // particular, anywhere before `tasks`'s own useMemo), it silently gave
   // up preserving memoization for timelineExtent/visibleTasks below,
   // confirmed directly by bisecting hook-call position. A category WITH
-  // tasks (still `type: "project"`) is left untouched — it's not
-  // directly draggable/editable (see this component's own doc comment
-  // below), so no override is ever set for one; its own start/end stays
-  // a rollup of its children's *persisted* dates until the real refresh
-  // lands, which only affects how soon a phase bar's own edges visually
-  // catch up, not the flicker this was written to fix. A task-less
+  // tasks (still `type: "project"`) never gets an override of its own —
+  // it's not directly draggable/editable (see this component's own doc
+  // comment below) — but its bar is its tasks' span, so it's re-spanned
+  // here from their *overridden* dates too: the phase follows a dragged
+  // or retyped task the same instant, not once the refresh lands. A task-less
   // category (now `type: "task"`) instead checks categoryById first, to
   // read from its own override Map rather than the task one below —
   // its id would never actually match a real task's anyway (a task id
@@ -1571,7 +1598,7 @@ export function GanttChartView({
     ) {
       return tasks;
     }
-    return tasks.map((row) => {
+    const rows = tasks.map((row) => {
       if (row.type === "project") return row;
       const category = categoryById.get(row.id);
       const override = category
@@ -1591,6 +1618,28 @@ export function GanttChartView({
           row.type === "milestone"
             ? toDate(override.end)
             : nextDay(toDate(override.end)),
+      };
+    });
+
+    // Every phase with a task just moved, re-spanned from its tasks'
+    // dates as they now stand — the same rollup `tasks` above makes
+    // from the persisted ones (earliest start, latest true end, +1 day
+    // for the bar).
+    const movedPhases = new Set<string>();
+    rows.forEach((row, index) => {
+      if (row !== tasks[index] && row.project) movedPhases.add(row.project);
+    });
+    if (movedPhases.size === 0) return rows;
+    return rows.map((row) => {
+      if (row.type !== "project" || !movedPhases.has(row.id)) return row;
+      const children = rows.filter((child) => child.project === row.id);
+      if (children.length === 0) return row;
+      return {
+        ...row,
+        start: new Date(Math.min(...children.map((child) => child.start.getTime()))),
+        end: nextDay(
+          new Date(Math.max(...children.map((child) => trueEndDate(child).getTime())))
+        ),
       };
     });
   }, [tasks, pendingScheduleOverrides, pendingCategoryScheduleOverrides, categoryById]);
@@ -3746,6 +3795,7 @@ export function GanttChartView({
                   onSelect: () => {
                     const event = eventModal.event!;
                     confirmAndDelete(
+                      "event",
                       event.name,
                       () => deleteProjectEvent(event.id, projectId),
                       () => setEventModal(null)
@@ -3773,6 +3823,26 @@ export function GanttChartView({
         onTargetChange={setWeightBreakdown}
       />
 
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`Delete this ${pendingDelete?.kind ?? "item"}?`}
+        message={
+          pendingDelete?.kind === "phase"
+            ? `"${pendingDelete.name}" and every task in it will be deleted, along with their progress. This can't be undone.`
+            : pendingDelete?.kind === "task"
+              ? `"${pendingDelete.name}" will be deleted, along with its progress. This can't be undone.`
+              : `"${pendingDelete?.name ?? ""}" will be deleted. This can't be undone.`
+        }
+        pending={deleting}
+        error={deleteError}
+        onConfirm={runPendingDelete}
+        onCancel={() => {
+          if (deleting) return;
+          setPendingDelete(null);
+          setDeleteError(null);
+        }}
+      />
+
       <Modal
         open={categoryModal !== null}
         onClose={() => setCategoryModal(null)}
@@ -3785,6 +3855,7 @@ export function GanttChartView({
                   destructive: true,
                   onSelect: () =>
                     confirmAndDelete(
+                      "phase",
                       categoryModal.name,
                       () => deleteCategory(categoryModal.id, projectId, {}, new FormData()),
                       () => setCategoryModal(null)
@@ -3815,6 +3886,7 @@ export function GanttChartView({
                   destructive: true,
                   onSelect: () =>
                     confirmAndDelete(
+                      "task",
                       taskModal.name,
                       () => deleteTask(taskModal.id, projectId, {}, new FormData()),
                       () => setTaskModal(null)
@@ -3855,6 +3927,7 @@ export function GanttChartView({
             endDate={assignWorkersModal.end}
             workers={workers}
             assignments={workerAssignments}
+            groups={memberGroups}
             current={{ kind: "task", id: assignWorkersModal.taskId }}
             assignedWorkerIds={
               taskWorkerAssignments[assignWorkersModal.taskId] ?? []
@@ -3872,6 +3945,7 @@ export function GanttChartView({
             endDate={assignWorkersModal.end}
             workers={workers}
             assignments={workerAssignments}
+            groups={memberGroups}
             current={{ kind: "category", id: assignWorkersModal.categoryId }}
             assignedWorkerIds={
               categoryWorkerAssignments[assignWorkersModal.categoryId] ?? []
@@ -3919,6 +3993,11 @@ export function GanttChartView({
             progressToday={
               taskProgressToday[progressModal.task.id] ?? EMPTY_PROGRESS_TODAY
             }
+            crew={(taskWorkerAssignments[progressModal.task.id] ?? []).flatMap((id) => {
+              const worker = workerById.get(id);
+              return worker ? [worker] : [];
+            })}
+            team={workers}
             highlightLatest={progressModal.highlightLatest ?? false}
             onSave={(input) =>
               recordTaskProgress(progressModal.task.id, projectId, input)
@@ -3947,11 +4026,19 @@ export function GanttChartView({
               categoryProgressToday[progressModal.category.id] ??
               EMPTY_PROGRESS_TODAY
             }
+            crew={(categoryWorkerAssignments[progressModal.category.id] ?? []).flatMap(
+              (id) => {
+                const worker = workerById.get(id);
+                return worker ? [worker] : [];
+              }
+            )}
+            team={workers}
             highlightLatest={progressModal.highlightLatest ?? false}
             onSave={(input) =>
               recordCategoryProgress(progressModal.category.id, projectId, {
                 quantityCompletedToday: input.quantityCompletedToday,
                 costs: input.costs,
+                attendance: input.attendance,
               })
             }
             onClose={() => setProgressModal(null)}

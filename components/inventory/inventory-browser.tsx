@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Plus, Search, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
+import { FilterSelect } from "@/components/ui/filter-select";
 import { Modal } from "@/components/ui/modal";
 import { EquipmentForm } from "@/components/inventory/equipment-form";
 import { AssignEquipmentForm } from "@/components/inventory/assign-equipment-form";
@@ -11,8 +12,7 @@ import { usePortal } from "@/components/portal/portal-context";
 import { deleteEquipmentItems } from "@/lib/equipment/actions";
 import type { EquipmentRow, EquipmentStatus } from "@/lib/equipment/data";
 
-const STATUS_FILTERS: { value: EquipmentStatus | "all"; label: string }[] = [
-  { value: "all", label: "Status" },
+const STATUS_FILTERS: { value: EquipmentStatus; label: string }[] = [
   { value: "available", label: "Available" },
   { value: "assigned", label: "Assigned" },
   { value: "maintenance", label: "Maintenance" },
@@ -102,25 +102,16 @@ export function InventoryBrowser({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, asset tag, category or serial"
-            className="w-full rounded-md border border-zinc-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+            className="w-full rounded-md border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           />
         </div>
 
-        <div className="relative">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as EquipmentStatus | "all")}
-            aria-label="Status"
-            className="cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white py-2 pl-3 pr-8 text-sm font-medium text-zinc-700 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-          >
-            {STATUS_FILTERS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
-        </div>
+        <FilterSelect
+          label="Status"
+          value={statusFilter}
+          options={STATUS_FILTERS}
+          onChange={setStatusFilter}
+        />
 
         {isAdmin && (
           <div className="ml-auto flex items-center gap-3">

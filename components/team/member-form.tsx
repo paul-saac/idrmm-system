@@ -6,11 +6,11 @@ import {
   updateWorker,
   type WorkerActionState,
 } from "@/lib/workers/actions";
-import type { LinkableAccount, Worker } from "@/lib/workers/data";
+import type { Worker } from "@/lib/workers/data";
+import { ModalFooter } from "@/components/ui/modal";
+import { DEFAULT_WORK_HOURS, WEEKDAY_LABELS } from "@/lib/workers/schedule";
 import {
-  MEMBER_CATEGORIES,
   TITLE_SUGGESTIONS,
-  categoryForTitle,
   type EmploymentType,
   type MemberCategory,
 } from "@/lib/workers/presets";
@@ -33,35 +33,32 @@ function splitFullName(fullName: string) {
   };
 }
 
-const ROLE_CATEGORY: Record<LinkableAccount["role"], MemberCategory> = {
-  project_manager: "management",
-  foreman: "management",
-};
-
 /**
- * Add or edit one Team member — name, title (typable, with suggestions;
- * a known one fills its category in), category, employee or
- * subcontractor (and whose), contact number, date hired, and their own
- * login account when they have one (a project manager's or foreman's —
- * picking it fills in an empty name and the matching category).
+ * Add or edit one Team member — name, role (typable, with suggestions),
+ * a subcontractor's company, contact number, date hired, and a skilled
+ * worker's Default Rate and Working Days (what their hours on a task cost
+ * — see the progress window's attendance). Their category and type aren't
+ * asked: they're the Team tab they were added from (`defaults`), and stay
+ * what they are on an edit. A login account isn't either — project
+ * managers' and foremen's are linked on their own (ensure_team_member,
+ * 0063).
  */
 export function MemberForm({
   member,
   defaults,
-  accounts,
-  linkedProfileIds,
   onSuccess,
   onCancel,
+  children,
 }: {
   member?: Worker;
-  /** A new member's starting category and type. */
+  /** A new member's category and type — the Team tab they're added
+   * from. */
   defaults?: { category: MemberCategory; employmentType: EmploymentType };
-  /** Project manager and foreman accounts. */
-  accounts: LinkableAccount[];
-  /** Accounts already linked to some other member. */
-  linkedProfileIds: string[];
   onSuccess: () => void;
   onCancel: () => void;
+  /** Shown after the fields — e.g. the member's current tasks
+   * (TeamBrowser). Spans its own columns. */
+  children?: React.ReactNode;
 }) {
   const action = member ? updateWorker.bind(null, member.id) : createWorker;
   const [state, formAction, pending] = useActionState(action, initialState);
@@ -69,13 +66,13 @@ export function MemberForm({
   const initialName = splitFullName(member?.fullName ?? "");
   const [firstName, setFirstName] = useState(initialName.firstName);
   const [lastName, setLastName] = useState(initialName.lastName);
-  const [category, setCategory] = useState<MemberCategory>(
-    member?.category ?? defaults?.category ?? "skilled"
-  );
-  const [employmentType, setEmploymentType] = useState<EmploymentType>(
-    member?.employmentType ?? defaults?.employmentType ?? "employee"
-  );
-  const [profileId, setProfileId] = useState(member?.profileId ?? "");
+  const category: MemberCategory = member?.category ?? defaults?.category ?? "skilled";
+  const employmentType: EmploymentType =
+    member?.employmentType ?? defaults?.employmentType ?? "employee";
+  const subcontractor = employmentType === "subcontractor";
+  // Paid by the hour — management and engineers are salaried, and a
+  // subcontractor's paid per contract.
+  const hourly = !subcontractor && category === "skilled";
 
   useEffect(() => {
     if (state.success) onSuccess();
@@ -83,28 +80,10 @@ export function MemberForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
-  // Active accounts nobody else is linked to — plus this member's own,
-  // even if it's since been deactivated.
-  const accountOptions = accounts.filter(
-    (account) =>
-      account.id === member?.profileId ||
-      (account.active && !linkedProfileIds.includes(account.id))
-  );
-
-  function pickAccount(id: string) {
-    setProfileId(id);
-    const account = accounts.find((a) => a.id === id);
-    if (!account) return;
-    if (!firstName && !lastName) {
-      const name = splitFullName(account.name);
-      setFirstName(name.firstName);
-      setLastName(name.lastName);
-    }
-    setCategory(ROLE_CATEGORY[account.role]);
-  }
-
   return (
-    <form action={formAction} className="grid gap-4 sm:grid-cols-2" noValidate>
+    <form id={`${formId}-form`} action={formAction} className="grid gap-4 sm:grid-cols-2" noValidate>
+      <input type="hidden" name="category" value={category} />
+      <input type="hidden" name="employmentType" value={employmentType} />
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${formId}-first`} className={LABEL}>
           First Name
@@ -131,7 +110,7 @@ export function MemberForm({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5">
+      <div className={`flex flex-col gap-1.5 ${subcontractor ? "" : "sm:col-span-2"}`}>
         <label htmlFor={`${formId}-title`} className={LABEL}>
           Role
         </label>
@@ -140,10 +119,6 @@ export function MemberForm({
           name="title"
           list={`${formId}-titles`}
           defaultValue={member?.title ?? ""}
-          onChange={(e) => {
-            const known = categoryForTitle(e.target.value);
-            if (known) setCategory(known);
-          }}
           className={FIELD}
         />
         <datalist id={`${formId}-titles`}>
@@ -152,57 +127,19 @@ export function MemberForm({
           ))}
         </datalist>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={`${formId}-category`} className={LABEL}>
-          Category
-        </label>
-        <select
-          id={`${formId}-category`}
-          name="category"
-          value={category}
-          onChange={(e) => setCategory(e.target.value as MemberCategory)}
-          className={FIELD}
-        >
-          {MEMBER_CATEGORIES.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="flex flex-col gap-1.5 sm:col-span-2">
-        <span className={LABEL}>Type</span>
-        <input type="hidden" name="employmentType" value={employmentType} />
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex rounded bg-zinc-100 p-1">
-            {(["employee", "subcontractor"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setEmploymentType(value)}
-                aria-pressed={employmentType === value}
-                className={`cursor-pointer rounded-sm px-4 py-1 text-sm transition ${
-                  employmentType === value
-                    ? "bg-white font-medium text-zinc-900 shadow-sm"
-                    : "text-zinc-500 hover:text-zinc-900"
-                }`}
-              >
-                {value === "employee" ? "Employee" : "Subcontractor"}
-              </button>
-            ))}
-          </div>
-          {employmentType === "subcontractor" && (
-            <input
-              name="subcontractorCompany"
-              defaultValue={member?.subcontractorCompany ?? ""}
-              placeholder="Company"
-              aria-label="Subcontractor company"
-              className={`${FIELD} min-w-0 flex-1`}
-            />
-          )}
+      {subcontractor && (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={`${formId}-company`} className={LABEL}>
+            Company
+          </label>
+          <input
+            id={`${formId}-company`}
+            name="subcontractorCompany"
+            defaultValue={member?.subcontractorCompany ?? ""}
+            className={FIELD}
+          />
         </div>
-      </div>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${formId}-contact`} className={LABEL}>
@@ -229,36 +166,65 @@ export function MemberForm({
         />
       </div>
 
-      {accountOptions.length > 0 && (
-        <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label htmlFor={`${formId}-account`} className={LABEL}>
-            Login Account
-          </label>
-          <select
-            id={`${formId}-account`}
-            name="profileId"
-            value={profileId}
-            onChange={(e) => pickAccount(e.target.value)}
-            className={FIELD}
-          >
-            <option value="">None</option>
-            {accountOptions.map((account) => (
-              <option key={account.id} value={account.id}>
-                {account.name || account.email} ·{" "}
-                {account.role === "project_manager" ? "Project Manager" : "Foreman"}
-              </option>
-            ))}
-          </select>
+      {/* What an hour on a task costs, and the hours they work each day
+          of the week — a day's attendance on a task starts from them. A
+          subcontractor's paid per contract instead. */}
+      {hourly && (
+        // One row: the rate, then the week. The rate's column stretches to
+        // the week's height (its day names above the boxes) and keeps its
+        // input at the bottom, so both labels and all the boxes line up.
+        <div className="flex flex-col gap-4 sm:col-span-2 sm:flex-row">
+          <div className="flex min-w-0 flex-1 flex-col justify-between gap-1.5">
+            <label htmlFor={`${formId}-rate`} className={LABEL}>
+              Default Rate
+            </label>
+            <div className="flex items-center rounded-md border border-zinc-200 bg-white focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200">
+              <span className="pl-3 text-sm text-zinc-400">₱</span>
+              <input
+                id={`${formId}-rate`}
+                name="hourlyRate"
+                type="text"
+                inputMode="decimal"
+                defaultValue={member?.hourlyRate ?? ""}
+                placeholder="0.00"
+                className="w-full min-w-0 bg-transparent py-2 pr-1 pl-1.5 text-sm outline-none"
+              />
+              <span className="shrink-0 pr-3 text-sm text-zinc-400">/ hour</span>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-col justify-end">
+            {/* No label of its own — the day names say what it is. */}
+            <div role="group" aria-label="Working days" className="flex gap-1.5">
+              {WEEKDAY_LABELS.map((day, index) => (
+                <label key={day} className="flex w-11 shrink-0 flex-col items-center gap-1">
+                  <span className="text-xs font-medium text-zinc-500 uppercase">{day}</span>
+                  <input
+                    name="workHours"
+                    type="text"
+                    inputMode="decimal"
+                    defaultValue={String((member?.workHours ?? DEFAULT_WORK_HOURS)[index] ?? 0)}
+                    aria-label={`Hours on ${day}`}
+                    // FIELD's own look, with less side padding — seven boxes
+                    // share the row with the rate.
+                    className="w-full min-w-0 rounded-md border border-zinc-200 bg-white px-1 py-2 text-center text-sm tabular-nums outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
-      {state.error && (
-        <p role="alert" className="text-sm text-red-600 sm:col-span-2">
-          {state.error}
-        </p>
-      )}
+      {children}
 
-      <div className="flex justify-end gap-3 sm:col-span-2">
+      {/* Along the modal's bottom edge, however long the form — that bar
+          is outside this <form>, so Save names it (form=). */}
+      <ModalFooter>
+        {state.error && (
+          <p role="alert" className="mr-auto text-sm text-red-600">
+            {state.error}
+          </p>
+        )}
         <button
           type="button"
           onClick={onCancel}
@@ -268,12 +234,13 @@ export function MemberForm({
         </button>
         <button
           type="submit"
+          form={`${formId}-form`}
           disabled={pending}
           className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {pending ? "Saving..." : "Save"}
         </button>
-      </div>
+      </ModalFooter>
     </form>
   );
 }

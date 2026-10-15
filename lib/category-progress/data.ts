@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { ZERO_COSTS, type ProgressAnchor } from "@/lib/task-progress/calculate";
 import {
+  attendanceByEntry,
   entryCosts,
   savedByNames,
   type TaskProgressToday,
@@ -103,11 +104,13 @@ export async function listCategoryProgressToday(
     ReturnType<typeof emptyAnchor> & {
       today: TaskProgressToday["today"];
       latest: TaskProgressToday["latest"];
+      todayAttendance: TaskProgressToday["todayAttendance"];
     }
   > = {};
   for (const categoryId of categoryIds) {
-    result[categoryId] = { ...emptyAnchor(), today: null, latest: null };
+    result[categoryId] = { ...emptyAnchor(), today: null, latest: null, todayAttendance: [] };
   }
+  const todayEntryCategory = new Map<number, number>();
   // Oldest first, so each category's last row is its latest override.
   const latestByCategory = new Map<number, (typeof rows)[number]>();
   for (const row of rows) {
@@ -121,7 +124,17 @@ export async function listCategoryProgressToday(
         costs: entryCosts(row),
         materialUsage: {},
       };
+      todayEntryCategory.set(row.id, row.category_id);
     }
+  }
+  const attendance = await attendanceByEntry(
+    supabase,
+    "category",
+    Array.from(todayEntryCategory.keys())
+  );
+  for (const [entryId, marks] of attendance) {
+    const categoryId = todayEntryCategory.get(entryId);
+    if (categoryId !== undefined) result[categoryId].todayAttendance = marks;
   }
   const names = await savedByNames(
     supabase,

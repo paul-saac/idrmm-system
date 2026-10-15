@@ -15,6 +15,18 @@ export function ModalHeaderAddon({ children }: { children: React.ReactNode }) {
   return slot ? createPortal(children, slot) : null;
 }
 
+// The bar along the bottom edge, under the scrolling body (see
+// ModalFooter). Hidden while nothing's in it.
+const FooterSlotContext = createContext<HTMLElement | null>(null);
+
+/** Renders its children in a bar along the modal's bottom edge — e.g. a
+ * form's Cancel / Save, in reach however long the form. It sits outside
+ * the form itself, so a submit button there names its form (form=). */
+export function ModalFooter({ children }: { children: React.ReactNode }) {
+  const slot = useContext(FooterSlotContext);
+  return slot ? createPortal(children, slot) : null;
+}
+
 /** One action in a modal's ⋮ menu (beside its close button) — e.g.
  * Delete, for a modal that edits one deletable thing. */
 export type ModalMenuItem = {
@@ -30,6 +42,8 @@ export type ModalMenuItem = {
 // every other modal holds. "large" opts a specific modal into more
 // breathing room without changing anyone else's.
 const SIZE_CLASS = {
+  // A short question and its two buttons (ConfirmDialog).
+  small: "max-w-md",
   default: "max-w-2xl",
   large: "max-w-6xl",
 } as const;
@@ -94,6 +108,7 @@ export function Modal({
   const [hasOpened, setHasOpened] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // A click anywhere outside the open menu closes it.
@@ -252,9 +267,15 @@ export function Modal({
           otherwise run off the top/bottom of the viewport. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
         <HeaderSlotContext.Provider value={headerSlot}>
-          {hasOpened && children}
+          <FooterSlotContext.Provider value={footerSlot}>
+            {hasOpened && children}
+          </FooterSlotContext.Provider>
         </HeaderSlotContext.Provider>
       </div>
+      <div
+        ref={setFooterSlot}
+        className="flex shrink-0 items-center justify-end gap-3 border-t border-zinc-200 px-6 py-4 empty:hidden"
+      />
     </dialog>
   );
 }

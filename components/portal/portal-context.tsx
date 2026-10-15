@@ -1,8 +1,9 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
+import { NotificationsProvider } from "@/components/notifications/notifications-provider";
 
-export type PortalBasePath = "/admin" | "/foreman";
+export type PortalBasePath = "/admin" | "/foreman" | "/project-manager";
 
 export type Portal = {
   /** Route prefix every in-app link is built from. */
@@ -17,6 +18,9 @@ export type Portal = {
 
 const PortalContext = createContext<Portal | null>(null);
 
+/** Every portal layout's own wrapper — who's signed in and where, plus
+ * their notifications, held here (not per page) so they survive moving
+ * between pages. */
 export function PortalProvider({
   portal,
   children,
@@ -24,7 +28,11 @@ export function PortalProvider({
   portal: Portal;
   children: ReactNode;
 }) {
-  return <PortalContext.Provider value={portal}>{children}</PortalContext.Provider>;
+  return (
+    <PortalContext.Provider value={portal}>
+      <NotificationsProvider>{children}</NotificationsProvider>
+    </PortalContext.Provider>
+  );
 }
 
 export function usePortal(): Portal {

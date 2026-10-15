@@ -180,11 +180,7 @@ export function AccountDetail({
         </dd>
         <dt className="text-zinc-500">Last Sign-in</dt>
         <dd className="text-zinc-900">
-          {account.lastSignInAt ? (
-            <span title={formatDate(account.lastSignInAt, true)}>{timeAgo(account.lastSignInAt)}</span>
-          ) : (
-            "Never"
-          )}
+          {account.lastSignInAt ? formatDate(account.lastSignInAt, true) : "Never"}
         </dd>
         <dt className="text-zinc-500">Created</dt>
         <dd className="text-zinc-900">{formatDate(account.createdAt)}</dd>

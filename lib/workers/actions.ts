@@ -59,6 +59,26 @@ function readMemberFields(formData: FormData) {
   const subcontractor = text("employmentType") === "subcontractor";
   const company = text("subcontractorCompany");
   if (subcontractor && !company) return { error: "Enter the subcontractor's company." };
+  // A subcontractor's paid per contract, not by the hour.
+  const rateText = subcontractor ? "" : text("hourlyRate").replace(/,/g, "");
+  const hourlyRate = rateText ? Number(rateText) : null;
+  if (hourlyRate !== null && (!Number.isFinite(hourlyRate) || hourlyRate < 0)) {
+    return { error: "Enter a valid default rate." };
+  }
+  // Working Days: hours Monday to Sunday — blank counts as 0. Left as
+  // they are when the form doesn't send them (a subcontractor).
+  const hoursFields = formData.getAll("workHours");
+  const workHours = hoursFields.map((value) => {
+    const hours = String(value ?? "").trim();
+    return hours ? Number(hours) : 0;
+  });
+  if (
+    hoursFields.length > 0 &&
+    (workHours.length !== 7 ||
+      workHours.some((hours) => !Number.isFinite(hours) || hours < 0 || hours > 24))
+  ) {
+    return { error: "Working hours must be between 0 and 24 each day." };
+  }
   return {
     fields: {
       full_name: fullName,
@@ -68,7 +88,11 @@ function readMemberFields(formData: FormData) {
       category,
       employment_type: subcontractor ? ("subcontractor" as const) : ("employee" as const),
       subcontractor_company: subcontractor ? company : null,
-      profile_id: text("profileId") || null,
+      // Left as it is unless sent — the member form doesn't (accounts
+      // are linked on their own, ensure_team_member).
+      ...(formData.has("profileId") ? { profile_id: text("profileId") || null } : {}),
+      hourly_rate: hourlyRate,
+      ...(workHours.length === 7 ? { work_hours: workHours } : {}),
     },
   };
 }
@@ -86,10 +110,161 @@ async function requireAdmin() {
 }
 
 // A member's name shows on every project's Gantt chart (both portals),
-// and their availability on the Team page.
+// and their availability on the Team page (the admin's and the project
+// manager's).
 function revalidateTeam() {
   revalidatePath("/admin", "layout");
   revalidatePath("/foreman", "layout");
+  revalidatePath("/project-manager", "layout");
+}
+
+// Groups (crews) are made by admins, super admins and project managers.
+async function requireGroupManager() {
+  const profile = await getSessionProfile();
+  return profile && (isAdminRole(profile.role) || profile.role === "project_manager")
+    ? profile
+    : null;
+}
+
+function cleanIds(ids: unknown): number[] {
+  return Array.isArray(ids)
+    ? Array.from(new Set(ids.filter((id): id is number => Number.isInteger(id) && id > 0)))
+    : [];
+}
+
+/** Creates a group (groupId null) or renames/redescribes one — and sets
+ * exactly who's in it. */
+export async function saveMemberGroup(
+  groupId: number | null,
+  input: { name: string; description: string; memberIds: number[] }
+): Promise<WorkerActionState> {
+  return safely(async () => {
+    const profile = await requireGroupManager();
+    if (!profile) {
+      return { error: "You are not authorized to manage groups." };
+    }
+
+    const name = String(input?.name ?? "").trim();
+    const description = String(input?.description ?? "").trim() || null;
+    const memberIds = cleanIds(input?.memberIds);
+    if (!name) {
+      return { error: "Give the group a name." };
+    }
+
+    const supabase = await createClient();
+    let id = groupId;
+    if (id === null) {
+      const { data, error } = await supabase
+        .from("member_groups")
+        .insert({
+          name,
+          description,
+          created_by: profile.id,
+          created_by_name: `${profile.firstName} ${profile.lastName}`.trim() || profile.email,
+        })
+        .select("id")
+        .single();
+      if (error || !data) {
+        if (error) logSupabaseError("[saveMemberGroup] Supabase insert failed", error);
+        return {
+          error:
+            error?.code === "23505"
+              ? "A group with that name already exists."
+              : "Could not create the group. Please try again.",
+        };
+      }
+      id = data.id;
+    } else {
+      const { error } = await supabase
+        .from("member_groups")
+        .update({ name, description })
+        .eq("id", id);
+      if (error) {
+        logSupabaseError("[saveMemberGroup] Supabase update failed", error);
+        return {
+          error:
+            error.code === "23505"
+              ? "A group with that name already exists."
+              : "Could not save the group. Please try again.",
+        };
+      }
+      const { error: clearError } = await supabase
+        .from("member_group_members")
+        .delete()
+        .eq("group_id", id);
+      if (clearError) {
+        logSupabaseError("[saveMemberGroup] Supabase delete failed", clearError);
+        return { error: "Could not save the group's members. Please try again." };
+      }
+    }
+
+    if (memberIds.length > 0) {
+      const groupIdToSave = id;
+      const { error } = await supabase
+        .from("member_group_members")
+        .insert(memberIds.map((workerId) => ({ group_id: groupIdToSave, worker_id: workerId })));
+      if (error) {
+        logSupabaseError("[saveMemberGroup] Supabase member insert failed", error);
+        return { error: "Could not save the group's members. Please try again." };
+      }
+    }
+
+    revalidateTeam();
+    return { success: true };
+  });
+}
+
+/** Adds members to a group (the Team table's checked rows) — anyone
+ * already in it stays as they are. */
+export async function addMembersToGroup(
+  groupId: number,
+  workerIds: number[]
+): Promise<WorkerActionState> {
+  return safely(async () => {
+    const profile = await requireGroupManager();
+    if (!profile) {
+      return { error: "You are not authorized to manage groups." };
+    }
+    const ids = cleanIds(workerIds);
+    if (!Number.isInteger(groupId) || ids.length === 0) {
+      return { error: "Select at least one member." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase
+      .from("member_group_members")
+      .upsert(
+        ids.map((workerId) => ({ group_id: groupId, worker_id: workerId })),
+        { onConflict: "group_id,worker_id", ignoreDuplicates: true }
+      );
+    if (error) {
+      logSupabaseError("[addMembersToGroup] Supabase upsert failed", error);
+      return { error: "Could not add them to the group. Please try again." };
+    }
+
+    revalidateTeam();
+    return { success: true };
+  });
+}
+
+/** Deletes a group — its members stay on the Team. */
+export async function deleteMemberGroup(groupId: number): Promise<WorkerActionState> {
+  return safely(async () => {
+    const profile = await requireGroupManager();
+    if (!profile) {
+      return { error: "You are not authorized to manage groups." };
+    }
+
+    const supabase = await createClient();
+    const { error } = await supabase.from("member_groups").delete().eq("id", groupId);
+    if (error) {
+      logSupabaseError("[deleteMemberGroup] Supabase delete failed", error);
+      return { error: "Could not delete the group. Please try again." };
+    }
+
+    revalidateTeam();
+    return { success: true };
+  });
 }
 
 export async function createWorker(

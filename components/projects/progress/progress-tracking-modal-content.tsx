@@ -2,11 +2,14 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { ChevronDown, X } from "lucide-react";
 import { ModalHeaderAddon } from "@/components/ui/modal";
 import type { LatestOverride, TaskProgressToday } from "@/lib/task-progress/data";
+import type { Worker } from "@/lib/workers/data";
+import { formatHours, weekdayIndex } from "@/lib/workers/schedule";
 import {
   COST_COMPONENTS,
-  computeDailyPlan,
+  ZERO_COSTS,
   computeProgressBreakdown,
   toIsoDate,
   type CostAmounts,
@@ -63,7 +66,8 @@ function parseAmount(value: string): number | null {
 }
 
 /** One labeled input in the modal's grid — the label on the left, a
- * short running figure (e.g. "₱500 / ₱1,000") on the right. */
+ * short figure (e.g. total so far over planned, "₱500 / ₱1,000") on the
+ * right. */
 function Field({
   htmlFor,
   label,
@@ -120,6 +124,162 @@ function AmountInput({
       />
       {unit && <span className="shrink-0 pr-3 text-sm text-zinc-400">{unit}</span>}
     </div>
+  );
+}
+
+// Hours typed for one person — blank counts as 0 (absent); null flags
+// anything that isn't 0–24.
+function parseHours(value: string): number | null {
+  if (!value.trim()) return 0;
+  const hours = Number(value);
+  return Number.isFinite(hours) && hours >= 0 && hours <= 24 ? hours : null;
+}
+
+/** "Who worked today": the task's assigned crew (and anyone added who
+ * helped), each with the hours they worked — starting from today's hours
+ * in their own Working Days (0 on a day off) — at their own Default Rate,
+ * which is what the day's labor cost comes to. Subcontractors aren't
+ * counted (they're billed per contract, under Other cost). */
+function Attendance({
+  rows,
+  team,
+  hours,
+  onHours,
+  onAdd,
+  onRemove,
+  laborToday,
+  laborDetail,
+  subcontractorsAssigned,
+}: {
+  rows: { worker: Worker; helper: boolean }[];
+  /** Everyone who could be added as a helper. */
+  team: Worker[];
+  /** Hours typed per person, by worker id. */
+  hours: Record<number, string>;
+  onHours: (workerId: number, value: string) => void;
+  onAdd: (workerId: number) => void;
+  onRemove: (workerId: number) => void;
+  laborToday: number;
+  laborDetail?: ReactNode;
+  subcontractorsAssigned: boolean;
+}) {
+  const today = weekdayIndex();
+  const listed = new Set(rows.map((row) => row.worker.id));
+  const addable = team.filter((worker) => !listed.has(worker.id));
+  const totalHours = rows.reduce((sum, row) => sum + (parseHours(hours[row.worker.id] ?? "") ?? 0), 0);
+  const missingRate = rows.some(
+    (row) => (parseHours(hours[row.worker.id] ?? "") ?? 0) > 0 && row.worker.hourlyRate === null
+  );
+
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold text-zinc-600">Who worked today</p>
+        <div className="flex items-center gap-3">
+          {laborDetail && (
+            <span className="text-[11px] text-zinc-400 tabular-nums">{laborDetail}</span>
+          )}
+          <span className="text-xs text-zinc-500 tabular-nums">{formatHours(totalHours)}</span>
+          <span className="text-sm font-semibold text-zinc-900 tabular-nums">
+            Labor {formatPeso(laborToday)}
+          </span>
+        </div>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="rounded-md border border-dashed border-zinc-200 px-3 py-4 text-center text-sm text-zinc-400">
+          Nobody&apos;s assigned yet — add whoever worked today.
+        </p>
+      ) : (
+        <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200">
+          {rows.map(({ worker, helper }) => {
+            const worked = parseHours(hours[worker.id] ?? "");
+            const dayOff = (worker.workHours[today] ?? 0) === 0;
+            return (
+              <li key={worker.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-zinc-900">
+                    {worker.fullName}
+                    {helper && <span className="ml-1.5 text-xs text-zinc-400">Helper</span>}
+                    {dayOff && <span className="ml-1.5 text-xs text-zinc-400">Day off</span>}
+                  </p>
+                  {worker.title && <p className="truncate text-xs text-zinc-400">{worker.title}</p>}
+                </div>
+                <div
+                  className={`flex w-24 shrink-0 items-center rounded-md border bg-white transition focus-within:ring-2 focus-within:ring-zinc-200 ${
+                    worked === null ? "border-red-300" : "border-zinc-200 focus-within:border-zinc-400"
+                  }`}
+                >
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={hours[worker.id] ?? ""}
+                    onChange={(e) => onHours(worker.id, e.target.value)}
+                    placeholder="0"
+                    aria-label={`Hours ${worker.fullName} worked today`}
+                    className="w-full min-w-0 bg-transparent py-1.5 pl-2.5 text-right text-sm text-zinc-700 outline-none tabular-nums"
+                  />
+                  <span className="shrink-0 pr-2.5 pl-1 text-xs text-zinc-400">hrs</span>
+                </div>
+                <span className="w-20 shrink-0 text-right text-sm tabular-nums">
+                  {worker.hourlyRate === null ? (
+                    <span className="text-xs text-amber-600">No rate</span>
+                  ) : (
+                    <span className={(worked ?? 0) > 0 ? "text-zinc-900" : "text-zinc-300"}>
+                      {formatPeso(worker.hourlyRate * (worked ?? 0))}
+                    </span>
+                  )}
+                </span>
+                {helper && (
+                  <button
+                    type="button"
+                    onClick={() => onRemove(worker.id)}
+                    title="Take off the list"
+                    aria-label={`Take ${worker.fullName} off the list`}
+                    className="shrink-0 cursor-pointer rounded p-0.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {addable.length > 0 && (
+        <div className="relative w-fit">
+          {/* Picking someone adds them as a helper, at today's hours. */}
+          <select
+            value=""
+            onChange={(e) => onAdd(Number(e.target.value))}
+            aria-label="Add someone who helped"
+            className="cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white py-1.5 pr-8 pl-3 text-sm text-zinc-700 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+          >
+            <option value="" disabled>
+              + Add someone who helped
+            </option>
+            {addable.map((worker) => (
+              <option key={worker.id} value={worker.id}>
+                {worker.title ? `${worker.fullName} — ${worker.title}` : worker.fullName}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
+        </div>
+      )}
+
+      {missingRate && (
+        <p className="text-xs text-amber-600">
+          Someone here has no default rate yet, so they count as ₱0 — set it on the Team page.
+        </p>
+      )}
+      {subcontractorsAssigned && (
+        <p className="text-xs text-zinc-500">
+          Subcontractors aren&apos;t counted here — add their billing under Other cost.
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -211,15 +371,20 @@ function LastOverride({
  * Daily Progress Update for one task (or task-less category), for today.
  * A day's record is what it spent on each of the task's four cost
  * components (labor, material, equipment, other), plus the quantity done
- * and materials used — and % complete is cost to date over planned cost
- * (the cost-to-cost method, see computeProgressBreakdown,
- * lib/task-progress/calculate.ts).
+ * and materials used — and % complete is quantity done to date over
+ * planned quantity, else cost to date over planned cost (see
+ * computeProgressBreakdown, lib/task-progress/calculate.ts).
  *
- * Automatic progress: every input starts from today's planned share
- * (computeDailyPlan — planned ÷ working days, e.g. ₱1,000 of labor over 4
- * days → ₱250), and a past working day nobody saved counts that same
- * share on its own. Editing the inputs and saving overrides the day.
- * Reopening a day already saved starts from what was saved instead.
+ * Automatic progress: a past working day nobody saved counts its planned
+ * share on its own (computeDailyPlan — planned ÷ working days, e.g.
+ * ₱1,000 of material over 4 days → ₱250); today only once it's over. So
+ * an unsaved day's inputs start blank, and saving records just what was
+ * typed. Reopening a day already saved starts from what was saved.
+ *
+ * Labor isn't typed: it's who worked today (Attendance), the hours each
+ * one put in at their own Default Rate — the assigned crew, at today's
+ * hours in their own Working Days, to start — and the server prices it
+ * the same way when it's saved.
  */
 export function ProgressTrackingModalContent({
   estimatedQuantity,
@@ -231,6 +396,8 @@ export function ProgressTrackingModalContent({
   workingDays,
   holidays,
   progressToday,
+  crew,
+  team,
   highlightLatest = false,
   onSave,
   onClose,
@@ -246,12 +413,18 @@ export function ProgressTrackingModalContent({
   workingDays: readonly number[];
   holidays: readonly string[];
   progressToday: TaskProgressToday;
+  /** Who's assigned to this task (or phase) — today's attendance starts
+   * from them. */
+  crew: Worker[];
+  /** The whole Team — anyone else who helped can be added. */
+  team: Worker[];
   /** Opened from a notification — highlight its Last override. */
   highlightLatest?: boolean;
   onSave: (input: {
     quantityCompletedToday: number;
     costs: CostAmounts;
     materialsUsed: { name: string; unit: string | null; quantity: number }[];
+    attendance: { workerId: number; hours: number }[];
   }) => Promise<ProgressActionResult>;
   onClose: () => void;
 }) {
@@ -259,22 +432,13 @@ export function ProgressTrackingModalContent({
   const savedToday = progressToday.today;
   const schedule = { plannedStartDate, plannedEndDate, workingDays, holidays };
 
-  // Today's automatic values — where an unsaved day's inputs start.
-  const [dailyPlan] = useState(() =>
-    computeDailyPlan({
-      ...schedule,
-      plannedCosts,
-      estimatedQuantity,
-      plannedMaterials,
-      date: new Date(),
-    })
-  );
-
+  // An unsaved day starts blank (0): today counts automatically only once
+  // it's over, so nothing's recorded for it but what's typed here.
   const [quantityInput, setQuantityInput] = useState(() =>
-    toInput(savedToday ? savedToday.quantityCompleted : dailyPlan.quantity)
+    toInput(savedToday ? savedToday.quantityCompleted : 0)
   );
   const [costInputs, setCostInputs] = useState<Record<CostComponent, string>>(() => {
-    const start = savedToday ? savedToday.costs : dailyPlan.costs;
+    const start = savedToday ? savedToday.costs : ZERO_COSTS;
     return {
       labor: toInput(start.labor),
       material: toInput(start.material),
@@ -285,20 +449,62 @@ export function ProgressTrackingModalContent({
   const [materialInputs, setMaterialInputs] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     for (const material of plannedMaterials) {
-      initial[material.key] = toInput(
-        savedToday
-          ? (savedToday.materialUsage[material.key] ?? 0)
-          : (dailyPlan.materials[material.key] ?? 0)
-      );
+      initial[material.key] = toInput(savedToday?.materialUsage[material.key] ?? 0);
     }
     return initial;
   });
+  // Today's attendance: what's saved for today, else the assigned crew
+  // (employees — subcontractors are billed per contract) at today's hours
+  // in their own Working Days.
+  // Only skilled workers are paid by the hour (management and engineers
+  // are salaried; subcontractors, per contract).
+  const crewEmployees = crew.filter(
+    (worker) => worker.employmentType !== "subcontractor" && worker.category === "skilled"
+  );
+  const [hours, setHours] = useState<Record<number, string>>(() => {
+    const today = weekdayIndex();
+    const initial: Record<number, string> = {};
+    const saved = progressToday.todayAttendance;
+    // A day saved before attendance existed (typed labor, nobody listed)
+    // starts like a new day.
+    const fresh = !savedToday || (saved.length === 0 && savedToday.costs.labor > 0);
+    for (const worker of crewEmployees) {
+      initial[worker.id] = fresh ? toInput(worker.workHours[today] ?? 0) : "";
+    }
+    if (!fresh) {
+      for (const mark of saved) {
+        if (mark.workerId !== null) initial[mark.workerId] = toInput(mark.hours);
+      }
+    }
+    return initial;
+  });
+  const teamById = new Map(team.map((worker) => [worker.id, worker]));
+  const crewIds = new Set(crewEmployees.map((worker) => worker.id));
+  const attendanceRows = [
+    ...crewEmployees.map((worker) => ({ worker, helper: false })),
+    ...Object.keys(hours)
+      .map(Number)
+      .filter((id) => !crewIds.has(id))
+      .flatMap((id) => {
+        const worker = teamById.get(id);
+        return worker ? [{ worker, helper: true }] : [];
+      })
+      .sort((a, b) => a.worker.fullName.localeCompare(b.worker.fullName)),
+  ];
+  const hoursWorked = attendanceRows.map(({ worker }) => ({
+    workerId: worker.id,
+    hours: parseHours(hours[worker.id] ?? ""),
+  }));
+  const laborToday = attendanceRows.reduce(
+    (sum, { worker }, index) => sum + (worker.hourlyRate ?? 0) * (hoursWorked[index].hours ?? 0),
+    0
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const quantity = parseAmount(quantityInput);
   const costs = {
-    labor: parseAmount(costInputs.labor),
+    labor: laborToday as number | null,
     material: parseAmount(costInputs.material),
     equipment: parseAmount(costInputs.equipment),
     other: parseAmount(costInputs.other),
@@ -350,6 +556,32 @@ export function ProgressTrackingModalContent({
     today: new Date(),
   });
 
+  // Up to yesterday — saved earlier days, and each past day with no
+  // update at its planned share — without today's log (saved or typed).
+  const priorMaterialUsage: Record<string, number> = { ...progressToday.cumulativeMaterialUsage };
+  for (const [key, used] of Object.entries(savedToday?.materialUsage ?? {})) {
+    priorMaterialUsage[key] = (priorMaterialUsage[key] ?? 0) - used;
+  }
+  const beforeToday = computeProgressBreakdown({
+    ...schedule,
+    plannedCosts,
+    estimatedQuantity,
+    plannedMaterials,
+    anchor: {
+      cumulativeQuantityCompleted:
+        progressToday.cumulativeQuantityCompleted - (savedToday?.quantityCompleted ?? 0),
+      cumulativeMaterialUsage: priorMaterialUsage,
+      cumulativeCosts: {
+        labor: progressToday.cumulativeCosts.labor - (savedToday?.costs.labor ?? 0),
+        material: progressToday.cumulativeCosts.material - (savedToday?.costs.material ?? 0),
+        equipment: progressToday.cumulativeCosts.equipment - (savedToday?.costs.equipment ?? 0),
+        other: progressToday.cumulativeCosts.other - (savedToday?.costs.other ?? 0),
+      },
+      loggedDates: progressToday.loggedDates,
+    },
+    today: new Date(),
+  });
+
   async function handleSave() {
     setError(null);
     if (quantity === null) {
@@ -364,16 +596,23 @@ export function ProgressTrackingModalContent({
       setError("Materials used must be 0 or more.");
       return;
     }
+    if (hoursWorked.some((entry) => entry.hours === null)) {
+      setError("Hours worked must be between 0 and 24.");
+      return;
+    }
 
     setPending(true);
     const result = await onSave({
       quantityCompletedToday: quantity,
       costs: {
-        labor: costs.labor!,
+        labor: laborToday,
         material: costs.material!,
         equipment: costs.equipment!,
         other: costs.other!,
       },
+      attendance: hoursWorked
+        .filter((entry) => (entry.hours ?? 0) > 0)
+        .map((entry) => ({ workerId: entry.workerId, hours: entry.hours! })),
       materialsUsed: materialsUsed.map((material) => ({
         name: material.name,
         unit: material.unit,
@@ -401,18 +640,83 @@ export function ProgressTrackingModalContent({
           </span>
         </ModalHeaderAddon>
       )}
+      {/* What's counted up to yesterday — saved earlier days, and each
+          past day with no update at its planned share — before today's
+          log below adds to it (the fields' totals include today). */}
+      <section className="rounded-md border border-sky-200 bg-sky-50 p-4">
+        <p className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs font-semibold text-zinc-700">
+          <span className="flex items-center gap-2">
+            Up to yesterday
+            {/* Days with no update count their planned share (automatic
+                progress) — so this is partly the plan, not only what's
+                been logged. */}
+            {beforeToday.automaticDays > 0 && (
+              <span
+                title="Days with no update count their planned share (automatic progress)."
+                className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
+              >
+                Planned
+              </span>
+            )}
+          </span>
+          <span className="tabular-nums">{beforeToday.percentComplete.toFixed(2)}% complete</span>
+        </p>
+        <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs sm:grid-cols-3">
+          <div className="flex justify-between gap-2">
+            <dt className="text-zinc-500">Quantity</dt>
+            <dd className="font-medium text-zinc-900">
+              {formatQuantity(beforeToday.quantityToDate)}
+              {unit ? ` ${unit}` : ""}
+            </dd>
+          </div>
+          {COST_COMPONENTS.map((component) => (
+            <div key={component} className="flex justify-between gap-2">
+              <dt className="text-zinc-500">{COST_LABEL[component]}</dt>
+              <dd className="font-medium text-zinc-900">
+                {formatPeso(beforeToday.costsToDate[component])}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {beforeToday.automaticDays > 0 && (
+          <p className="mt-2 text-xs text-zinc-500">
+            Includes {beforeToday.automaticDays} past{" "}
+            {beforeToday.automaticDays === 1 ? "day" : "days"} with no update, counted as
+            planned.
+          </p>
+        )}
+      </section>
+      {/* Edge to edge: -mx-6 takes back the modal body's own px-6. */}
+      <div aria-hidden="true" className="-mx-6 border-t border-zinc-200" />
+      {/* Everything below is today's own record — an override of today,
+          not the running total above. */}
+      <div className="-mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="text-sm font-semibold text-zinc-900">
+          Today&apos;s log ·{" "}
+          {new Date().toLocaleDateString("en-US", {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          })}
+        </h3>
+        <p className="text-xs text-zinc-400">Saving records it as today&apos;s override</p>
+      </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field
           htmlFor="progress-quantity"
           label="Quantity completed today"
+          // The total with today (Up to yesterday plus what's typed) over
+          // planned, live; amber once it's past the plan.
           detail={
             estimatedQuantity > 0 ? (
               <span
+                title="Total with today / planned"
                 className={
                   breakdown.quantityToDate > estimatedQuantity ? "text-amber-600" : ""
                 }
               >
                 {formatQuantity(breakdown.quantityToDate)} / {formatQuantity(estimatedQuantity)}
+                {unit ? ` ${unit}` : ""}
               </span>
             ) : undefined
           }
@@ -425,7 +729,8 @@ export function ProgressTrackingModalContent({
           />
         </Field>
 
-        {COST_COMPONENTS.map((component) => {
+        {/* Labor's its own section below — who worked, not a typed amount. */}
+        {COST_COMPONENTS.filter((component) => component !== "labor").map((component) => {
           const toDate = breakdown.costsToDate[component];
           const planned = plannedCosts[component];
           return (
@@ -433,9 +738,14 @@ export function ProgressTrackingModalContent({
               key={component}
               htmlFor={`progress-${component}`}
               label={COST_LABEL[component]}
+              // The total with today over planned — red once it's over
+              // the plan.
               detail={
                 planned > 0 ? (
-                  <span className={toDate > planned + 0.005 ? "font-semibold text-red-600" : ""}>
+                  <span
+                    title="Total with today / planned"
+                    className={toDate > planned + 0.005 ? "font-semibold text-red-600" : ""}
+                  >
                     {formatPeso(toDate)} / {formatPeso(planned)}
                   </span>
                 ) : undefined
@@ -453,6 +763,47 @@ export function ProgressTrackingModalContent({
           );
         })}
       </div>
+
+      <Attendance
+        rows={attendanceRows}
+        team={team.filter(
+          (worker) => worker.employmentType !== "subcontractor" && worker.category === "skilled"
+        )}
+        hours={hours}
+        onHours={(workerId, value) => setHours((prev) => ({ ...prev, [workerId]: value }))}
+        onAdd={(workerId) =>
+          setHours((prev) => ({
+            ...prev,
+            // Their hours for today — a full 8 when it's their day off.
+            [workerId]: toInput(teamById.get(workerId)?.workHours[weekdayIndex()] || 8),
+          }))
+        }
+        onRemove={(workerId) =>
+          setHours((prev) => {
+            const next = { ...prev };
+            delete next[workerId];
+            return next;
+          })
+        }
+        laborToday={laborToday}
+        laborDetail={
+          plannedCosts.labor > 0 ? (
+            // The total with today over planned, like the fields above;
+            // red once it's over the plan.
+            <span
+              title="Total with today / planned"
+              className={
+                breakdown.costsToDate.labor > plannedCosts.labor + 0.005
+                  ? "font-semibold text-red-600"
+                  : ""
+              }
+            >
+              {formatPeso(breakdown.costsToDate.labor)} / {formatPeso(plannedCosts.labor)}
+            </span>
+          ) : undefined
+        }
+        subcontractorsAssigned={crew.some((worker) => worker.employmentType === "subcontractor")}
+      />
 
       {plannedMaterials.length > 0 && (
         <section className="flex flex-col gap-3">

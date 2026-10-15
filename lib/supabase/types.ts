@@ -384,6 +384,79 @@ export interface Database {
         };
         Relationships: [];
       };
+      /** See 0068_progress_attendance.sql. */
+      task_progress_attendance: {
+        Row: {
+          id: number;
+          progress_entry_id: number;
+          worker_id: number | null;
+          worker_name: string;
+          hours: number;
+          hourly_rate: number;
+        };
+        Insert: {
+          progress_entry_id: number;
+          worker_id: number | null;
+          worker_name: string;
+          hours: number;
+          hourly_rate: number;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      category_progress_attendance: {
+        Row: {
+          id: number;
+          progress_entry_id: number;
+          worker_id: number | null;
+          worker_name: string;
+          hours: number;
+          hourly_rate: number;
+        };
+        Insert: {
+          progress_entry_id: number;
+          worker_id: number | null;
+          worker_name: string;
+          hours: number;
+          hourly_rate: number;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
+      /** See 0067_member_groups.sql. */
+      member_groups: {
+        Row: {
+          id: number;
+          name: string;
+          description: string | null;
+          created_by: string | null;
+          created_by_name: string | null;
+          created_at: string;
+        };
+        Insert: {
+          name: string;
+          description?: string | null;
+          created_by?: string | null;
+          created_by_name?: string | null;
+        };
+        Update: {
+          name?: string;
+          description?: string | null;
+        };
+        Relationships: [];
+      };
+      member_group_members: {
+        Row: {
+          group_id: number;
+          worker_id: number;
+        };
+        Insert: {
+          group_id: number;
+          worker_id: number;
+        };
+        Update: Record<string, never>;
+        Relationships: [];
+      };
       /** See 0066_account_management.sql. */
       account_events: {
         Row: {
@@ -505,6 +578,10 @@ export interface Database {
           employment_type: "employee" | "subcontractor";
           subcontractor_company: string | null;
           profile_id: string | null;
+          /** Pesos an hour — see 0069_hourly_rates_work_hours.sql. */
+          hourly_rate: number | null;
+          /** Hours each day of the week, Monday first (7 values). */
+          work_hours: number[];
           created_by: string | null;
           created_at: string;
         };
@@ -517,6 +594,8 @@ export interface Database {
           employment_type?: "employee" | "subcontractor";
           subcontractor_company?: string | null;
           profile_id?: string | null;
+          hourly_rate?: number | null;
+          work_hours?: number[];
           created_by?: string | null;
         };
         Update: {
@@ -528,6 +607,8 @@ export interface Database {
           employment_type?: "employee" | "subcontractor";
           subcontractor_company?: string | null;
           profile_id?: string | null;
+          hourly_rate?: number | null;
+          work_hours?: number[];
         };
         Relationships: [];
       };
@@ -1297,6 +1378,30 @@ export interface Database {
         Returns: undefined;
       };
       /** See 0060_team_member_details.sql. */
+      /** See 0068_progress_attendance.sql. */
+      attendance_elsewhere: {
+        Args: {
+          p_date: string;
+          p_worker_ids: number[];
+          p_task_id: number | null;
+          p_category_id: number | null;
+        };
+        Returns: {
+          worker_id: number;
+          hours: number;
+          item_name: string;
+          project_name: string;
+        }[];
+      };
+      team_hours_worked: {
+        Args: Record<string, never>;
+        Returns: {
+          worker_id: number;
+          project_id: number;
+          project_name: string;
+          hours: number;
+        }[];
+      };
       team_assignments: {
         Args: Record<string, never>;
         Returns: {

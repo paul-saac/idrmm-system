@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   dismissNotification,
@@ -9,17 +18,27 @@ import {
   type AppNotification,
 } from "@/lib/notifications/actions";
 
-// Fired after marking read, so every other place showing notifications
-// (the bell, the dashboard's card) reloads too.
-const CHANGED_EVENT = "notifications-changed";
+type Notifications = {
+  items: AppNotification[];
+  unreadCount: number;
+  load: () => void;
+  /** One notification read — or every one, with no id. */
+  markRead: (id?: number) => Promise<void>;
+  /** Removes one notification for good (Dismiss). */
+  dismiss: (notification: AppNotification) => Promise<void>;
+};
+
+const NotificationsContext = createContext<Notifications | null>(null);
 
 /**
- * The signed-in user's notifications (see 0061_notifications.sql) —
- * loaded on mount, whenever the window regains focus or another
- * instance marks some read, and live on every new one (Supabase
- * Realtime, one channel per instance).
+ * The signed-in user's notifications (see 0061_notifications.sql), held
+ * once for the whole portal — PortalProvider wraps every page in it, and
+ * the portal layout outlives page changes, so the bell (redrawn with each
+ * page's own header) never starts over empty and blinks its dot out and
+ * back. Loaded on mount and whenever the window regains focus, and live on
+ * every new one (Supabase Realtime).
  */
-export function useNotifications() {
+export function NotificationsProvider({ children }: { children: ReactNode }) {
   const instanceId = useId();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -56,32 +75,40 @@ export function useNotifications() {
         .subscribe();
     });
     window.addEventListener("focus", load);
-    window.addEventListener(CHANGED_EVENT, load);
     return () => {
       cancelled = true;
       window.removeEventListener("focus", load);
-      window.removeEventListener(CHANGED_EVENT, load);
       if (channel) supabase.removeChannel(channel);
     };
   }, [load, instanceId]);
 
-  /** One notification read — or every one, with no id. */
   const markRead = useCallback(async (id?: number) => {
     setItems((prev) =>
       prev.map((n) => (id === undefined || n.id === id ? { ...n, read: true } : n))
     );
     setUnreadCount((count) => (id === undefined ? 0 : Math.max(0, count - 1)));
     await markNotificationsRead(id);
-    window.dispatchEvent(new Event(CHANGED_EVENT));
   }, []);
 
-  /** Removes one notification for good (Dismiss). */
   const dismiss = useCallback(async (notification: AppNotification) => {
     setItems((prev) => prev.filter((n) => n.id !== notification.id));
     if (!notification.read) setUnreadCount((count) => Math.max(0, count - 1));
     await dismissNotification(notification.id);
-    window.dispatchEvent(new Event(CHANGED_EVENT));
   }, []);
 
-  return { items, unreadCount, load, markRead, dismiss };
+  const value = useMemo(
+    () => ({ items, unreadCount, load, markRead, dismiss }),
+    [items, unreadCount, load, markRead, dismiss]
+  );
+
+  return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;
+}
+
+/** The portal's own notifications — see NotificationsProvider. */
+export function useNotifications(): Notifications {
+  const value = useContext(NotificationsContext);
+  if (!value) {
+    throw new Error("useNotifications must be used inside a NotificationsProvider (see PortalProvider).");
+  }
+  return value;
 }

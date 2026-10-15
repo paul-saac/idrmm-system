@@ -7,6 +7,7 @@ import { getGanttUndoRedoState } from "@/lib/cost-estimate/undo-redo";
 import {
   listWorkers,
   listAssignments,
+  listMemberGroups,
   listTaskWorkerAssignments,
   listCategoryWorkerAssignments,
 } from "@/lib/workers/data";
@@ -88,6 +89,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     taskProgressToday,
     categoryProgressToday,
     events,
+    memberGroups,
   ] = await Promise.all([
     getProjectById(projectId),
     listAccountsByRole(["project_manager"]),
@@ -117,6 +119,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listTaskProgressToday(projectId),
     listCategoryProgressToday(projectId),
     listProjectEvents(projectId),
+    listMemberGroups(),
   ]);
 
   const expenseOverview = summarizeExpenses(
@@ -193,6 +196,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       ganttCanRedo={ganttUndoRedoState.canRedo}
       workers={workers}
       workerAssignments={workerAssignments}
+      memberGroups={memberGroups}
       taskWorkerAssignments={taskWorkerAssignments}
       categoryWorkerAssignments={categoryWorkerAssignments}
       taskProgressToday={taskProgressToday}

@@ -5,6 +5,11 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { COST_COMPONENTS, type CostAmounts } from "@/lib/task-progress/calculate";
+import {
+  replaceAttendance,
+  resolveAttendance,
+  type AttendanceInput,
+} from "@/lib/task-progress/attendance";
 
 export type CategoryProgressActionState = {
   error?: string;
@@ -41,13 +46,16 @@ function todayIso() {
  * 0048_category_progress_tracking.sql's own doc comment for why this
  * exists at all). Identical shape/behavior throughout, minus materials —
  * a task-less category has no planned material list to log against.
+ * Labor's priced from attendance the same way.
  */
 export async function recordCategoryProgress(
   categoryId: number,
   projectId: number,
   input: {
     quantityCompletedToday: number;
+    /** Labor's ignored — it's priced from `attendance`. */
     costs: CostAmounts;
+    attendance: AttendanceInput;
   }
 ): Promise<CategoryProgressActionState> {
   return safely(async () => {
@@ -73,28 +81,49 @@ export async function recordCategoryProgress(
     const supabase = await createClient();
     const entryDate = todayIso();
 
-    const { error: upsertError } = await supabase
+    const crew = await resolveAttendance(supabase, input.attendance, entryDate, {
+      categoryId,
+    });
+    if ("error" in crew) {
+      return { error: crew.error };
+    }
+
+    const { data: savedEntry, error: upsertError } = await supabase
       .from("category_progress_entries")
       .upsert(
         {
           category_id: categoryId,
           entry_date: entryDate,
           quantity_completed: input.quantityCompletedToday,
-          labor_cost: input.costs.labor,
+          labor_cost: crew.laborCost,
           material_cost: input.costs.material,
           equipment_cost: input.costs.equipment,
           other_cost: input.costs.other,
           recorded_by: profile.id,
         },
         { onConflict: "category_id,entry_date" }
-      );
+      )
+      .select("id")
+      .single();
 
-    if (upsertError) {
-      logSupabaseError(
-        "[recordCategoryProgress] Supabase entry upsert failed",
-        upsertError
-      );
+    if (upsertError || !savedEntry) {
+      if (upsertError) {
+        logSupabaseError(
+          "[recordCategoryProgress] Supabase entry upsert failed",
+          upsertError
+        );
+      }
       return { error: "Could not save progress. Please try again." };
+    }
+
+    const attendanceError = await replaceAttendance(
+      supabase,
+      "category",
+      savedEntry.id,
+      crew.rows
+    );
+    if (attendanceError) {
+      return { error: attendanceError };
     }
 
     revalidateProjectPaths(projectId);

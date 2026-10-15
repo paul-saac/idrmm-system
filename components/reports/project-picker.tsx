@@ -42,7 +42,7 @@ export function ProjectPicker({
             onChange={(e) => setQuery(e.target.value)}
             autoFocus
             placeholder="Search projects…"
-            className="w-full rounded border border-zinc-200 py-2 pr-3 pl-8 text-sm outline-none focus:border-zinc-400"
+            className="w-full rounded border border-zinc-200 bg-white py-2 pr-3 pl-8 text-sm outline-none focus:border-zinc-400"
           />
         </div>
         <div className="flex flex-col divide-y divide-zinc-100">

@@ -13,7 +13,6 @@ import {
   rowClass,
 } from "@/components/ui/list-table";
 import { roleLabel } from "@/lib/auth/roles";
-import { timeAgo } from "@/lib/time-ago";
 import type { AccountRow, AssignedProject } from "@/lib/accounts/data";
 
 function formatDateTime(iso: string) {
@@ -127,11 +126,8 @@ export function AccountsTable({
                 <td className={CELL}>
                   <AssignedProjectsCell projects={account.assignedProjects} />
                 </td>
-                <td
-                  className={`${CELL} whitespace-nowrap`}
-                  title={account.lastSignInAt ? formatDateTime(account.lastSignInAt) : undefined}
-                >
-                  {account.lastSignInAt ? timeAgo(account.lastSignInAt) : BLANK}
+                <td className={`${CELL} whitespace-nowrap`}>
+                  {account.lastSignInAt ? formatDateTime(account.lastSignInAt) : BLANK}
                 </td>
                 <td className={`${CELL} whitespace-nowrap text-zinc-500`}>
                   {formatDateTime(account.createdAt)}
