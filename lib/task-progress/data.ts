@@ -1,9 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
 import {
   materialKey,
+  unplannedMaterialCost,
   ZERO_COSTS,
   type CostAmounts,
   type ProgressAnchor,
+  type UnplannedMaterial,
 } from "@/lib/task-progress/calculate";
 
 /** Every task's own saved totals (see ProgressAnchor's own doc comment)
@@ -19,6 +21,9 @@ export type ProgressDayEntry = {
   costs: CostAmounts;
   /** That day's usage per material, keyed by materialKey. */
   materialUsage: Record<string, number>;
+  /** That day's materials used that aren't on the planned lines, each at
+   * its own unit cost (0073) — kept apart from materialUsage. */
+  unplannedMaterials: UnplannedMaterial[];
 };
 
 /** The most recently overridden day — what the Gantt chart's orange dot
@@ -149,11 +154,13 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
 
   const rows = entries ?? [];
   const materialsByEntry = new Map<number, Record<string, number>>();
+  const unplannedByEntry = new Map<number, UnplannedMaterial[]>();
 
   if (rows.length > 0) {
+    // "*" so a DB without 0073's unit_cost yet still loads.
     const { data: materialRows, error: materialsError } = await supabase
       .from("task_progress_material_entries")
-      .select("progress_entry_id, material_name, unit, quantity_used")
+      .select("*")
       .in(
         "progress_entry_id",
         rows.map((row) => row.id)
@@ -167,6 +174,18 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
     }
 
     for (const row of materialRows ?? []) {
+      // A unit cost of its own marks a material not on the planned lines.
+      if (row.unit_cost !== null && row.unit_cost !== undefined) {
+        const list = unplannedByEntry.get(row.progress_entry_id) ?? [];
+        list.push({
+          name: row.material_name,
+          unit: row.unit,
+          quantity: Number(row.quantity_used) || 0,
+          unitCost: Number(row.unit_cost) || 0,
+        });
+        unplannedByEntry.set(row.progress_entry_id, list);
+        continue;
+      }
       const usage = materialsByEntry.get(row.progress_entry_id) ?? {};
       const key = materialKey(row.material_name, row.unit);
       usage[key] = (usage[key] ?? 0) + (row.quantity_used ?? 0);
@@ -181,15 +200,20 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
     quantityCompleted: row.quantity_completed ?? 0,
     costs: entryCosts(row),
     materialUsage: materialsByEntry.get(row.id) ?? {},
+    unplannedMaterials: unplannedByEntry.get(row.id) ?? [],
     recordedBy: row.recorded_by ?? null,
   }));
 }
 
-function emptyAnchor(): ProgressAnchor & { loggedDates: string[] } {
+function emptyAnchor(): ProgressAnchor & {
+  loggedDates: string[];
+  cumulativeUnplannedMaterialCost: number;
+} {
   return {
     cumulativeQuantityCompleted: 0,
     cumulativeMaterialUsage: {},
     cumulativeCosts: { ...ZERO_COSTS },
+    cumulativeUnplannedMaterialCost: 0,
     loggedDates: [],
   };
 }
@@ -204,6 +228,7 @@ function addEntry(anchor: ReturnType<typeof emptyAnchor>, entry: Entry) {
   anchor.cumulativeCosts.material += entry.costs.material;
   anchor.cumulativeCosts.equipment += entry.costs.equipment;
   anchor.cumulativeCosts.other += entry.costs.other;
+  anchor.cumulativeUnplannedMaterialCost += unplannedMaterialCost(entry.unplannedMaterials);
   anchor.loggedDates.push(entry.entryDate);
 }
 
@@ -275,6 +300,7 @@ export async function listTaskProgressToday(
         quantityCompleted: entry.quantityCompleted,
         costs: entry.costs,
         materialUsage: entry.materialUsage,
+        unplannedMaterials: entry.unplannedMaterials,
       };
       todayEntryTask.set(entry.id, entry.taskId);
     }
@@ -297,6 +323,7 @@ export async function listTaskProgressToday(
       quantityCompleted: entry.quantityCompleted,
       costs: entry.costs,
       materialUsage: entry.materialUsage,
+      unplannedMaterials: entry.unplannedMaterials,
       entryDate: entry.entryDate,
       savedByName: (entry.recordedBy && names.get(entry.recordedBy)) || null,
     };

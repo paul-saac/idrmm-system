@@ -253,6 +253,8 @@ export type MaterialBreakdownEntry = {
   /** Null for a standalone category's own line (0058). */
   taskName: string | null;
   categoryName: string;
+  /** The task (task-<id>) or task-less phase (category-<id>) it's on. */
+  itemKey: string;
 };
 
 /**
@@ -327,7 +329,8 @@ export async function listMaterialBreakdownEntries(
     },
     key: string,
     categoryId: number | undefined,
-    taskName: string | null
+    taskName: string | null,
+    itemKey: string
   ): MaterialBreakdownEntry {
     const plannedQuantity = row.planned_quantity ?? 0;
     const unitCost = row.unit_cost ?? 0;
@@ -343,17 +346,132 @@ export async function listMaterialBreakdownEntries(
       taskName,
       categoryName:
         (categoryId !== undefined && categoryById.get(categoryId)?.category_name) || "—",
+      itemKey,
     };
   }
 
   const entries: MaterialBreakdownEntry[] = [];
   for (const row of categoryLineRows ?? []) {
-    entries.push(toEntry(row, `category-${row.id}`, row.category_id, null));
+    entries.push(
+      toEntry(row, `category-${row.id}`, row.category_id, null, `category-${row.category_id}`)
+    );
   }
   for (const row of assignmentRows ?? []) {
     const task = taskById.get(row.task_id);
     if (!task) continue;
-    entries.push(toEntry(row, `task-${row.id}`, task.category_id, task.task_name));
+    entries.push(
+      toEntry(row, `task-${row.id}`, task.category_id, task.task_name, `task-${task.id}`)
+    );
   }
   return entries;
+}
+
+/** One material used on a day's progress override — the Materials tab's
+ * recent activity. */
+export type ProgressMaterialUsage = {
+  id: string;
+  entryDate: string;
+  /** The task, or task-less phase, it was used on. */
+  itemName: string;
+  /** Which: task-<id> or category-<id>. */
+  itemKey: string;
+  materialName: string;
+  unit: string | null;
+  quantity: number;
+  /** Set for a material that isn't on the task's own planned lines — the
+   * unit cost typed for it (0073); null for a planned one. */
+  unitCost: number | null;
+};
+
+/**
+ * Every material used, as logged in the progress window's Materials used
+ * today (task_progress_material_entries, and a task-less phase's
+ * category_progress_material_entries) — newest day first, then newest
+ * save. The Materials tab's recent activity is the first few.
+ */
+export async function listProgressMaterialUsage(
+  projectId: number
+): Promise<ProgressMaterialUsage[]> {
+  const supabase = await createClient();
+
+  const [{ data: tasks }, { data: categories }] = await Promise.all([
+    supabase.from("estimate_tasks").select("id, task_name").eq("project_id", projectId),
+    supabase.from("estimate_categories").select("id, category_name").eq("project_id", projectId),
+  ]);
+  const taskName = new Map((tasks ?? []).map((row) => [row.id, row.task_name]));
+  const categoryName = new Map((categories ?? []).map((row) => [row.id, row.category_name]));
+
+  const [{ data: taskEntries }, { data: categoryEntries }] = await Promise.all([
+    taskName.size > 0
+      ? supabase
+          .from("task_progress_entries")
+          .select("id, task_id, entry_date")
+          .in("task_id", [...taskName.keys()])
+      : Promise.resolve({ data: [] as { id: number; task_id: number; entry_date: string }[] }),
+    categoryName.size > 0
+      ? supabase
+          .from("category_progress_entries")
+          .select("id, category_id, entry_date")
+          .in("category_id", [...categoryName.keys()])
+      : Promise.resolve({ data: [] as { id: number; category_id: number; entry_date: string }[] }),
+  ]);
+  const taskEntry = new Map((taskEntries ?? []).map((row) => [row.id, row]));
+  const categoryEntry = new Map((categoryEntries ?? []).map((row) => [row.id, row]));
+
+  // "*" so a DB without 0073's unit_cost yet still loads.
+  const [{ data: taskUsage }, { data: categoryUsage }] = await Promise.all([
+    taskEntry.size > 0
+      ? supabase
+          .from("task_progress_material_entries")
+          .select("*")
+          .in("progress_entry_id", [...taskEntry.keys()])
+      : Promise.resolve({ data: [] }),
+    categoryEntry.size > 0
+      ? supabase
+          .from("category_progress_material_entries")
+          .select("*")
+          .in("progress_entry_id", [...categoryEntry.keys()])
+      : Promise.resolve({ data: [] }),
+  ]);
+  const unitCostOf = (value: number | null | undefined) =>
+    value === null || value === undefined ? null : Number(value) || 0;
+
+  const usage: (ProgressMaterialUsage & { createdAt: string })[] = [];
+  for (const row of taskUsage ?? []) {
+    const entry = taskEntry.get(row.progress_entry_id);
+    if (!entry) continue;
+    usage.push({
+      id: `task-${row.id}`,
+      entryDate: entry.entry_date,
+      itemName: taskName.get(entry.task_id) ?? "",
+      itemKey: `task-${entry.task_id}`,
+      materialName: row.material_name,
+      unit: row.unit,
+      quantity: Number(row.quantity_used) || 0,
+      unitCost: unitCostOf(row.unit_cost),
+      createdAt: row.created_at,
+    });
+  }
+  for (const row of categoryUsage ?? []) {
+    const entry = categoryEntry.get(row.progress_entry_id);
+    if (!entry) continue;
+    usage.push({
+      id: `category-${row.id}`,
+      entryDate: entry.entry_date,
+      itemName: categoryName.get(entry.category_id) ?? "",
+      itemKey: `category-${entry.category_id}`,
+      materialName: row.material_name,
+      unit: row.unit,
+      quantity: Number(row.quantity_used) || 0,
+      unitCost: unitCostOf(row.unit_cost),
+      createdAt: row.created_at,
+    });
+  }
+
+  return usage
+    .sort(
+      (a, b) =>
+        b.entryDate.localeCompare(a.entryDate) || b.createdAt.localeCompare(a.createdAt)
+    )
+    .map(({ createdAt: _createdAt, ...rest }) => rest);
 }

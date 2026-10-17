@@ -102,6 +102,10 @@ export async function listOverrideLogs(
       name: String(material.name ?? ""),
       unit: typeof material.unit === "string" ? material.unit : null,
       quantity: toNumber(material.quantity),
+      unitCost:
+        material.unitCost === undefined || material.unitCost === null
+          ? null
+          : toNumber(material.unitCost),
     })),
     attendance: readList(row.attendance, (worker) => ({
       name: String(worker.name ?? ""),

@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -34,9 +35,10 @@ const GanttChartView = dynamic(
 );
 import { DailyLogsView } from "@/components/projects/daily-logs/daily-logs-view";
 import { MaterialsOverviewView } from "@/components/projects/materials/materials-overview-view";
-import { MaterialsMonitoringView } from "@/components/projects/materials/materials-monitoring-view";
-import { MaterialUsageHistoryView } from "@/components/projects/materials/material-usage-history-view";
-import { MaterialRequestsView } from "@/components/projects/materials/material-requests-view";
+import {
+  MaterialsMonitoringView,
+  type MaterialsRecordView,
+} from "@/components/projects/materials/materials-monitoring-view";
 import { ProjectEquipmentView } from "@/components/projects/equipment/project-equipment-view";
 import { EquipmentRequestsView } from "@/components/projects/equipment/equipment-requests-view";
 import { ExpenseOverviewView } from "@/components/projects/expenses/expense-overview-view";
@@ -45,16 +47,12 @@ import { MaterialExpensesView } from "@/components/projects/expenses/material-ex
 import { EquipmentExpensesView } from "@/components/projects/expenses/equipment-expenses-view";
 import { OtherExpensesView } from "@/components/projects/expenses/other-expenses-view";
 import type {
-  MaterialBreakdownEntry,
   MaterialsOverviewCounts,
-  MaterialUsageHistoryEntry,
+  ProgressMaterialUsage,
   ProjectMaterial,
-  TodayProcurementEntry,
 } from "@/lib/materials/data";
-import type {
-  MaterialRequestDetail,
-  MaterialRequestListItem,
-} from "@/lib/material-requests/data";
+import type { MaterialRecord } from "@/lib/materials/records";
+import type { MaterialRequestDetail } from "@/lib/material-requests/data";
 import type {
   EquipmentRequestDetail,
   EquipmentRequestListItem,
@@ -111,14 +109,6 @@ const PROGRESS_SUB_TABS = [
 ] as const;
 type ProgressSubTab = (typeof PROGRESS_SUB_TABS)[number]["value"];
 
-const MATERIALS_SUB_TABS = [
-  { value: "overview", label: "Overview" },
-  { value: "monitoring", label: "Materials" },
-  { value: "usage-logs", label: "Usage logs" },
-  { value: "requests", label: "Requests" },
-] as const;
-type MaterialsSubTab = (typeof MATERIALS_SUB_TABS)[number]["value"];
-
 const EQUIPMENT_SUB_TABS = [
   { value: "assigned", label: "Assigned" },
   { value: "requests", label: "Requests" },
@@ -138,6 +128,20 @@ const deleteInitialState: ProjectActionState = {};
 
 function formatCurrency(amount: number | null) {
   return amount != null ? `₱${amount.toLocaleString("en-PH")}` : "—";
+}
+
+/**
+ * Scrolls `area` — and only it — to put `target` at its top, below what
+ * its scroll-mt clears (the sticky tabs bar). Not scrollIntoView, which
+ * also moves whatever's around the area when the area can't scroll that
+ * far — the whole app sliding up, a blank strip under it.
+ */
+function scrollAreaTo(area: HTMLElement, target: Element, behavior: ScrollBehavior = "auto") {
+  const margin = parseFloat(getComputedStyle(target).scrollMarginTop) || 0;
+  area.scrollTo({
+    top: area.scrollTop + target.getBoundingClientRect().top - area.getBoundingClientRect().top - margin,
+    behavior,
+  });
 }
 
 /**
@@ -271,9 +275,8 @@ export function ProjectDetailView({
   surveyQuestions,
   materials,
   materialsCounts,
-  materialUsageHistory,
-  materialBreakdownEntries,
-  todayProcurement,
+  materialRecords,
+  recentMaterialUsage,
   materialRequests,
   fulfillableMaterialRequests,
   equipmentRequests,
@@ -306,14 +309,16 @@ export function ProjectDetailView({
   surveyQuestions: SurveyQuestion[];
   materials: ProjectMaterial[];
   materialsCounts: MaterialsOverviewCounts;
-  materialUsageHistory: MaterialUsageHistoryEntry[];
-  /** Read-only reflection of the Cost Estimate Breakdown's own Material
-   * Breakdown modal — see listMaterialBreakdownEntries's own doc
-   * comment (lib/materials/data.ts), fetched alongside materials in
-   * page.tsx. */
-  materialBreakdownEntries: MaterialBreakdownEntry[];
-  todayProcurement: TodayProcurementEntry[];
-  materialRequests: MaterialRequestListItem[];
+  /** Every material the project has, each once — planned, used, in
+   * stock (buildMaterialRecords) — the Materials tab's Material record. */
+  materialRecords: MaterialRecord[];
+  /** The Materials tab's recent activity — the newest materials used,
+   * from the progress window (listProgressMaterialUsage). */
+  recentMaterialUsage: ProgressMaterialUsage[];
+  /** The project's material requests, newest first, in full — the
+   * Materials tab's count, its Material requests panel and its Material
+   * record's requests, each opening in its row. */
+  materialRequests: MaterialRequestDetail[];
   /** Requests that can still receive a delivery — for the Add Daily
    * Log modal's Material Procurement "Select Material Request" picker. */
   fulfillableMaterialRequests: MaterialRequestDetail[];
@@ -388,13 +393,6 @@ export function ProjectDetailView({
         ? (subtabParam as ProgressSubTab)
         : "overview"
     );
-  const [activeMaterialsSubTab, setActiveMaterialsSubTab] =
-    useState<MaterialsSubTab>(
-      initialTab === "materials" &&
-        MATERIALS_SUB_TABS.some((tab) => tab.value === subtabParam)
-        ? (subtabParam as MaterialsSubTab)
-        : "overview"
-    );
   const [activeEquipmentSubTab, setActiveEquipmentSubTab] =
     useState<EquipmentSubTab>(
       initialTab === "equipment" &&
@@ -430,6 +428,56 @@ export function ProjectDetailView({
   // above this, but that's now redundant with the sticky project header,
   // which already shows all of it. Closed until "View breakdown".
   const [costOverviewOpen, setCostOverviewOpen] = useState(false);
+  // The Materials tab's Material record: its materials, or its material
+  // requests — the Material overview's See all opens the latter, and
+  // scrolls down to it, as does a link to them
+  // (?tab=materials&subtab=requests), or to one of them, which it opens
+  // (&request=7 — the dashboard's).
+  const landOnRequests = initialTab === "materials" && subtabParam === "requests";
+  const landOnRequestId = landOnRequests
+    ? Number(searchParams.get("request")) || undefined
+    : undefined;
+  const [materialsRecordView, setMaterialsRecordView] =
+    useState<MaterialsRecordView>(landOnRequests ? "requests" : "materials");
+  const materialsRecordRef = useRef<HTMLDivElement>(null);
+  // The page's own scrolling area — everything here scrolls in it.
+  const pageScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!landOnRequests) return;
+    // Instant, not smooth — it's where the page opens, not a move. To the
+    // request's own row when there's one, the record's top otherwise.
+    const row = landOnRequestId
+      ? materialsRecordRef.current?.querySelector(`[data-request-id="${landOnRequestId}"]`)
+      : null;
+    const target = row ?? materialsRecordRef.current;
+    if (pageScrollRef.current && target) scrollAreaTo(pageScrollRef.current, target);
+  }, [landOnRequests, landOnRequestId]);
+  // The record's requests opened to their details — here, not in the
+  // record, so a request in the Material overview can open there too.
+  const [openRequestIds, setOpenRequestIds] = useState<ReadonlySet<number>>(
+    () => new Set(landOnRequestId ? [landOnRequestId] : [])
+  );
+  function toggleRequest(id: number) {
+    setOpenRequestIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  // A request's row in the Material overview: the record's requests, that
+  // one open, scrolled to — committed first (flushSync) so its row is
+  // there to scroll to; the record's top if a filter there hides it.
+  function openRequestInRecord(id: number) {
+    flushSync(() => {
+      setMaterialsRecordView("requests");
+      setOpenRequestIds((prev) => new Set(prev).add(id));
+    });
+    const target =
+      materialsRecordRef.current?.querySelector(`[data-request-id="${id}"]`) ??
+      materialsRecordRef.current;
+    if (pageScrollRef.current && target) scrollAreaTo(pageScrollRef.current, target, "smooth");
+  }
   // Opens the shared "Import with AI" modal from the Material Breakdown
   // modal's own footer (see MaterialBreakdownModalContent) — lifted up
   // here rather than owned by CostEstimateView so the same modal
@@ -496,9 +544,13 @@ export function ProjectDetailView({
     // this one scroll container instead, so the header scrolls away with
     // everything else, same as a plain document.
     // Gray under the white project header — the content area every tab
-    // sits on.
-    <div className="flex-1 overflow-y-auto bg-zinc-100">
-      <header className="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-8 py-5">
+    // sits on. relative: anything absolutely positioned in it (the tables'
+    // screen-reader-only labels, ...) is placed in — and scrolls with —
+    // this area, not against the page itself, which it would otherwise
+    // stretch past the screen: invisibly (no scrollbars), but enough for a
+    // scroll to slide the whole app up, a blank strip under it.
+    <div ref={pageScrollRef} className="relative flex-1 overflow-y-auto bg-zinc-200/28">
+      <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-8 py-5">
         <nav className="flex items-center gap-1.5 text-base">
           <Link
             href={`${basePath}/projects`}
@@ -514,7 +566,7 @@ export function ProjectDetailView({
 
       <main>
         {/* No rounding at all — this block sits flush against the
-            breadcrumb header directly above it (bg-zinc-50, no gap
+            breadcrumb header directly above it (bg-white, no gap
             between them) and against the sticky tabs block directly
             below it (same bg-white), so any rounded corner here —
             top or bottom — just pokes a stray notch of the page's own
@@ -572,15 +624,6 @@ export function ProjectDetailView({
           />
         )}
 
-        {activeTab === "materials" && (
-          <SubTabsRow
-            tabs={MATERIALS_SUB_TABS}
-            active={activeMaterialsSubTab}
-            onChange={setActiveMaterialsSubTab}
-            toolbarRef={setToolbarSlotEl}
-          />
-        )}
-
         {activeTab === "equipment" && (
           <SubTabsRow
             tabs={EQUIPMENT_SUB_TABS}
@@ -620,33 +663,35 @@ export function ProjectDetailView({
             />
           )
         ) : activeTab === "materials" ? (
-          activeMaterialsSubTab === "overview" ? (
+          // One page, no sub-tabs: the Material overview bar, then
+          // every material in the project.
+          <div className="flex flex-col gap-6">
             <MaterialsOverviewView
-              projectId={project.id}
               counts={materialsCounts}
-              materialUsageHistory={materialUsageHistory}
-              todayProcurement={todayProcurement}
-            />
-          ) : activeMaterialsSubTab === "monitoring" ? (
-            <MaterialsMonitoringView
-              projectId={project.id}
-              materials={materials}
-              materialBreakdownEntries={materialBreakdownEntries}
-              toolbarSlot={toolbarSlotEl}
-            />
-          ) : activeMaterialsSubTab === "usage-logs" ? (
-            <MaterialUsageHistoryView
-              projectId={project.id}
-              entries={materialUsageHistory}
-            />
-          ) : (
-            <MaterialRequestsView
-              projectId={project.id}
               requests={materialRequests}
-              currentUserName={currentUserName}
-              toolbarSlot={toolbarSlotEl}
+              recentUsage={recentMaterialUsage}
+              onOpenRequest={openRequestInRecord}
+              onSeeAllRequests={() => {
+                setMaterialsRecordView("requests");
+                if (pageScrollRef.current && materialsRecordRef.current) {
+                  scrollAreaTo(pageScrollRef.current, materialsRecordRef.current, "smooth");
+                }
+              }}
             />
-          )
+            {/* scroll-mt clears the sticky tabs bar when See all scrolls here. */}
+            <div ref={materialsRecordRef} className="scroll-mt-16">
+              <MaterialsMonitoringView
+                projectId={project.id}
+                records={materialRecords}
+                view={materialsRecordView}
+                onViewChange={setMaterialsRecordView}
+                requests={materialRequests}
+                openRequestIds={openRequestIds}
+                onToggleRequest={toggleRequest}
+                currentUserName={currentUserName}
+              />
+            </div>
+          </div>
         ) : activeTab === "equipment" ? (
           activeEquipmentSubTab === "assigned" ? (
             <ProjectEquipmentView

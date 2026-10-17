@@ -1,8 +1,16 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
-import { Modal } from "@/components/ui/modal";
+import { useActionState, useEffect, useId, useState, type ReactNode } from "react";
+import {
+  ArrowRight,
+  ChevronDown,
+  Lock,
+  Package,
+  PackagePlus,
+  Plus,
+  Trash2,
+} from "lucide-react";
+import { Modal, ModalFooter } from "@/components/ui/modal";
 import {
   createMaterialRequest,
   updateMaterialRequest,
@@ -16,26 +24,10 @@ import type {
 
 const initialState: MaterialRequestActionState = {};
 
-const PRIORITY_OPTIONS: {
-  value: MaterialRequestPriority;
-  label: string;
-  hint: string;
-}[] = [
-  {
-    value: "routine",
-    label: "Routine",
-    hint: "Standard request — can be scheduled and delivered as usual.",
-  },
-  {
-    value: "urgent",
-    label: "Urgent",
-    hint: "Needed soon to keep the schedule from slipping.",
-  },
-  {
-    value: "emergency",
-    label: "Emergency",
-    hint: "Immediate — addresses a safety issue or critical stoppage.",
-  },
+const PRIORITY_OPTIONS: { value: MaterialRequestPriority; label: string }[] = [
+  { value: "routine", label: "Routine" },
+  { value: "urgent", label: "Urgent" },
+  { value: "emergency", label: "Emergency" },
 ];
 
 type EditableItem = {
@@ -72,167 +64,67 @@ function toEditable(request: MaterialRequestDetail): EditableItem[] {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", {
-    month: "long",
+    month: "short",
     day: "numeric",
     year: "numeric",
   });
 }
 
-const fieldLabel = "text-xs font-medium text-zinc-500";
 const fieldInput =
-  "rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
+  "w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
 
-/** The "+ Add Item" sub-screen — a small local-only form (nothing here
- * has a `name` attribute, so none of it submits directly; committing it
- * writes into the parent's `items` state instead, same "step inside the
- * modal" pattern as Add Daily Log's Work Log/Labor Log/etc. sub-screens). */
-function ItemForm({
-  showFulfilled,
-  initial,
-  onCancel,
-  onSave,
-}: {
-  showFulfilled: boolean;
-  initial: EditableItem;
-  onCancel: () => void;
-  onSave: (item: EditableItem) => void;
-}) {
-  const [draft, setDraft] = useState(initial);
-  const [error, setError] = useState<string | null>(null);
-  const initialUnitIsKnown =
-    !initial.uom || (UNIT_OPTIONS as readonly string[]).includes(initial.uom);
-  const [selectedUnit, setSelectedUnit] = useState(
-    initialUnitIsKnown ? initial.uom : OTHER_UNIT
-  );
-
-  function patch(fields: Partial<EditableItem>) {
-    setDraft((prev) => ({ ...prev, ...fields }));
-  }
-
+/** A select with its own chevron, inset from the right edge, in place
+ * of the browser's arrow. */
+function Select({ children, ...props }: React.ComponentProps<"select">) {
   return (
-    <div className="flex flex-col gap-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label className="text-sm font-medium text-zinc-900">
-            Material Name
-          </label>
-          <input
-            value={draft.materialName}
-            onChange={(e) => patch({ materialName: e.target.value })}
-            placeholder="e.g., Plywood"
-            className={fieldInput}
-            autoFocus
-          />
-        </div>
-        <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label className="text-sm font-medium text-zinc-900">
-            Specification / Size
-          </label>
-          <input
-            value={draft.specification}
-            onChange={(e) => patch({ specification: e.target.value })}
-            placeholder="e.g., 3/8 in. x 4 ft x 8ft"
-            className={fieldInput}
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-900">
-            Quantity Needed
-          </label>
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={draft.quantityNeeded}
-            onChange={(e) => patch({ quantityNeeded: e.target.value })}
-            placeholder="00"
-            className={fieldInput}
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <label className="text-sm font-medium text-zinc-900">UOM</label>
-          <select
-            value={selectedUnit}
-            onChange={(e) => {
-              setSelectedUnit(e.target.value);
-              if (e.target.value !== OTHER_UNIT) patch({ uom: e.target.value });
-              else patch({ uom: "" });
-            }}
-            className={`${fieldInput} cursor-pointer bg-white`}
-          >
-            <option value="">Select unit</option>
-            {UNIT_OPTIONS.map((unit) => (
-              <option key={unit} value={unit}>
-                {unit}
-              </option>
-            ))}
-            <option value={OTHER_UNIT}>Other (specify)</option>
-          </select>
-          {selectedUnit === OTHER_UNIT && (
-            <input
-              value={draft.uom}
-              onChange={(e) => patch({ uom: e.target.value })}
-              placeholder="Enter custom unit"
-              className={`${fieldInput} mt-1`}
-            />
-          )}
-        </div>
-        <div className="flex flex-col gap-1.5 sm:col-span-2">
-          <label className="text-sm font-medium text-zinc-900">
-            Purpose of Request
-          </label>
-          <input
-            value={draft.purpose}
-            onChange={(e) => patch({ purpose: e.target.value })}
-            placeholder="e.g., Formwork for column casting"
-            className={fieldInput}
-          />
-        </div>
-        {showFulfilled && (
-          <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-zinc-900">
-              Quantity Fulfilled
-            </label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={draft.quantityFulfilled}
-              onChange={(e) => patch({ quantityFulfilled: e.target.value })}
-              className={fieldInput}
-            />
-          </div>
-        )}
-      </div>
-
-      {error && <p className="text-sm text-red-600">{error}</p>}
-
-      <div className="flex items-center justify-end gap-3">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            if (!draft.materialName.trim()) {
-              setError("Material Name is required.");
-              return;
-            }
-            onSave(draft);
-          }}
-          className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
-        >
-          Add Item
-        </button>
-      </div>
+    <div className="relative">
+      <select {...props} className={`${fieldInput} cursor-pointer appearance-none pr-9`}>
+        {children}
+      </select>
+      <ChevronDown
+        aria-hidden
+        className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-zinc-500"
+      />
     </div>
   );
 }
 
+/** A field's label over its input — a red asterisk when it's required,
+ * a gray "(optional)" when it says so. */
+function Field({
+  htmlFor,
+  label,
+  required = false,
+  optional = false,
+  className = "",
+  children,
+}: {
+  htmlFor?: string;
+  label: string;
+  required?: boolean;
+  optional?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`flex min-w-0 flex-col gap-1.5 ${className}`}>
+      <label htmlFor={htmlFor} className="text-sm font-medium text-zinc-900">
+        {label}
+        {required && <span className="ml-0.5 text-red-500">*</span>}
+        {optional && <span className="ml-1 font-normal text-zinc-400">(optional)</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * The material request form — Request material (create), or Edit for an
+ * existing request: its details (who, when it's needed, how urgently),
+ * then each material item in a card of its own (+ Add item adds another
+ * right there), then remarks. Submitted for review; it doesn't create a
+ * purchase order.
+ */
 export function MaterialRequestEditForm({
   open,
   onClose,
@@ -256,12 +148,10 @@ export function MaterialRequestEditForm({
     ? updateMaterialRequest.bind(null, request.id, projectId)
     : createMaterialRequest.bind(null, projectId);
   const [state, formAction, pending] = useActionState(boundAction, initialState);
+  const formId = useId();
 
-  // The first item is always right there on the main screen as a normal
-  // editable form — a request needs at least one, so it starts pre-
-  // populated rather than behind an empty "no items yet" state or an
-  // extra step. The "+ Add Item" pop-up (see ItemForm) is only for
-  // additional items beyond this one.
+  // A request needs at least one item, so it starts with one, blank —
+  // + Add item adds more below it.
   const [items, setItems] = useState<EditableItem[]>(() =>
     request ? toEditable(request) : [{ ...blankItem }]
   );
@@ -270,15 +160,12 @@ export function MaterialRequestEditForm({
     request?.priority ?? "routine"
   );
   const [remarks, setRemarks] = useState(request?.remarks ?? "");
-  const [addingItem, setAddingItem] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
-  // Which inline item rows currently have "Other (specify)" picked in
-  // their UOM dropdown with nothing typed yet — a plain `item.uom ===
-  // ""` can't distinguish that from "no unit chosen at all", so that one
-  // transient state needs tracking separately from the item data itself.
-  const [customUnitIndices, setCustomUnitIndices] = useState<Set<number>>(
-    new Set()
-  );
+  const [formError, setFormError] = useState<string | null>(null);
+  // Which item cards currently have "Other (specify)" picked in their UOM
+  // dropdown with nothing typed yet — a plain `item.uom === ""` can't
+  // distinguish that from "no unit chosen at all", so that one transient
+  // state needs tracking separately from the item data itself.
+  const [customUnitIndices, setCustomUnitIndices] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (state.success) {
@@ -288,9 +175,7 @@ export function MaterialRequestEditForm({
   }, [state]);
 
   function updateItem(index: number, patch: Partial<EditableItem>) {
-    setItems((prev) =>
-      prev.map((item, i) => (i === index ? { ...item, ...patch } : item))
-    );
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   }
 
   function removeItem(index: number) {
@@ -305,12 +190,6 @@ export function MaterialRequestEditForm({
     });
   }
 
-  function addItem(item: EditableItem) {
-    setItems((prev) => [...prev, item]);
-    setAddingItem(false);
-    setListError(null);
-  }
-
   const itemsJson = JSON.stringify(
     items.map((item) => ({
       id: item.id,
@@ -323,310 +202,295 @@ export function MaterialRequestEditForm({
     }))
   );
 
-  const selectedPriority = PRIORITY_OPTIONS.find((opt) => opt.value === priority);
+  // The required fields (the asterisks) — checked here before it's sent.
+  function missingRequired(): string | null {
+    if (!dateRequired) return "Pick the date the materials are required.";
+    if (items.length === 0) return "Add at least one material item to the request.";
+    const incomplete = items.some(
+      (item) =>
+        !item.materialName.trim() ||
+        !(Number(item.quantityNeeded) > 0) ||
+        !item.uom.trim() ||
+        !item.purpose.trim()
+    );
+    if (incomplete) return "Each item needs a material name, quantity, unit and purpose.";
+    return null;
+  }
 
   return (
     <Modal
       open={open}
-      onClose={() => {
-        setAddingItem(false);
-        onClose();
-      }}
-      onBack={addingItem ? () => setAddingItem(false) : undefined}
-      title={
-        addingItem
-          ? "Add Item Request"
-          : request
-            ? "Edit Material Request"
-            : "Request Material"
+      onClose={onClose}
+      title={request ? "Edit material request" : "Request material"}
+      description={
+        request ? `${request.mrNo} · requested ${formatDate(request.requestDate)}` : undefined
       }
+      icon={<PackagePlus className="size-5" />}
     >
-      {addingItem ? (
-        <ItemForm
-          showFulfilled={Boolean(request)}
-          initial={blankItem}
-          onCancel={() => setAddingItem(false)}
-          onSave={addItem}
-        />
-      ) : (
-        <form
-          action={formAction}
-          className="flex flex-col gap-5"
-          noValidate
-          onSubmit={(e) => {
-            if (items.length === 0) {
-              e.preventDefault();
-              setListError("Add at least one material item to the request.");
-            }
-          }}
-        >
-          <input type="hidden" name="items" value={itemsJson} readOnly />
+      <form
+        id={formId}
+        action={formAction}
+        className="flex flex-col gap-6"
+        noValidate
+        onSubmit={(e) => {
+          const missing = missingRequired();
+          setFormError(missing);
+          if (missing) e.preventDefault();
+        }}
+      >
+        <input type="hidden" name="items" value={itemsJson} readOnly />
 
-          {/* Requisition header — Requested By (and, once the record
-              exists, MR No./Date Requested) reads as a fixed record, same
-              as a paper requisition's letterhead fields; Date Required/
-              Priority are the only fields anyone fills in here. */}
-          <div className="grid grid-cols-2 gap-4 rounded-lg border border-zinc-200 bg-zinc-50 p-4 sm:grid-cols-3">
-            {request && (
-              <>
-                <div>
-                  <p className={fieldLabel}>MR No.</p>
-                  <p className="mt-1 text-sm font-medium text-zinc-700">
-                    {request.mrNo}
-                  </p>
-                </div>
-                <div>
-                  <p className={fieldLabel}>Date Requested</p>
-                  <p className="mt-1 text-sm font-medium text-zinc-700">
-                    {formatDate(request.requestDate)}
-                  </p>
-                </div>
-              </>
-            )}
-            <div>
-              <p className={fieldLabel}>Requested By</p>
-              <p className="mt-1 text-sm font-medium text-zinc-700">
-                {request?.requestedByName ?? currentUserName ?? "You"}
-              </p>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="mrf-dateRequired" className={fieldLabel}>
-                Date Required
-              </label>
+        <section className="flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-base font-semibold text-zinc-900">Request details</h3>
+            <span className="text-xs text-zinc-500">
+              <span className="text-red-500">*</span> Required
+            </span>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Requested By">
+              <div className="relative">
+                <input
+                  value={`${request?.requestedByName ?? currentUserName ?? "You"}${request ? "" : " (you)"}`}
+                  readOnly
+                  tabIndex={-1}
+                  aria-readonly
+                  className={`${fieldInput} cursor-default bg-zinc-50 pr-9 text-zinc-600 focus:border-zinc-200 focus:ring-0`}
+                />
+                <Lock
+                  aria-hidden
+                  className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-zinc-400"
+                />
+              </div>
+            </Field>
+            <Field htmlFor={`${formId}-dateRequired`} label="Date Required" required>
               <input
-                id="mrf-dateRequired"
+                id={`${formId}-dateRequired`}
                 type="date"
                 name="dateRequired"
                 value={dateRequired}
                 onChange={(e) => setDateRequired(e.target.value)}
-                className={`${fieldInput} bg-white px-2.5 py-1.5`}
+                className={fieldInput}
               />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="mrf-priority" className={fieldLabel}>
-                Priority
-              </label>
-              <select
-                id="mrf-priority"
+            </Field>
+            <Field htmlFor={`${formId}-priority`} label="Priority" required>
+              <Select
+                id={`${formId}-priority`}
                 name="priority"
                 value={priority}
-                onChange={(e) =>
-                  setPriority(e.target.value as MaterialRequestPriority)
-                }
-                className={`${fieldInput} cursor-pointer bg-white px-2.5 py-1.5`}
+                onChange={(e) => setPriority(e.target.value as MaterialRequestPriority)}
               >
                 {PRIORITY_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
-              </select>
-            </div>
-            {selectedPriority && (
-              <p className="col-span-2 -mt-2 text-xs text-zinc-400 sm:col-span-3">
-                {selectedPriority.hint}
-              </p>
-            )}
+              </Select>
+            </Field>
           </div>
+        </section>
 
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-zinc-900">
+        <section className="flex flex-col gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-900">
               Requested Material Items
+              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-600">
+                {items.length} {items.length === 1 ? "item" : "items"}
+              </span>
             </h3>
             <button
               type="button"
-              onClick={() => setAddingItem(true)}
-              className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50"
+              onClick={() => {
+                setItems((prev) => [...prev, { ...blankItem }]);
+                setFormError(null);
+              }}
+              className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-900 transition hover:bg-zinc-100"
             >
-              <Plus className="size-3.5" />
-              Add Item
+              <Plus className="size-4" />
+              Add item
             </button>
           </div>
 
-          <div className="flex flex-col gap-3">
-            {items.map((item, index) => (
-              <div
-                key={index}
-                className="rounded-lg border border-zinc-200 bg-white p-3"
-              >
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <div className="col-span-2 flex flex-col gap-1">
-                    <label className={fieldLabel}>Material Name</label>
+          {items.map((item, index) => {
+            const isCustom =
+              customUnitIndices.has(index) ||
+              (!!item.uom && !(UNIT_OPTIONS as readonly string[]).includes(item.uom));
+            const id = `${formId}-item-${index}`;
+            return (
+              <div key={index} className="overflow-hidden rounded-md border border-zinc-200 bg-white">
+                <div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5">
+                  <Package aria-hidden className="size-4 shrink-0 text-zinc-400" />
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-900">
+                    {item.materialName.trim() || `Item ${index + 1}`}
+                  </span>
+                  {items.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => removeItem(index)}
+                      aria-label="Remove item"
+                      title="Remove item"
+                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 className="size-4" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid gap-4 p-4 sm:grid-cols-[minmax(0,1fr)_7rem_9rem]">
+                  <Field htmlFor={`${id}-name`} label="Material Name" required>
                     <input
+                      id={`${id}-name`}
                       value={item.materialName}
-                      onChange={(e) =>
-                        updateItem(index, { materialName: e.target.value })
-                      }
+                      onChange={(e) => updateItem(index, { materialName: e.target.value })}
                       placeholder="e.g., Plywood"
                       className={fieldInput}
                     />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className={fieldLabel}>Qty Needed</label>
+                  </Field>
+                  <Field htmlFor={`${id}-qty`} label="Qty Needed" required>
                     <input
+                      id={`${id}-qty`}
                       type="number"
                       min="0"
                       step="0.01"
                       value={item.quantityNeeded}
-                      onChange={(e) =>
-                        updateItem(index, { quantityNeeded: e.target.value })
-                      }
+                      onChange={(e) => updateItem(index, { quantityNeeded: e.target.value })}
+                      placeholder="0"
                       className={fieldInput}
                     />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className={fieldLabel}>UOM</label>
-                    {(() => {
-                      const isCustom =
-                        customUnitIndices.has(index) ||
-                        (!!item.uom &&
-                          !(UNIT_OPTIONS as readonly string[]).includes(item.uom));
-                      return (
-                        <>
-                          <select
-                            value={isCustom ? OTHER_UNIT : item.uom}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              if (value === OTHER_UNIT) {
-                                setCustomUnitIndices((prev) =>
-                                  new Set(prev).add(index)
-                                );
-                                updateItem(index, { uom: "" });
-                              } else {
-                                setCustomUnitIndices((prev) => {
-                                  const next = new Set(prev);
-                                  next.delete(index);
-                                  return next;
-                                });
-                                updateItem(index, { uom: value });
-                              }
-                            }}
-                            className={`${fieldInput} cursor-pointer bg-white`}
-                          >
-                            <option value="">Select unit</option>
-                            {UNIT_OPTIONS.map((unit) => (
-                              <option key={unit} value={unit}>
-                                {unit}
-                              </option>
-                            ))}
-                            <option value={OTHER_UNIT}>Other (specify)</option>
-                          </select>
-                          {isCustom && (
-                            <input
-                              value={item.uom}
-                              onChange={(e) =>
-                                updateItem(index, { uom: e.target.value })
-                              }
-                              placeholder="Enter custom unit"
-                              className={`${fieldInput} mt-1`}
-                            />
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="col-span-2 flex flex-col gap-1">
-                    <label className={fieldLabel}>Specification / Size</label>
-                    <input
-                      value={item.specification}
-                      onChange={(e) =>
-                        updateItem(index, { specification: e.target.value })
-                      }
-                      placeholder="e.g., 3/8 in. x 4 ft x 8ft"
-                      className={fieldInput}
-                    />
-                  </div>
-                  <div
-                    className={`col-span-2 flex flex-col gap-1 ${request ? "sm:col-span-1" : ""}`}
-                  >
-                    <label className={fieldLabel}>Purpose of Request</label>
-                    <input
-                      value={item.purpose}
-                      onChange={(e) =>
-                        updateItem(index, { purpose: e.target.value })
-                      }
-                      placeholder="e.g., Formwork for column casting"
-                      className={fieldInput}
-                    />
-                  </div>
-                  {request && (
-                    <div className="flex flex-col gap-1">
-                      <label className={fieldLabel}>Qty Fulfilled</label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={item.quantityFulfilled}
-                        onChange={(e) =>
-                          updateItem(index, { quantityFulfilled: e.target.value })
+                  </Field>
+                  <Field htmlFor={`${id}-uom`} label="UOM" required>
+                    <Select
+                      id={`${id}-uom`}
+                      value={isCustom ? OTHER_UNIT : item.uom}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === OTHER_UNIT) {
+                          setCustomUnitIndices((prev) => new Set(prev).add(index));
+                          updateItem(index, { uom: "" });
+                        } else {
+                          setCustomUnitIndices((prev) => {
+                            const next = new Set(prev);
+                            next.delete(index);
+                            return next;
+                          });
+                          updateItem(index, { uom: value });
                         }
+                      }}
+                    >
+                      <option value="">Select unit</option>
+                      {UNIT_OPTIONS.map((unit) => (
+                        <option key={unit} value={unit}>
+                          {unit}
+                        </option>
+                      ))}
+                      <option value={OTHER_UNIT}>Other (specify)</option>
+                    </Select>
+                    {isCustom && (
+                      <input
+                        value={item.uom}
+                        onChange={(e) => updateItem(index, { uom: e.target.value })}
+                        placeholder="Enter custom unit"
+                        aria-label="Custom unit"
                         className={fieldInput}
                       />
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </Field>
 
-                {items.length > 1 && (
-                  <div className="mt-2 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => removeItem(index)}
-                      className="flex cursor-pointer items-center gap-1 text-xs font-medium text-zinc-400 transition hover:text-red-600"
-                    >
-                      <Trash2 className="size-3.5" />
-                      Remove item
-                    </button>
+                  <div
+                    className={`grid gap-4 sm:col-span-3 ${
+                      request ? "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_9rem]" : "sm:grid-cols-2"
+                    }`}
+                  >
+                    <Field htmlFor={`${id}-spec`} label="Specification / Size">
+                      <input
+                        id={`${id}-spec`}
+                        value={item.specification}
+                        onChange={(e) => updateItem(index, { specification: e.target.value })}
+                        placeholder="e.g., 3/8 in. × 4 ft × 8 ft"
+                        className={fieldInput}
+                      />
+                    </Field>
+                    <Field htmlFor={`${id}-purpose`} label="Purpose of Request" required>
+                      <input
+                        id={`${id}-purpose`}
+                        value={item.purpose}
+                        onChange={(e) => updateItem(index, { purpose: e.target.value })}
+                        placeholder="e.g., Formwork for column casting"
+                        className={fieldInput}
+                      />
+                    </Field>
+                    {request && (
+                      <Field htmlFor={`${id}-fulfilled`} label="Qty Fulfilled">
+                        <input
+                          id={`${id}-fulfilled`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={item.quantityFulfilled}
+                          onChange={(e) =>
+                            updateItem(index, { quantityFulfilled: e.target.value })
+                          }
+                          className={fieldInput}
+                        />
+                      </Field>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
-            ))}
-          </div>
-          {listError && <p className="text-sm text-red-600">{listError}</p>}
+            );
+          })}
+        </section>
 
-          <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor="mrf-remarks"
-              className="text-sm font-medium text-zinc-900"
-            >
-              Remarks{" "}
-              <span className="font-normal text-zinc-400">(optional)</span>
-            </label>
-            <textarea
-              id="mrf-remarks"
-              name="remarks"
-              rows={2}
-              value={remarks}
-              onChange={(e) => setRemarks(e.target.value)}
-              placeholder="Overall justification or context for this request — e.g. “needed before Monday's pour”"
-              className={fieldInput}
-            />
-          </div>
+        <Field htmlFor={`${formId}-remarks`} label="Remarks" optional>
+          <textarea
+            id={`${formId}-remarks`}
+            name="remarks"
+            rows={3}
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+            placeholder="e.g., Please deliver before the morning shift for column formwork."
+            className={fieldInput}
+          />
+        </Field>
 
-          <div className="flex items-center justify-end gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={pending}
-              className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {pending ? "Saving..." : request ? "Save" : "Submit Request"}
-            </button>
-          </div>
+        {(formError || state?.error) && (
+          <p role="alert" className="text-sm text-red-600">
+            {formError ?? state.error}
+          </p>
+        )}
+      </form>
 
-          {state?.error && (
-            <p role="alert" className="text-sm text-red-600">
-              {state.error}
-            </p>
+      {/* The modal's bottom bar: what happens on submit, then Cancel and
+          Submit — outside the form, so Submit names it (form=). */}
+      <ModalFooter>
+        <div className="mr-auto min-w-0">
+          {request ? (
+            <p className="text-xs text-zinc-500">Changes apply to this request only.</p>
+          ) : (
+            <>
+              <p className="text-xs font-medium text-zinc-700">Sent for review after submission</p>
+              <p className="text-xs text-zinc-500">This request does not create a purchase order.</p>
+            </>
           )}
-        </form>
-      )}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          form={formId}
+          disabled={pending}
+          className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {!pending && !request && <ArrowRight className="size-4" />}
+          {pending ? "Saving..." : request ? "Save" : "Submit Request"}
+        </button>
+      </ModalFooter>
     </Modal>
   );
 }

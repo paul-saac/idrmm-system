@@ -1,5 +1,11 @@
 import { createClient } from "@/lib/supabase/server";
-import { ZERO_COSTS, materialKey, type ProgressAnchor } from "@/lib/task-progress/calculate";
+import {
+  ZERO_COSTS,
+  materialKey,
+  unplannedMaterialCost,
+  type ProgressAnchor,
+  type UnplannedMaterial,
+} from "@/lib/task-progress/calculate";
 import {
   attendanceByEntry,
   entryCosts,
@@ -37,10 +43,12 @@ async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
   const rows = data ?? [];
 
   const materialsByEntry = new Map<number, Record<string, number>>();
+  const unplannedByEntry = new Map<number, UnplannedMaterial[]>();
   if (rows.length > 0) {
+    // "*" so a DB without 0073's unit_cost yet still loads.
     const { data: materialRows, error: materialsError } = await supabase
       .from("category_progress_material_entries")
-      .select("progress_entry_id, material_name, unit, quantity_used")
+      .select("*")
       .in(
         "progress_entry_id",
         rows.map((row) => row.id)
@@ -54,6 +62,18 @@ async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
     }
 
     for (const row of materialRows ?? []) {
+      // A unit cost of its own marks a material not on the planned lines.
+      if (row.unit_cost !== null && row.unit_cost !== undefined) {
+        const list = unplannedByEntry.get(row.progress_entry_id) ?? [];
+        list.push({
+          name: row.material_name,
+          unit: row.unit,
+          quantity: Number(row.quantity_used) || 0,
+          unitCost: Number(row.unit_cost) || 0,
+        });
+        unplannedByEntry.set(row.progress_entry_id, list);
+        continue;
+      }
       const usage = materialsByEntry.get(row.progress_entry_id) ?? {};
       const key = materialKey(row.material_name, row.unit);
       usage[key] = (usage[key] ?? 0) + (row.quantity_used ?? 0);
@@ -61,14 +81,22 @@ async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
     }
   }
 
-  return rows.map((row) => ({ ...row, materialUsage: materialsByEntry.get(row.id) ?? {} }));
+  return rows.map((row) => ({
+    ...row,
+    materialUsage: materialsByEntry.get(row.id) ?? {},
+    unplannedMaterials: unplannedByEntry.get(row.id) ?? [],
+  }));
 }
 
-function emptyAnchor(): ProgressAnchor & { loggedDates: string[] } {
+function emptyAnchor(): ProgressAnchor & {
+  loggedDates: string[];
+  cumulativeUnplannedMaterialCost: number;
+} {
   return {
     cumulativeQuantityCompleted: 0,
     cumulativeMaterialUsage: {},
     cumulativeCosts: { ...ZERO_COSTS },
+    cumulativeUnplannedMaterialCost: 0,
     loggedDates: [],
   };
 }
@@ -86,6 +114,7 @@ function addRow(
   anchor.cumulativeCosts.material += costs.material;
   anchor.cumulativeCosts.equipment += costs.equipment;
   anchor.cumulativeCosts.other += costs.other;
+  anchor.cumulativeUnplannedMaterialCost += unplannedMaterialCost(row.unplannedMaterials);
   anchor.loggedDates.push(row.entry_date);
 }
 
@@ -154,6 +183,7 @@ export async function listCategoryProgressToday(
         quantityCompleted: row.quantity_completed ?? 0,
         costs: entryCosts(row),
         materialUsage: row.materialUsage,
+        unplannedMaterials: row.unplannedMaterials,
       };
       todayEntryCategory.set(row.id, row.category_id);
     }
@@ -176,6 +206,7 @@ export async function listCategoryProgressToday(
       quantityCompleted: row.quantity_completed ?? 0,
       costs: entryCosts(row),
       materialUsage: row.materialUsage,
+      unplannedMaterials: row.unplannedMaterials,
       entryDate: row.entry_date,
       savedByName: (row.recorded_by && names.get(row.recorded_by)) || null,
     };

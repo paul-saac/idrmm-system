@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/supabase/types";
 
 export type MaterialRequestStatus =
   | "submitted"
@@ -60,69 +61,42 @@ function itemFulfilment(
 }
 
 function formatProfileName(
-  profile: { first_name: string; last_name: string } | null | undefined
+  profile:
+    | { first_name: string; last_name: string; email?: string | null }
+    | null
+    | undefined
 ) {
   if (!profile) return "—";
-  return `${profile.first_name} ${profile.last_name}`.trim();
+  // Without a name, its email's name part — never blank.
+  return (
+    `${profile.first_name ?? ""} ${profile.last_name ?? ""}`.trim() ||
+    profile.email?.split("@")[0] ||
+    "—"
+  );
 }
 
-/**
- * The Materials tab's "Material Requests" sub-tab — every request
- * submitted for this project, newest-requested first.
- */
-export async function listMaterialRequests(
-  projectId: number
-): Promise<MaterialRequestListItem[]> {
-  const supabase = await createClient();
+// A request's own columns — who asked for and approved it, and its items,
+// are read after (withDetails).
+const REQUEST_COLUMNS =
+  "id, project_id, mr_no, request_date, date_required, priority, remarks, status, requested_by, approved_by, approved_at";
 
-  const { data, error } = await supabase
-    .from("material_requests")
-    .select("id, mr_no, request_date, priority, status, requested_by")
-    .eq("project_id", projectId)
-    .order("request_date", { ascending: false });
-
-  if (error || !data || data.length === 0) return [];
-
-  const requesterIds = Array.from(new Set(data.map((row) => row.requested_by)));
-  const { data: profiles } = await supabase
-    .from("profiles")
-    .select("id, first_name, last_name")
-    .in("id", requesterIds);
-  const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
-
-  return data.map((row) => ({
-    id: row.id,
-    mrNo: row.mr_no,
-    requestDate: row.request_date,
-    requestedByName: formatProfileName(profileById.get(row.requested_by)),
-    status: row.status,
-    priority: row.priority,
-  }));
-}
+type MaterialRequestRow = Omit<
+  Database["public"]["Tables"]["material_requests"]["Row"],
+  "created_at" | "updated_at"
+>;
 
 /**
- * The Add Daily Log modal's "Select Material Request" / "Select Material
- * Request Item" pickers (Material Procurement Log) — every request on
- * this project that can still receive a delivery against it, with their
- * items. "Can still receive a delivery" means approved or already
- * partially fulfilled; submitted (not yet reviewed), canceled, and fully
- * fulfilled requests have nothing left to pick.
+ * Requests in full — who asked for and approved each, and every item,
+ * with a per-item Quantity Remaining/Fulfilment derived from
+ * quantity_needed vs. quantity_fulfilled (see itemFulfilment above)
+ * rather than stored, so an edit to either number can never leave the
+ * two out of sync.
  */
-export async function listFulfillableMaterialRequests(
-  projectId: number
+async function withDetails(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  requests: MaterialRequestRow[]
 ): Promise<MaterialRequestDetail[]> {
-  const supabase = await createClient();
-
-  const { data: requests, error } = await supabase
-    .from("material_requests")
-    .select(
-      "id, project_id, mr_no, request_date, date_required, priority, remarks, status, requested_by, approved_by, approved_at"
-    )
-    .eq("project_id", projectId)
-    .in("status", ["approved", "partially_fulfilled"])
-    .order("request_date", { ascending: false });
-
-  if (error || !requests || requests.length === 0) return [];
+  if (requests.length === 0) return [];
 
   const requestIds = requests.map((r) => r.id);
   const profileIds = Array.from(
@@ -134,7 +108,7 @@ export async function listFulfillableMaterialRequests(
   );
 
   const [{ data: profiles }, { data: itemRows }] = await Promise.all([
-    supabase.from("profiles").select("id, first_name, last_name").in("id", profileIds),
+    supabase.from("profiles").select("id, first_name, last_name, email").in("id", profileIds),
     supabase
       .from("material_request_items")
       .select(
@@ -183,77 +157,44 @@ export async function listFulfillableMaterialRequests(
 }
 
 /**
- * The "Material Requests / MR-xxx" detail page — the request header plus
- * every requested item, with a per-item Quantity Remaining/Fulfilment
- * derived from quantity_needed vs. quantity_fulfilled (see
- * itemFulfilment above) rather than stored, so an edit to either number
- * can never leave the two out of sync.
+ * Every material request on the project, newest-requested first, in full
+ * — the Materials tab's request tables, where each one opens in its row.
  */
-export async function getMaterialRequestDetail(
-  requestId: number
-): Promise<MaterialRequestDetail | null> {
+export async function listMaterialRequests(
+  projectId: number
+): Promise<MaterialRequestDetail[]> {
   const supabase = await createClient();
 
-  const { data: request, error } = await supabase
+  const { data, error } = await supabase
     .from("material_requests")
-    .select(
-      "id, project_id, mr_no, request_date, date_required, priority, remarks, status, requested_by, approved_by, approved_at"
-    )
-    .eq("id", requestId)
-    .single();
+    .select(REQUEST_COLUMNS)
+    .eq("project_id", projectId)
+    .order("request_date", { ascending: false });
 
-  if (error || !request) return null;
+  if (error || !data) return [];
+  return withDetails(supabase, data);
+}
 
-  const profileIds = [request.requested_by, request.approved_by].filter(
-    (id): id is string => Boolean(id)
-  );
+/**
+ * The Add Daily Log modal's "Select Material Request" / "Select Material
+ * Request Item" pickers (Material Procurement Log) — every request on
+ * this project that can still receive a delivery against it, with their
+ * items. "Can still receive a delivery" means approved or already
+ * partially fulfilled; submitted (not yet reviewed), canceled, and fully
+ * fulfilled requests have nothing left to pick.
+ */
+export async function listFulfillableMaterialRequests(
+  projectId: number
+): Promise<MaterialRequestDetail[]> {
+  const supabase = await createClient();
 
-  const [{ data: profiles }, { data: itemRows }] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("id, first_name, last_name")
-      .in("id", profileIds),
-    supabase
-      .from("material_request_items")
-      .select(
-        "id, material_name, specification, quantity_needed, uom, purpose, quantity_fulfilled"
-      )
-      .eq("material_request_id", requestId)
-      .order("id", { ascending: true }),
-  ]);
+  const { data, error } = await supabase
+    .from("material_requests")
+    .select(REQUEST_COLUMNS)
+    .eq("project_id", projectId)
+    .in("status", ["approved", "partially_fulfilled"])
+    .order("request_date", { ascending: false });
 
-  const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
-
-  const items: MaterialRequestItem[] = (itemRows ?? []).map((item) => {
-    const quantityNeeded = item.quantity_needed ?? 0;
-    const quantityFulfilled = item.quantity_fulfilled ?? 0;
-    return {
-      id: item.id,
-      materialName: item.material_name,
-      specification: item.specification,
-      quantityNeeded,
-      uom: item.uom,
-      purpose: item.purpose,
-      quantityFulfilled,
-      quantityRemaining: Math.max(quantityNeeded - quantityFulfilled, 0),
-      fulfilment: itemFulfilment(quantityNeeded, quantityFulfilled),
-    };
-  });
-
-  return {
-    id: request.id,
-    projectId: request.project_id,
-    mrNo: request.mr_no,
-    requestDate: request.request_date,
-    dateRequired: request.date_required,
-    priority: request.priority,
-    remarks: request.remarks,
-    status: request.status,
-    requestedByName: formatProfileName(profileById.get(request.requested_by)),
-    approvedByName: request.approved_by
-      ? formatProfileName(profileById.get(request.approved_by))
-      : null,
-    approvedAt: request.approved_at,
-    items,
-  };
+  if (error || !data) return [];
+  return withDetails(supabase, data);
 }

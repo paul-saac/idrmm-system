@@ -71,6 +71,8 @@ export function Modal({
   onClose,
   onBack,
   title,
+  description,
+  icon,
   size = "default",
   variant = "panel",
   menuItems,
@@ -85,6 +87,10 @@ export function Modal({
    * previous one without fully closing/discarding everything. */
   onBack?: () => void;
   title: string;
+  /** A line under the title — what the modal is for. */
+  description?: string;
+  /** A tile before the title holding this icon. */
+  icon?: React.ReactNode;
   size?: keyof typeof SIZE_CLASS;
   /** See VARIANT_CLASS's own doc comment above. Defaults to "panel" so
    * every existing call site keeps its current look unchanged. */
@@ -212,8 +218,18 @@ export function Modal({
               <ChevronLeft className="size-5" />
             </button>
           )}
-          <h2 className="text-lg font-semibold text-zinc-900">{title}</h2>
-          <div ref={setHeaderSlot} className="ml-2 flex items-center empty:hidden" />
+          {icon && (
+            <span className="mr-3 flex size-10 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
+              {icon}
+            </span>
+          )}
+          <div className="min-w-0">
+            <div className="flex items-center">
+              <h2 className="text-lg font-semibold text-zinc-900">{title}</h2>
+              <div ref={setHeaderSlot} className="ml-2 flex items-center empty:hidden" />
+            </div>
+            {description && <p className="mt-0.5 text-sm text-zinc-500">{description}</p>}
+          </div>
         </div>
         <div className="flex items-center gap-1">
           {menuItems && menuItems.length > 0 && (

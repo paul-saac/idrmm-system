@@ -1,27 +1,21 @@
-import type { Metadata } from "next";
-import { notFound } from "next/navigation";
-import { getMaterialRequestDetail } from "@/lib/material-requests/data";
-import { MaterialRequestDetailView } from "@/components/projects/materials/material-request-detail-view";
+import { notFound, redirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "Material Request" };
-
-export default async function MaterialRequestDetailPage({
+// A material request opens in its row of the project's Materials tab, not
+// on a page of its own — a link here lands there, with the request open.
+export default async function MaterialRequestPage({
   params,
 }: {
   params: Promise<{ id: string; requestId: string }>;
 }) {
-  const { requestId } = await params;
+  const { id, requestId } = await params;
+  const projectId = Number(id);
   const materialRequestId = Number(requestId);
 
-  if (!Number.isFinite(materialRequestId)) {
+  if (!Number.isFinite(projectId) || !Number.isFinite(materialRequestId)) {
     notFound();
   }
 
-  const request = await getMaterialRequestDetail(materialRequestId);
-
-  if (!request) {
-    notFound();
-  }
-
-  return <MaterialRequestDetailView request={request} />;
+  redirect(
+    `/admin/projects/${projectId}?tab=materials&subtab=requests&request=${materialRequestId}`
+  );
 }

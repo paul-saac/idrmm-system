@@ -211,10 +211,20 @@ export async function updateCategory(
       return { error: "Category name is required." };
     }
 
+    const update: { category_name: string; is_milestone?: boolean } = {
+      category_name: categoryName,
+    };
+    // Only a task-less category's form has the Milestone checkbox (see
+    // CategoryForm, which marks it with milestoneField since an unticked
+    // box isn't sent at all) — anywhere else, the flag is left alone.
+    if (formData.has("milestoneField")) {
+      update.is_milestone = formData.get("isMilestone") === "on";
+    }
+
     const supabase = await createClient();
     const { error } = await supabase
       .from("estimate_categories")
-      .update({ category_name: categoryName })
+      .update(update)
       .eq("id", categoryId);
 
     if (error) {

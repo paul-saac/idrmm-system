@@ -5,6 +5,29 @@
   /* The project's "black" is a warm near-black (#3B3939), not a pure/cold
      one — see the --color-zinc-900 override below. Body text matches it. */
   --foreground: #3b3939;
+
+  /*
+   * The Materials tab's Material record dropdown, in light green — a
+   * material opened to its task breakdown, or a request to its items: its
+   * background (the opened row itself stays white), its tables' header row and rows,
+   * its accent green (the TASK BREAKDOWN labels, the ↳ arrows, and the
+   * opened row's arrow), and the line down its left side. Click a value's
+   * color square to change it with the color picker.
+   */
+  --material-dropdown: rgba(34, 160, 90, 0.06);
+  --material-dropdown-header: #f7faf8;
+  --material-dropdown-row: #ffffff;
+  --material-dropdown-accent: #2f855a;
+  --material-dropdown-line: #a8d5b9;
+
+  /*
+   * The Team page's green — the open "All members", the open tab's count,
+   * the members' projects and New Group: their text and icons, and the
+   * soft green behind them. Click a value's color square to change it with
+   * the color picker.
+   */
+  --team-accent: #2d7a55;
+  --team-accent-soft: #e6f2eb;
 }
 
 @theme inline {
@@ -27,6 +50,29 @@
  */
 html {
   font-size: 90%;
+}
+
+/*
+ * Every text size a step smaller inside it — the progress window's
+ * content (its bottom bar's buttons sit outside it, so they keep theirs).
+ * Tailwind's text-xs/sm/base/lg utilities read these theme variables
+ * (font-size: var(--text-sm)), so redefining them here re-sizes only
+ * what's underneath; line heights are ratios, so they follow.
+ */
+.compact-text {
+  --text-xs: 0.6875rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.0625rem;
+}
+
+/* That step back up for the progress window's override history — a
+   little bigger than the rest of its content (Tailwind's own sizes). */
+.compact-text .history-text {
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
 }
 
 /*
@@ -227,29 +273,110 @@ input[type="date"][data-empty="true"] {
 }
 
 /*
- * Milestones get their own, stronger override on top of the rule
- * above. gantt-task-react's isTextInside logic (see the comment above)
- * measures its own <text>'s rendered width exactly once, right after
- * mount, to decide barLabel vs barLabelOutside — for a milestone's own
- * ~20px-wide diamond, any real task name is wider than that, so it
- * should always resolve to barLabelOutside (already hidden above).
- * Confirmed directly, though, that measurement can race the SVG's own
- * layout: a 0-width getBBox() reads as "fits inside," leaving the text
- * stuck on the *inside* class instead — rendered directly on top of the
- * diamond, and flickering as gantt-task-react's own later remeasurement
- * passes flip it back and forth. Rather than depend on that measurement
- * at all for milestones, this hides *both* possible classes for them —
- * a milestone's own name is never shown at all now, per an explicit
- * request (this rule doubles as that: nothing else renders a
- * replacement label).
+ * A bar's own "inside" label (`_3zRJQ`, the library's barLabel — white
+ * and its 14px by default): slate gray, a size down.
+ */
+.gantt-task-react-root ._3zRJQ {
+  fill: var(--color-slate-600);
+  font-size: 12px;
+}
+
+/*
+ * At Month zoom the bars are too short for their labels — a few fit and
+ * the rest don't, which reads as clutter — so they're hidden there
+ * altogether (data-zoom is the toolbar's zoom, set in
+ * gantt-chart-view.tsx). A milestone's label beside its diamond (below)
+ * isn't on a bar and stays.
+ */
+.gantt-task-react-root[data-zoom="month"] ._3zRJQ {
+  display: none;
+}
+
+/*
+ * A milestone's label ("Site ready · 23 Oct" — see milestoneLabel in
+ * gantt-chart-view.tsx) sits just right of its diamond, in the
+ * diamond's blue. gantt-task-react's isTextInside logic (see the
+ * comment above) measures its own <text>'s rendered width to decide
+ * barLabel vs barLabelOutside — for a milestone's own ~20px-wide
+ * diamond, any real label is wider than that, so it should resolve to
+ * barLabelOutside. Confirmed directly, though, that measurement can
+ * race the SVG's own layout: a 0-width getBBox() reads as "fits
+ * inside," leaving the text on the *inside* class instead, centered on
+ * the diamond. So both classes are shown and styled alike here, and the
+ * inside one is moved to where the outside one sits (start-anchored,
+ * just past the diamond's right tip) — either way, it lands beside it.
  *
  * Scoped with :has() to only a milestone's own row: a <text> whose
  * sibling is the milestone diamond's own wrapper <g> (class _RRr13,
- * confirmed directly from the compiled bundle) — every other row (a
- * task/project's own "inside" label, which this app *does* want shown)
- * is untouched.
+ * confirmed directly from the compiled bundle) — every other row is
+ * untouched (its outside label stays hidden, above).
  */
 .gantt-task-react-root g:has(> g._RRr13) > text {
+  display: inline;
+  fill: var(--color-blue-600);
+  font-size: 12px;
+  font-weight: 500;
+  text-anchor: start;
+  dominant-baseline: central;
+}
+
+.gantt-task-react-root g:has(> g._RRr13) > text._3zRJQ {
+  transform: translateX(14px);
+}
+
+.gantt-task-react-root[data-zoom="month"] g:has(> g._RRr13) > text {
+  display: inline;
+}
+
+/*
+ * A phase's own bar (a "project" row, i.e. a phase with tasks) as a
+ * summary bracket: a thin slate band (colors from the <Gantt>'s
+ * project* props in gantt-chart-view.tsx) with a small triangle hanging
+ * from each end, its progress filled in along the band like a task's.
+ *
+ * The library draws, in order: a full-height background rect, the
+ * full-height progress rect, then its own half-height band — on top, so
+ * it would hide the progress. So that band is hidden, and the background
+ * rect, cut to its top half, stands in for it instead; the progress
+ * rect, cut the same, then draws over it. Corners square, and each end
+ * triangle shrinks to half from its own outer top corner. Its name
+ * label is hidden — the band's too thin to hold it, and the task list
+ * already names the phase. `_1KJ6x`/`_2RbVy`/`_2pZMF` are the library's
+ * projectWrapper/projectBackground/projectTop (confirmed directly from
+ * the compiled bundle's `styles$8` map, same as the classes above); the
+ * progress rect has no class, so it's the group's second rect.
+ */
+.gantt-task-react-root ._1KJ6x ._2RbVy {
+  opacity: 1;
+  clip-path: inset(0 0 50% 0);
+  rx: 0;
+  ry: 0;
+}
+
+.gantt-task-react-root ._1KJ6x > rect:nth-of-type(2) {
+  clip-path: inset(0 0 50% 0);
+  rx: 0;
+  ry: 0;
+}
+
+.gantt-task-react-root ._1KJ6x rect._2pZMF {
+  opacity: 0;
+}
+
+.gantt-task-react-root ._1KJ6x polygon {
+  transform-box: fill-box;
+  transform: scale(0.5);
+}
+
+.gantt-task-react-root ._1KJ6x polygon:first-of-type {
+  transform-origin: left top;
+}
+
+.gantt-task-react-root ._1KJ6x polygon:last-of-type {
+  transform-origin: right top;
+}
+
+.gantt-task-react-root g:has(> g._1KJ6x) > text {
   display: none !important;
 }
 

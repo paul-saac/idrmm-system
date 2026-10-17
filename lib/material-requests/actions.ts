@@ -275,7 +275,6 @@ export async function updateMaterialRequest(
   }
 
   revalidateProjectPaths(projectId);
-  revalidateProjectPaths(projectId, `/materials/requests/${requestId}`);
   return { success: true };
 }
 
@@ -307,7 +306,6 @@ export async function approveMaterialRequest(
   }
 
   revalidateProjectPaths(projectId);
-  revalidateProjectPaths(projectId, `/materials/requests/${requestId}`);
   return { success: true };
 }
 
@@ -334,6 +332,94 @@ export async function cancelMaterialRequest(
   }
 
   revalidateProjectPaths(projectId);
-  revalidateProjectPaths(projectId, `/materials/requests/${requestId}`);
+  return { success: true };
+}
+
+/**
+ * Records a delivery against an approved request — each item's received
+ * quantity added to what's been fulfilled (never past what was asked for),
+ * and the request's status following it (Partially Fulfilled, then
+ * Fulfilled; see deriveMaterialRequestStatus) — the step a Daily Log's
+ * Material Procurement entry used to do, done from the request itself.
+ */
+export async function recordMaterialRequestDelivery(
+  requestId: number,
+  projectId: number,
+  deliveries: { itemId: number; quantity: number }[]
+): Promise<MaterialRequestActionState> {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
+    return { error: "You are not authorized to record deliveries." };
+  }
+
+  const received = new Map<number, number>();
+  for (const delivery of deliveries ?? []) {
+    const quantity = Number(delivery?.quantity);
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      return { error: "Received quantities must be 0 or more." };
+    }
+    if (quantity > 0) received.set(Number(delivery.itemId), quantity);
+  }
+  if (received.size === 0) {
+    return { error: "Enter how much of at least one item was received." };
+  }
+
+  const supabase = await createClient();
+  const { data: request, error: requestError } = await supabase
+    .from("material_requests")
+    .select("status")
+    .eq("id", requestId)
+    .eq("project_id", projectId)
+    .single();
+
+  if (requestError || !request) {
+    return { error: "This material request no longer exists." };
+  }
+  if (request.status !== "approved" && request.status !== "partially_fulfilled") {
+    return { error: "Only an approved request can receive deliveries." };
+  }
+
+  const { data: itemRows, error: itemsError } = await supabase
+    .from("material_request_items")
+    .select("id, quantity_needed, quantity_fulfilled")
+    .eq("material_request_id", requestId);
+
+  if (itemsError || !itemRows) {
+    console.error("[recordMaterialRequestDelivery] items query failed:", itemsError?.message);
+    return { error: "Could not record the delivery. Please try again." };
+  }
+
+  const items = itemRows.map((row) => ({
+    id: row.id,
+    quantityNeeded: Number(row.quantity_needed) || 0,
+    quantityFulfilled: Number(row.quantity_fulfilled) || 0,
+  }));
+  for (const item of items) {
+    const quantity = received.get(item.id);
+    if (!quantity) continue;
+    item.quantityFulfilled = Math.min(item.quantityNeeded, item.quantityFulfilled + quantity);
+    const { error } = await supabase
+      .from("material_request_items")
+      .update({ quantity_fulfilled: item.quantityFulfilled })
+      .eq("id", item.id);
+    if (error) {
+      console.error("[recordMaterialRequestDelivery] item update failed:", error.message);
+      return { error: "Could not record the delivery. Please try again." };
+    }
+  }
+
+  const nextStatus = deriveMaterialRequestStatus(request.status, items);
+  if (nextStatus !== request.status) {
+    const { error } = await supabase
+      .from("material_requests")
+      .update({ status: nextStatus })
+      .eq("id", requestId);
+    if (error) {
+      console.error("[recordMaterialRequestDelivery] status update failed:", error.message);
+      return { error: "Could not update the request's status. Please try again." };
+    }
+  }
+
+  revalidateProjectPaths(projectId);
   return { success: true };
 }

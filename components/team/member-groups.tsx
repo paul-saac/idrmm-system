@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Users } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import {
   Checkbox,
@@ -28,14 +28,16 @@ type Panel =
   | { mode: "edit"; groupId: number };
 
 /**
- * The Team page's groups — crews like "Mason Crew A", made by admins,
- * super admins and project managers — as a row of cards above the tabs.
- * A card opens its group to view (description, members by section), its
- * pencil straight to the group's form; editing and deleting are also in
- * the view's ⋮ menu, and the New Group card makes a new one. Someone can be in any number of groups, and the
- * Gantt chart's Assign picker can put a whole one on a task at once.
+ * The Team page's left side: "All members" — the members' card beside
+ * it, the page's one view — then its groups, crews like "Mason Crew A"
+ * made by admins, super admins and project managers, as cards one under
+ * another, and New Group under them. A card opens its group to view
+ * (description, members by section), its pencil straight to the group's
+ * form; editing and deleting are also in the view's ⋮ menu. Someone can
+ * be in any number of groups, and the Gantt chart's Assign picker can put
+ * a whole one on a task at once.
  */
-export function GroupCards({
+export function GroupsPanel({
   groups,
   members,
 }: {
@@ -67,75 +69,91 @@ export function GroupCards({
   }
 
   return (
-    <>
-      <div className="flex gap-3 overflow-x-auto pb-4">
-        {groups.map((group) => {
-          const people = group.memberIds.flatMap((id) => {
-            const member = memberById.get(id);
-            return member ? [member] : [];
-          });
-          return (
-            // A div, not a button — its pencil is a button of its own.
-            <div
-              key={group.id}
-              role="button"
-              tabIndex={0}
-              aria-label={`View ${group.name}`}
-              onClick={() => setPanel({ mode: "view", groupId: group.id })}
-              onKeyDown={(e) => {
-                if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-                  e.preventDefault();
-                  setPanel({ mode: "view", groupId: group.id });
-                }
-              }}
-              className="flex w-52 shrink-0 cursor-pointer flex-col items-start gap-2.5 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-400"
-            >
-              <div className="flex w-full items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-zinc-900">{group.name}</p>
-                  <p className="text-xs text-zinc-500">
-                    {people.length} member{people.length === 1 ? "" : "s"}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPanel({ mode: "edit", groupId: group.id });
-                  }}
-                  title="Edit group"
-                  aria-label={`Edit ${group.name}`}
-                  className={`${ICON_BUTTON} -mt-0.5 -mr-1.5 hover:bg-zinc-100 hover:text-zinc-700`}
-                >
-                  <EditIcon className="size-3.5" />
-                </button>
-              </div>
-              {people.length > 0 && (
-                <div className="flex -space-x-1.5">
-                  {people.slice(0, FACES).map((member) => (
-                    <span
-                      key={member.id}
-                      title={member.fullName}
-                      className="rounded-full ring-2 ring-white"
-                    >
-                      <InitialsAvatar name={member.fullName} />
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
+    <div className="min-w-0">
+      <aside className="flex flex-col rounded-lg border border-zinc-200 bg-white p-3">
+        <div className="flex items-center gap-2.5 rounded-md bg-[var(--team-accent-soft)] px-3 py-2.5 text-sm font-semibold text-[var(--team-accent)]">
+          <Users aria-hidden className="size-4 shrink-0" />
+          All members
+        </div>
 
-        <button
-          type="button"
-          onClick={() => setPanel({ mode: "add" })}
-          className="flex w-52 shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm font-medium text-zinc-500 transition hover:border-zinc-900 hover:text-zinc-900"
-        >
-          <Plus className="size-4" />
-          New Group
-        </button>
-      </div>
+        <div className="mt-5 mb-2 flex items-center justify-between px-1">
+          <span className="text-[11px] font-semibold tracking-wider text-zinc-400 uppercase">
+            Team groups
+          </span>
+          <span className="text-xs text-zinc-400 tabular-nums">{groups.length}</span>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          {groups.map((group) => {
+            const people = group.memberIds.flatMap((id) => {
+              const member = memberById.get(id);
+              return member ? [member] : [];
+            });
+            return (
+              // A div, not a button — its pencil is a button of its own.
+              <div
+                key={group.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`View ${group.name}`}
+                onClick={() => setPanel({ mode: "view", groupId: group.id })}
+                onKeyDown={(e) => {
+                  if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault();
+                    setPanel({ mode: "view", groupId: group.id });
+                  }
+                }}
+                className="flex w-full cursor-pointer flex-col items-start gap-2.5 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-400"
+              >
+                <div className="flex w-full items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-zinc-900">{group.name}</p>
+                    <p className="text-xs text-zinc-500">
+                      {people.length} member{people.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPanel({ mode: "edit", groupId: group.id });
+                    }}
+                    title="Edit group"
+                    aria-label={`Edit ${group.name}`}
+                    className={`${ICON_BUTTON} -mt-0.5 -mr-1.5 hover:bg-zinc-100 hover:text-zinc-700`}
+                  >
+                    <EditIcon className="size-3.5" />
+                  </button>
+                </div>
+                {people.length > 0 && (
+                  <div className="flex -space-x-1.5">
+                    {people.slice(0, FACES).map((member) => (
+                      <span
+                        key={member.id}
+                        title={member.fullName}
+                        className="rounded-full ring-2 ring-white"
+                      >
+                        <InitialsAvatar name={member.fullName} />
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 border-t border-zinc-200 pt-2">
+          <button
+            type="button"
+            onClick={() => setPanel({ mode: "add" })}
+            className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded py-2 text-sm font-medium text-[var(--team-accent)] transition hover:bg-[var(--team-accent-soft)]"
+          >
+            <Plus className="size-4" />
+            New Group
+          </button>
+        </div>
+      </aside>
 
       <Modal
         open={open}
@@ -172,7 +190,7 @@ export function GroupCards({
           <GroupForm key="new" members={members} onDone={() => setPanel(null)} />
         )}
       </Modal>
-    </>
+    </div>
   );
 }
 

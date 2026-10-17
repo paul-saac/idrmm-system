@@ -3,11 +3,36 @@ import {
   groupPlannedMaterials,
   itemizedMaterialCost,
   materialKey,
+  type UnplannedMaterial,
 } from "@/lib/task-progress/calculate";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
 const LINE_COLUMNS = "material_name, unit, planned_quantity, unit_cost, amount";
+
+/**
+ * The materials used that aren't on the planned lines, as sent (0073) —
+ * each trimmed and checked: a quantity and a unit cost of 0 or more, and
+ * a name for any actually used. One with nothing used is dropped.
+ */
+export function readUnplannedMaterials(
+  materials: UnplannedMaterial[] | undefined
+): { materials: UnplannedMaterial[] } | { error: string } {
+  const result: UnplannedMaterial[] = [];
+  for (const material of materials ?? []) {
+    const name = String(material?.name ?? "").trim();
+    const quantity = Number(material?.quantity);
+    const unitCost = Number(material?.unitCost);
+    if (!Number.isFinite(quantity) || quantity < 0 || !Number.isFinite(unitCost) || unitCost < 0) {
+      return { error: "A material not on the list needs a quantity and unit cost of 0 or more." };
+    }
+    if (quantity === 0) continue;
+    if (!name) return { error: "Name each material used that isn't on the list." };
+    const unit = typeof material.unit === "string" ? material.unit.trim() : "";
+    result.push({ name, unit: unit || null, quantity, unitCost });
+  }
+  return { materials: result };
+}
 
 /**
  * Prices a day's materials used from the task's (or task-less phase's)

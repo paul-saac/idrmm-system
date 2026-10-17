@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 // stale data until something else happens to invalidate it.
 const PORTAL_BASES = ["/admin", "/foreman"] as const;
 
-/** `subPath` is anything after the project id, e.g. "/materials/requests/7". */
+/** `subPath` is anything after the project id, e.g. "/equipment/requests/7". */
 export function revalidateProjectPaths(projectId: number, subPath = "") {
   for (const base of PORTAL_BASES) {
     revalidatePath(`${base}/projects/${projectId}${subPath}`);

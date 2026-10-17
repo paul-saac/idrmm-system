@@ -19,7 +19,12 @@ export function CategoryForm({
   onSuccess,
 }: {
   projectId: number;
-  category?: Pick<CostCategory, "id" | "name">;
+  /** hasTasks false (a task-less, "standalone" category) adds a
+   * Milestone checkbox, seeded from isMilestone. */
+  category?: Pick<CostCategory, "id" | "name"> & {
+    hasTasks?: boolean;
+    isMilestone?: boolean;
+  };
   /** Adds a Delete button (edit mode only) to this same modal — the
    * Gantt Chart's own task list (the only place this form is used;
    * editing a category/task lives there exclusively, not on the Cost
@@ -91,6 +96,29 @@ export function CategoryForm({
             className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           />
         </div>
+
+        {/* Same Milestone checkbox as a task's own (SubtaskForm), for a
+            category that stands as a task of its own. milestoneField
+            tells updateCategory it's here — an unticked box sends
+            nothing. */}
+        {category?.hasTasks === false && (
+          <div className="flex items-center gap-2">
+            <input type="hidden" name="milestoneField" value="1" />
+            <input
+              id={`${formId}-isMilestone`}
+              name="isMilestone"
+              type="checkbox"
+              defaultChecked={category.isMilestone ?? false}
+              className="size-4 cursor-pointer rounded border-zinc-300 text-zinc-900 focus:ring-2 focus:ring-zinc-200"
+            />
+            <label
+              htmlFor={`${formId}-isMilestone`}
+              className="cursor-pointer text-sm font-medium text-zinc-900"
+            >
+              Milestone
+            </label>
+          </div>
+        )}
       </form>
 
       <div className="flex items-center justify-between gap-3">

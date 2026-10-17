@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
+import { ViewMenu, type ViewOption } from "@/components/ui/view-menu";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
@@ -74,6 +75,7 @@ import {
   computeExpectedProgress,
   countWorkingDays,
   groupPlannedMaterials,
+  materialKey,
   scheduleStatusFor,
   EMPTY_PROGRESS_ANCHOR,
   type ScheduleStatus,
@@ -254,11 +256,15 @@ function GanttTooltipContent({
     ? 0
     : countWorkingDays(task.start, displayEnd, workingDays, holidays);
   const headingSize = (parseInt(fontSize, 10) || 14) + 6;
+  // A milestone's name without the date its label carries (see
+  // milestoneLabel below) — the dates follow right after it here anyway.
+  const separatorAt = task.name.lastIndexOf(MILESTONE_LABEL_SEPARATOR);
+  const name = isMilestone && separatorAt >= 0 ? task.name.slice(0, separatorAt) : task.name;
 
   return (
     <div className="_3T42e" style={{ fontSize, fontFamily }}>
       <b style={{ fontSize: `${headingSize}px` }}>
-        {task.name}: {task.start.getDate()}-{task.start.getMonth() + 1}-
+        {name}: {task.start.getDate()}-{task.start.getMonth() + 1}-
         {task.start.getFullYear()} - {displayEnd.getDate()}-
         {displayEnd.getMonth() + 1}-{displayEnd.getFullYear()}
       </b>
@@ -268,6 +274,15 @@ function GanttTooltipContent({
       <p className="_29NTg">Progress: {formatPercent(task.progress)}%</p>
     </div>
   );
+}
+
+const MILESTONE_LABEL_SEPARATOR = " · ";
+
+// A milestone's label beside its diamond: its name and its date, e.g.
+// "Site ready · 23 Oct".
+function milestoneLabel(name: string, date: Date) {
+  const day = date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return `${name}${MILESTONE_LABEL_SEPARATOR}${day}`;
 }
 
 // gantt-task-react's ViewMode enum has no "Quarter" granularity (it has
@@ -284,90 +299,12 @@ type TimelineView = "day" | "week" | "month" | "year";
 // just not offering it as a pickable option).
 const TIMELINE_VIEW_OPTIONS: readonly TimelineView[] = ["day", "month", "year"];
 
-// The two ways to view the project's schedule — the toolbar's view menu.
-const SCHEDULE_VIEWS = [
-  { calendar: false, label: "Gantt", icon: <ChartGantt className="size-4" /> },
-  { calendar: true, label: "Calendar", icon: <CalendarDays className="size-4" /> },
+// The two ways to view the project's schedule — the toolbar's view menu
+// (the shared ViewMenu, the Material record's too).
+const SCHEDULE_VIEWS: ViewOption<"gantt" | "calendar">[] = [
+  { value: "gantt", label: "Gantt", icon: <ChartGantt className="size-4" /> },
+  { value: "calendar", label: "Calendar", icon: <CalendarDays className="size-4" /> },
 ];
-
-/** The toolbar's Gantt / Calendar menu, at its left edge. */
-function ScheduleViewMenu({
-  calendarView,
-  onChange,
-}: {
-  calendarView: boolean;
-  onChange: (calendarView: boolean) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const current = SCHEDULE_VIEWS.find((view) => view.calendar === calendarView) ?? SCHEDULE_VIEWS[0];
-
-  // A click anywhere outside the open menu, or Escape, closes it.
-  useEffect(() => {
-    if (!open) return;
-    function handlePointerDown(e: MouseEvent) {
-      if (!menuRef.current?.contains(e.target as Node)) setOpen(false);
-    }
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
-
-  return (
-    <div ref={menuRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((isOpen) => !isOpen)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        title="Switch view"
-        className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 bg-white px-2.5 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
-      >
-        <span className="text-zinc-400">{current.icon}</span>
-        {current.label}
-        <ChevronDown
-          className={`size-4 text-zinc-400 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {/* z-10 clears the chart below (isolated in its own stacking
-          context) but stays under the page's sticky tabs bar (z-20). */}
-      {open && (
-        <div
-          role="menu"
-          className="absolute top-full left-0 z-10 mt-1 min-w-36 rounded border border-zinc-200 bg-white py-1 shadow-lg"
-        >
-          {SCHEDULE_VIEWS.map((view) => {
-            const selected = view.calendar === calendarView;
-            return (
-              <button
-                key={view.label}
-                type="button"
-                role="menuitemradio"
-                aria-checked={selected}
-                onClick={() => {
-                  setOpen(false);
-                  onChange(view.calendar);
-                }}
-                className={`flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-zinc-50 ${
-                  selected ? "font-medium text-zinc-900" : "text-zinc-600"
-                }`}
-              >
-                <span className="text-zinc-400">{view.icon}</span>
-                {view.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 const VIEW_MODE: Record<TimelineView, ViewMode> = {
   day: ViewMode.Day,
@@ -538,8 +475,9 @@ const MAX_PLANNED_YEAR = 2100;
 // #fac465 / projectProgressColor #7db59a for phases, barCornerRadius 3 —
 // confirmed directly by reading the compiled bundle's own default props)
 // so the chart matches gantt-task-react's own reference look exactly
-// instead of drifting from it. Milestones alone are recolored (blue, see
-// the <Gantt> below), to match the task list's milestone diamond.
+// instead of drifting from it. Milestones (blue, to match the task list's
+// diamond) and phases (a slate summary bracket) are the exceptions — see
+// the <Gantt> below and globals.css.
 //
 // A larger custom barCornerRadius (10, tried earlier) broke visibly on
 // short-duration bars: a radius bigger than half a narrow bar's own
@@ -803,6 +741,8 @@ export function GanttChartView({
   const [categoryModal, setCategoryModal] = useState<{
     id: number;
     name: string;
+    hasTasks: boolean;
+    isMilestone: boolean;
   } | null>(null);
   // Which phase row's own name is showing as a live text input right
   // now, instead of its normal chevron+name display — set the instant
@@ -1003,7 +943,7 @@ export function GanttChartView({
       }
     } else if (kind === "category") {
       const category = categoriesForDisplay.find((c) => c.id === id);
-      if (category && category.tasks.length === 0) {
+      if (category && category.tasks.length === 0 && !category.isMilestone) {
         setProgressModal({ kind: "category", category, highlightLatest: true });
       }
     }
@@ -1016,7 +956,7 @@ export function GanttChartView({
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [progressParam, pathname, router, searchParams]);
   // Gantt chart vs. Calendar view of the same tasks (the toolbar's
-  // view menu, ScheduleViewMenu) — see ProjectCalendarView.
+  // view menu, SCHEDULE_VIEWS) — see ProjectCalendarView.
   const [calendarView, setCalendarView] = useState(false);
   const { isAdmin } = usePortal();
   // The Calendar view's Add event / event chip — a new event on a day,
@@ -1503,7 +1443,10 @@ export function GanttChartView({
     let tasks = 0;
     let milestones = 0;
     for (const category of categoriesForDisplay) {
-      if (category.tasks.length === 0) tasks += 1;
+      if (category.tasks.length === 0) {
+        if (category.isMilestone) milestones += 1;
+        else tasks += 1;
+      }
       for (const task of category.tasks) {
         if (task.isMilestone) milestones += 1;
         else tasks += 1;
@@ -1552,6 +1495,7 @@ export function GanttChartView({
         id: number;
         name: string;
         hasTasks: boolean;
+        isMilestone: boolean;
         priority: TaskPriority;
         weight: number;
       }
@@ -1564,6 +1508,8 @@ export function GanttChartView({
         // while this is false — see the `tasks` useMemo above and the
         // Start/End cell rendering below, both of which read it too.
         hasTasks: category.tasks.length > 0,
+        // Only while it has no tasks — see CostCategory's own isMilestone.
+        isMilestone: category.tasks.length === 0 && category.isMilestone,
         priority: category.priority,
         // Already the sum of its tasks' weights while it has any — see
         // lib/cost-estimate/weights.ts.
@@ -1585,7 +1531,9 @@ export function GanttChartView({
       continue;
     }
     const category = categoryById.get(rowId);
-    if (category && category.id > 0 && !category.hasTasks) selectedCategoryIds.push(category.id);
+    if (category && category.id > 0 && !category.hasTasks && !category.isMilestone) {
+      selectedCategoryIds.push(category.id);
+    }
   }
   const selectedCount = selectedTaskIds.length + selectedCategoryIds.length;
 
@@ -1599,6 +1547,27 @@ export function GanttChartView({
       () => setSelectedRowIds(new Set())
     );
   }
+
+  // Every material line in the project's estimate — a phase's own and
+  // each task's — once per name and unit, with its unit cost: what the
+  // progress window suggests for a material used that isn't on a task's
+  // own lines.
+  const materialPrices = useMemo(() => {
+    const byKey = new Map<string, { name: string; unit: string | null; unitCost: number }>();
+    for (const category of categoriesForDisplay) {
+      const lines = [
+        ...category.materialAssignments,
+        ...category.tasks.flatMap((task) => task.materialAssignments),
+      ];
+      for (const line of lines) {
+        const name = line.materialName.trim();
+        if (!name || line.unitCost <= 0) continue;
+        const key = materialKey(name, line.unit);
+        if (!byKey.has(key)) byKey.set(key, { name, unit: line.unit, unitCost: line.unitCost });
+      }
+    }
+    return Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [categoriesForDisplay]);
 
   const workerById = useMemo(() => {
     const map = new Map<number, Worker>();
@@ -1640,6 +1609,13 @@ export function GanttChartView({
         category.tasks.length > 0
           ? category.tasks.map(resolvedDates)
           : [emptyPhaseRange];
+      // A task-less category marked as a milestone is a diamond on its
+      // one date, the same as a milestone task below (its planned end
+      // if set, otherwise its planned start).
+      const isMilestoneCategory = category.tasks.length === 0 && category.isMilestone;
+      const categoryMilestoneDate = category.plannedEndDate
+        ? emptyPhaseRange.end
+        : emptyPhaseRange.start;
 
       result.push({
         id: phaseRowId(category.id),
@@ -1647,14 +1623,21 @@ export function GanttChartView({
         // see this component's own doc comment above for why: it needs
         // its own bar to actually be draggable, which gantt-task-react
         // only ever allows for a "task"/"milestone" type row.
-        type: category.tasks.length > 0 ? "project" : "task",
-        name: category.name,
-        start: new Date(Math.min(...childDates.map((d) => d.start.getTime()))),
+        type:
+          category.tasks.length > 0 ? "project" : isMilestoneCategory ? "milestone" : "task",
+        name: isMilestoneCategory
+          ? milestoneLabel(category.name, categoryMilestoneDate)
+          : category.name,
+        start: isMilestoneCategory
+          ? categoryMilestoneDate
+          : new Date(Math.min(...childDates.map((d) => d.start.getTime()))),
         // +1 day for the bar's own rendering — see trueEndDate's own doc
         // comment above. `childDates` itself stays the true, unshifted
         // date throughout (it's also what feeds a task-less phase's own
-        // rollup Start/End cells further below).
-        end: nextDay(new Date(Math.max(...childDates.map((d) => d.end.getTime())))),
+        // rollup Start/End cells further below). A milestone's isn't.
+        end: isMilestoneCategory
+          ? categoryMilestoneDate
+          : nextDay(new Date(Math.max(...childDates.map((d) => d.end.getTime())))),
         progress: percentCompleteByCategoryId.get(category.id) ?? 0,
         hideChildren: collapsedPhaseIds.has(phaseRowId(category.id)),
       });
@@ -1670,7 +1653,9 @@ export function GanttChartView({
         result.push({
           id: String(task.id),
           type: task.isMilestone ? "milestone" : "task",
-          name: task.name,
+          // A milestone's label carries its date too — the task list
+          // shows task.name itself.
+          name: task.isMilestone ? milestoneLabel(task.name, milestoneDate) : task.name,
           start: task.isMilestone ? milestoneDate : childDates[i].start,
           // +1 day for the bar's own rendering — see trueEndDate's own
           // doc comment above. A milestone's own end is never shifted.
@@ -2374,8 +2359,8 @@ export function GanttChartView({
 
   // Same idea as handleTaskDateEdit above — only ever wired up to an
   // empty category's own Start/End cells (see categoryDatesLocked in
-  // the row-rendering loop below), so there's no milestone case to
-  // handle here: a phase row is never a milestone.
+  // the row-rendering loop below). One marked as a milestone moves its
+  // start and end together, the same as a milestone task.
   function handleCategoryDateEdit(
     categoryId: number,
     row: GanttTask,
@@ -2399,8 +2384,11 @@ export function GanttChartView({
     }
 
     setScheduleError(null);
-    const startIso = field === "start" ? value : toIsoDate(row.start);
-    const endIso = field === "end" ? value : toIsoDate(trueEndDate(row));
+    const isMilestone = row.type === "milestone";
+    const startIso =
+      field === "start" ? value : isMilestone ? value : toIsoDate(row.start);
+    const endIso =
+      field === "end" ? value : isMilestone ? value : toIsoDate(trueEndDate(row));
     persistCategoryDates(categoryId, startIso, endIso);
   }
 
@@ -2483,6 +2471,7 @@ export function GanttChartView({
         plannedStartDate: null,
         plannedEndDate: null,
         priority: "medium",
+        isMilestone: false,
         categoryLaborEstimate: 0,
         categoryEquipmentEstimate: 0,
         categoryOtherEstimate: 0,
@@ -2529,6 +2518,7 @@ export function GanttChartView({
           plannedStartDate: null,
           plannedEndDate: null,
           priority: "medium",
+          isMilestone: false,
           categoryLaborEstimate: 0,
           categoryEquipmentEstimate: 0,
           categoryOtherEstimate: 0,
@@ -2829,6 +2819,8 @@ export function GanttChartView({
           // A phase with tasks nesting under it. A task-less one reads as
           // a plain task row — ticked, not expanded.
           const isGroup = isProject && (category?.hasTasks ?? true);
+          // A milestone task, or a task-less category marked as one.
+          const isMilestoneRow = row.type === "milestone";
 
           return (
             <div
@@ -2871,7 +2863,7 @@ export function GanttChartView({
                       <ChevronDown className="size-3.5" />
                     )}
                   </button>
-                ) : task?.isMilestone ? (
+                ) : isMilestoneRow ? (
                   <Diamond aria-hidden className="mr-1.5 size-3.5 shrink-0 text-blue-600" />
                 ) : (isProject ? category?.id ?? 0 : task?.id ?? 0) > 0 ? (
                   // Drawn, not the browser's own: square, light gray, and
@@ -2940,15 +2932,15 @@ export function GanttChartView({
                     type="button"
                     onClick={() => setEditingCategoryId(category.id)}
                     title="Click to rename"
-                    className={`min-w-0 flex-1 cursor-pointer truncate text-left transition hover:text-zinc-600 ${
+                    className={`min-w-0 flex-1 cursor-pointer truncate text-left transition ${
                       isGroup ? "font-bold" : "font-medium"
-                    }`}
+                    } ${isMilestoneRow ? "text-blue-600 hover:text-blue-500" : "hover:text-zinc-600"}`}
                   >
                     {/* pendingCategoryNameOverrides' own doc comment (see
                         usePendingOverrides) — without this, closing the
                         rename input flashed back to the *old* row.name
                         for the whole router.refresh() round trip. */}
-                    {pendingCategoryNameOverrides.get(category.id) ?? row.name}
+                    {pendingCategoryNameOverrides.get(category.id) ?? category.name}
                   </button>
                 ) : isProject && category ? (
                   // The brief placeholder window (see handleAddPhase's
@@ -3006,7 +2998,7 @@ export function GanttChartView({
                       // just above, not bold since a task row isn't. A
                       // milestone's name is blue, like its diamond.
                       `min-w-0 flex-1 cursor-pointer truncate pl-4 text-left font-medium transition ${
-                        task.isMilestone
+                        isMilestoneRow
                           ? "text-blue-600 hover:text-blue-500"
                           : "hover:text-zinc-600"
                       }`
@@ -3018,7 +3010,7 @@ export function GanttChartView({
                         flashed back to the *old* row.name for the whole
                         router.refresh() round trip before jumping to the
                         new one. */}
-                    {pendingNameOverrides.get(task.id) ?? row.name}
+                    {pendingNameOverrides.get(task.id) ?? task.name}
                   </button>
                 ) : (
                   // Filler rows, or a brand new subtask's own temporary
@@ -3542,8 +3534,10 @@ export function GanttChartView({
                           // is directly tracked, not a rollup of anything,
                           // so there's a real action to take here too, not
                           // just something to explain.
+                          // Not for one marked as a milestone, the same
+                          // as a milestone task's below.
                           () => {
-                            if (!category) return;
+                            if (!category || isMilestoneRow) return;
                             const foundCategory = categoriesForDisplay.find(
                               (c) => c.id === category.id
                             );
@@ -3599,7 +3593,7 @@ export function GanttChartView({
                     return (
                       <span
                         className={`flex h-full w-full items-center truncate px-2 text-xs text-zinc-600 transition ${
-                          isProject || (task && !task.isMilestone)
+                          (isProject || task) && !isMilestoneRow
                             ? "cursor-pointer hover:bg-zinc-900 hover:text-white"
                             : ""
                         }`}
@@ -3649,7 +3643,7 @@ export function GanttChartView({
                 style={{ width: columnWidths.expected }}
               >
                 {!isFiller &&
-                  !(task && task.isMilestone) &&
+                  !isMilestoneRow &&
                   (() => {
                     const expected = isProject && category
                       ? expectedByCategoryId.get(category.id)
@@ -3712,7 +3706,11 @@ export function GanttChartView({
             ask, but none of those other actions have a real feature
             behind them in this app, so they're not here as decoration. */}
         <div className="flex items-center gap-1.5 border border-zinc-200 bg-zinc-50 px-3 py-2">
-          <ScheduleViewMenu calendarView={calendarView} onChange={setCalendarView} />
+          <ViewMenu
+            views={SCHEDULE_VIEWS}
+            value={calendarView ? "calendar" : "gantt"}
+            onChange={(scheduleView) => setCalendarView(scheduleView === "calendar")}
+          />
           <div className="mx-1.5 h-6 w-px bg-zinc-200" />
           <button
             type="button"
@@ -3882,6 +3880,8 @@ export function GanttChartView({
               // itself, milestone-label hiding, the date-input
               // calendar-icon/active-state rules).
               className="gantt-task-react-root"
+              // Month zoom hides the bars' own labels (see globals.css).
+              data-zoom={view}
             >
               <div className="relative" onMouseDown={handleChartMouseDown}>
                 <WorkScheduleContext.Provider value={workSchedule}>
@@ -3897,6 +3897,14 @@ export function GanttChartView({
                   // (Tailwind's blue-600 / blue-700).
                   milestoneBackgroundColor="#155dfc"
                   milestoneBackgroundSelectedColor="#1447e6"
+                  // A phase's summary bar: a slate band (Tailwind's
+                  // slate-500 / slate-600), its progress filled in the
+                  // same purple a task's is (the library's own task
+                  // progress colors) — its bracket shape is globals.css's.
+                  projectBackgroundColor="#62748e"
+                  projectBackgroundSelectedColor="#45556c"
+                  projectProgressColor="#a3a3ff"
+                  projectProgressSelectedColor="#8282f5"
                   TooltipContent={GanttTooltipContent}
                   TaskListHeader={CustomTaskListHeader}
                   TaskListTable={CustomTaskListTable}
@@ -4135,9 +4143,9 @@ export function GanttChartView({
       <Modal
         open={progressModal !== null}
         onClose={() => setProgressModal(null)}
-        // Wide: the day's log on the left, its override history in a
-        // column of its own on the right.
-        size="wide"
+        // Large: the day's log on the left, its override history in a
+        // column of its own on the right, with room to breathe.
+        size="large"
         bare
         title={
           progressModal
@@ -4167,11 +4175,7 @@ export function GanttChartView({
             progressToday={
               taskProgressToday[progressModal.task.id] ?? EMPTY_PROGRESS_TODAY
             }
-            crew={(taskWorkerAssignments[progressModal.task.id] ?? []).flatMap((id) => {
-              const worker = workerById.get(id);
-              return worker ? [worker] : [];
-            })}
-            team={workers}
+            materialPrices={materialPrices}
             highlightLatest={progressModal.highlightLatest ?? false}
             onSave={(input) =>
               recordTaskProgress(progressModal.task.id, projectId, input)
@@ -4212,20 +4216,14 @@ export function GanttChartView({
               categoryProgressToday[progressModal.category.id] ??
               EMPTY_PROGRESS_TODAY
             }
-            crew={(categoryWorkerAssignments[progressModal.category.id] ?? []).flatMap(
-              (id) => {
-                const worker = workerById.get(id);
-                return worker ? [worker] : [];
-              }
-            )}
-            team={workers}
+            materialPrices={materialPrices}
             highlightLatest={progressModal.highlightLatest ?? false}
             onSave={(input) =>
               recordCategoryProgress(progressModal.category.id, projectId, {
                 quantityCompletedToday: input.quantityCompletedToday,
                 costs: input.costs,
-                attendance: input.attendance,
                 materialsUsed: input.materialsUsed,
+                unplannedMaterials: input.unplannedMaterials,
               })
             }
             onDeleteOverride={

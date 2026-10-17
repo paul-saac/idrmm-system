@@ -153,11 +153,14 @@ function avatarColor(name: string) {
   return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
-/** A person's initials in a small colored circle, beside their name. */
-export function InitialsAvatar({ name }: { name: string }) {
+/** A person's initials in a small colored circle, beside their name —
+ * `large` where each person gets more room (the Team's table). */
+export function InitialsAvatar({ name, large = false }: { name: string; large?: boolean }) {
   return (
     <span
-      className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${avatarColor(name)}`}
+      className={`flex shrink-0 items-center justify-center rounded-full font-semibold ${
+        large ? "size-8 text-xs" : "size-6 text-[10px]"
+      } ${avatarColor(name)}`}
     >
       {initials(name)}
     </span>

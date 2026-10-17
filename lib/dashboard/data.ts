@@ -58,8 +58,10 @@ export type ActivityItem = {
   action: string;
   projectId: number;
   projectName: string;
-  /** Under the project's own page, e.g. "/materials/requests/7", or
-   * "?progress=task-12" to open that row's Daily Progress Update. */
+  /** Under the project's own page, e.g.
+   * "?tab=materials&subtab=requests&request=7" to open that request in its
+   * row of the Materials tab, or "?progress=task-12" to open that row's
+   * Daily Progress Update. */
   path: string;
   at: string;
 };
@@ -288,7 +290,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       action: `requested materials (${request.mr_no})`,
       projectId: request.project_id,
       projectName: projectName.get(request.project_id) ?? "—",
-      path: `/materials/requests/${request.id}`,
+      path: `?tab=materials&subtab=requests&request=${request.id}`,
       at: request.created_at,
     });
   }

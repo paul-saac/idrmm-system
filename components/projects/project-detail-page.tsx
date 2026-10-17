@@ -17,16 +17,13 @@ import { listProjectEvents } from "@/lib/project-events/data";
 import { getProjectProgress } from "@/lib/progress/data";
 import { listDailyLogs, listSurveyQuestions } from "@/lib/daily-logs/data";
 import {
-  getTodayMaterialProcurement,
   listMaterialBreakdownEntries,
-  listMaterialUsageHistory,
   listProjectMaterials,
+  listProgressMaterialUsage,
   summarizeMaterials,
 } from "@/lib/materials/data";
-import {
-  listFulfillableMaterialRequests,
-  listMaterialRequests,
-} from "@/lib/material-requests/data";
+import { buildMaterialRecords } from "@/lib/materials/records";
+import { listMaterialRequests } from "@/lib/material-requests/data";
 import {
   listEquipmentRequests,
   listFulfillableEquipmentRequests,
@@ -68,11 +65,9 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     dailyLogs,
     surveyQuestions,
     materials,
-    materialUsageHistory,
     materialBreakdownEntries,
-    todayProcurement,
+    progressMaterialUsage,
     materialRequests,
-    fulfillableMaterialRequests,
     equipmentRequests,
     fulfillableEquipmentRequests,
     projectEquipmentAssignments,
@@ -98,11 +93,9 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listDailyLogs(projectId),
     listSurveyQuestions(projectId),
     listProjectMaterials(projectId),
-    listMaterialUsageHistory(projectId),
     listMaterialBreakdownEntries(projectId),
-    getTodayMaterialProcurement(projectId),
+    listProgressMaterialUsage(projectId),
     listMaterialRequests(projectId),
-    listFulfillableMaterialRequests(projectId),
     listEquipmentRequests(projectId),
     listFulfillableEquipmentRequests(projectId),
     listProjectEquipmentAssignments(projectId),
@@ -121,6 +114,19 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listProjectEvents(projectId),
     listMemberGroups(),
   ]);
+
+  // Every material the project has, each once: planned, used, in stock.
+  const materialRecords = buildMaterialRecords(
+    materials,
+    materialBreakdownEntries,
+    progressMaterialUsage
+  );
+
+  // What the Add Daily Log's Material Procurement can still deliver
+  // against — see listFulfillableMaterialRequests.
+  const fulfillableMaterialRequests = materialRequests.filter(
+    (request) => request.status === "approved" || request.status === "partially_fulfilled"
+  );
 
   const expenseOverview = summarizeExpenses(
     laborExpenses,
@@ -177,10 +183,13 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       dailyLogs={dailyLogs}
       surveyQuestions={surveyQuestions}
       materials={materials}
-      materialsCounts={summarizeMaterials(materials)}
-      materialUsageHistory={materialUsageHistory}
-      materialBreakdownEntries={materialBreakdownEntries}
-      todayProcurement={todayProcurement}
+      materialsCounts={{
+        ...summarizeMaterials(materials),
+        // Every material the project has, not just its stock records.
+        totalMaterials: materialRecords.length,
+      }}
+      materialRecords={materialRecords}
+      recentMaterialUsage={progressMaterialUsage.slice(0, 10)}
       materialRequests={materialRequests}
       fulfillableMaterialRequests={fulfillableMaterialRequests}
       equipmentRequests={equipmentRequests}

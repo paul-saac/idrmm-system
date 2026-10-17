@@ -175,6 +175,9 @@ export interface Database {
           /** See 0046_category_priority.sql's own comment — always
            * directly set, never a rollup of its tasks' own priorities. */
           priority: string;
+          /** See 0072_estimate_category_milestone.sql — only a task-less
+           * category's own; ignored once it has tasks. */
+          is_milestone: boolean;
           /** See 0047_category_labor_estimate.sql's own comment — only
            * used while this category has no tasks yet; once it does,
            * the Labor Breakdown modal shows their rolled-up total
@@ -210,6 +213,7 @@ export interface Database {
           planned_start_date?: string | null;
           planned_end_date?: string | null;
           priority?: string;
+          is_milestone?: boolean;
           category_labor_estimate?: number;
           category_equipment_estimate?: number;
           category_other_estimate?: number;
@@ -226,6 +230,7 @@ export interface Database {
           planned_start_date?: string | null;
           planned_end_date?: string | null;
           priority?: string;
+          is_milestone?: boolean;
           category_labor_estimate?: number;
           category_equipment_estimate?: number;
           category_other_estimate?: number;
@@ -693,6 +698,9 @@ export interface Database {
           material_name: string;
           unit: string | null;
           quantity_used: number;
+          /** A material not on the planned lines' own unit cost — null
+           * for a planned one (priced from the estimate). See 0073. */
+          unit_cost: number | null;
           created_at: string;
         };
         Insert: {
@@ -700,6 +708,7 @@ export interface Database {
           material_name: string;
           unit?: string | null;
           quantity_used?: number;
+          unit_cost?: number | null;
         };
         Update: never;
         Relationships: [];
@@ -714,6 +723,9 @@ export interface Database {
           material_name: string;
           unit: string | null;
           quantity_used: number;
+          /** A material not on the planned lines' own unit cost — null
+           * for a planned one (priced from the estimate). See 0073. */
+          unit_cost: number | null;
           created_at: string;
         };
         Insert: {
@@ -721,6 +733,7 @@ export interface Database {
           material_name: string;
           unit?: string | null;
           quantity_used?: number;
+          unit_cost?: number | null;
         };
         Update: never;
         Relationships: [];

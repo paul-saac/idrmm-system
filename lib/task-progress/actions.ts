@@ -7,8 +7,13 @@ import { requireProjectAccess } from "@/lib/auth/project-access";
 import { isAdminRole } from "@/lib/auth/roles";
 import { logOverride } from "@/lib/progress-logs/write";
 import { entryCosts } from "@/lib/task-progress/data";
-import { priceMaterialsUsed } from "@/lib/task-progress/material-cost";
-import { COST_COMPONENTS, type CostAmounts } from "@/lib/task-progress/calculate";
+import { priceMaterialsUsed, readUnplannedMaterials } from "@/lib/task-progress/material-cost";
+import {
+  COST_COMPONENTS,
+  unplannedMaterialCost,
+  type CostAmounts,
+  type UnplannedMaterial,
+} from "@/lib/task-progress/calculate";
 import {
   replaceAttendance,
   resolveAttendance,
@@ -62,20 +67,23 @@ function todayIso() {
  * The day's spend per cost component (0057_progress_entry_costs.sql) is
  * what the task's % complete is measured from — saving a day overrides
  * its automatic planned share (see computeProgressBreakdown). Its labor
- * isn't typed: it's priced here from who worked (attendance, 0068) at
- * each one's own daily rate, and their attendance saved with it.
+ * is typed, like equipment and other cost.
  */
 export async function recordTaskProgress(
   taskId: number,
   projectId: number,
   input: {
     quantityCompletedToday: number;
-    /** Labor's ignored — it's priced from `attendance`; material is just
-     * typed only for a task without Material Breakdown lines — what's used
-     * is priced here. */
+    /** Material is just typed only for a task without Material Breakdown
+     * lines — what's used is priced here. */
     costs: CostAmounts;
     materialsUsed: { name: string; unit: string | null; quantity: number }[];
-    attendance: AttendanceInput;
+    /** Materials used that aren't on the task's own lines (0073), each at
+     * the unit cost typed for it — priced here as quantity × unit cost. */
+    unplannedMaterials?: UnplannedMaterial[];
+    /** Who worked — the progress window no longer sends it (labor's
+     * typed); any given is still kept with the day. */
+    attendance?: AttendanceInput;
   }
 ): Promise<TaskProgressActionState> {
   return safely(async () => {
@@ -94,6 +102,10 @@ export async function recordTaskProgress(
         return { error: "Material quantity used can't be negative." };
       }
     }
+    const unplanned = readUnplannedMaterials(input.unplannedMaterials);
+    if ("error" in unplanned) {
+      return { error: unplanned.error };
+    }
     if (
       COST_COMPONENTS.some(
         (component) =>
@@ -106,18 +118,22 @@ export async function recordTaskProgress(
     const supabase = await createClient();
     const entryDate = todayIso();
 
-    const crew = await resolveAttendance(supabase, input.attendance, entryDate, { taskId });
+    const crew = await resolveAttendance(supabase, input.attendance ?? [], entryDate, { taskId });
     if ("error" in crew) {
       return { error: crew.error };
     }
 
     // Material cost: what was used, priced from the task's own Material
-    // Breakdown (like labor from attendance) — or, without any lines, typed.
+    // Breakdown — or, without any lines, typed — plus any materials not
+    // on its lines, each at its own unit cost.
     const priced = await priceMaterialsUsed(supabase, { taskId }, input.materialsUsed);
     if ("error" in priced) {
       return { error: priced.error };
     }
-    const materialCost = Math.round((priced.cost + input.costs.material) * 100) / 100;
+    const materialCost =
+      Math.round(
+        (priced.cost + input.costs.material + unplannedMaterialCost(unplanned.materials)) * 100
+      ) / 100;
 
     const { data: savedEntry, error: upsertError } = await supabase
       .from("task_progress_entries")
@@ -126,7 +142,7 @@ export async function recordTaskProgress(
           task_id: taskId,
           entry_date: entryDate,
           quantity_completed: input.quantityCompletedToday,
-          labor_cost: crew.laborCost,
+          labor_cost: input.costs.labor,
           material_cost: materialCost,
           equipment_cost: input.costs.equipment,
           other_cost: input.costs.other,
@@ -165,7 +181,7 @@ export async function recordTaskProgress(
       return { error: "Could not save materials used. Please try again." };
     }
 
-    const materialRows = input.materialsUsed
+    const plannedRows = input.materialsUsed
       .filter((material) => material.quantity > 0 && material.name.trim())
       .map((material) => ({
         progress_entry_id: savedEntry.id,
@@ -173,6 +189,16 @@ export async function recordTaskProgress(
         unit: material.unit?.trim() || null,
         quantity_used: material.quantity,
       }));
+    // Its own unit cost marks one not on the lines — only sent when
+    // there is one, so a DB without 0073 yet still saves the rest.
+    const unplannedRows = unplanned.materials.map((material) => ({
+      progress_entry_id: savedEntry.id,
+      material_name: material.name,
+      unit: material.unit,
+      quantity_used: material.quantity,
+      unit_cost: material.unitCost,
+    }));
+    const materialRows = [...plannedRows, ...unplannedRows];
 
     if (materialRows.length > 0) {
       const { error: insertError } = await supabase
@@ -195,16 +221,19 @@ export async function recordTaskProgress(
       entryDate,
       quantityCompleted: input.quantityCompletedToday,
       costs: {
-        labor: crew.laborCost,
+        labor: input.costs.labor,
         material: materialCost,
         equipment: input.costs.equipment,
         other: input.costs.other,
       },
-      materialsUsed: materialRows.map((row) => ({
-        name: row.material_name,
-        unit: row.unit,
-        quantity: row.quantity_used,
-      })),
+      materialsUsed: [
+        ...plannedRows.map((row) => ({
+          name: row.material_name,
+          unit: row.unit,
+          quantity: row.quantity_used,
+        })),
+        ...unplanned.materials,
+      ],
       attendance: crew.rows.map((row) => ({
         name: row.worker_name,
         hours: row.hours,

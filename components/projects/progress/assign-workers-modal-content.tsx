@@ -10,6 +10,7 @@ import {
 } from "@/components/team/availability";
 import { usePortal } from "@/components/portal/portal-context";
 import { Checkbox, SectionLabel } from "@/components/ui/list-table";
+import { ModalFooter } from "@/components/ui/modal";
 import { memberSections } from "@/lib/workers/sections";
 import type { MemberGroup, Worker, WorkerAssignment } from "@/lib/workers/data";
 import type { WorkerActionState } from "@/lib/workers/actions";
@@ -246,7 +247,8 @@ export function AssignWorkersModalContent({
         </p>
       )}
 
-      <div className="mt-auto flex items-center justify-end gap-3">
+      {/* The modal's own bottom bar, a border along its top. */}
+      <ModalFooter>
         <button
           type="button"
           onClick={onClose}
@@ -272,7 +274,7 @@ export function AssignWorkersModalContent({
         >
           {pending ? "Saving..." : "Save"}
         </button>
-      </div>
+      </ModalFooter>
     </div>
   );
 }

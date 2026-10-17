@@ -130,6 +130,22 @@ export function groupPlannedMaterials(
   return Array.from(byKey.values());
 }
 
+/** A material used that isn't on the planned lines — logged with the
+ * unit cost typed for it (0073). */
+export type UnplannedMaterial = {
+  name: string;
+  unit: string | null;
+  quantity: number;
+  unitCost: number;
+};
+
+/** What unplanned materials used cost — each quantity × its own unit
+ * cost. To the centavo. */
+export function unplannedMaterialCost(materials: readonly UnplannedMaterial[]): number {
+  const total = materials.reduce((sum, material) => sum + material.quantity * material.unitCost, 0);
+  return Math.round(total * 100) / 100;
+}
+
 /**
  * What these materials used cost at the estimate's own unit costs (each
  * planned material's value ÷ its planned quantity) — the itemized part of
@@ -175,6 +191,12 @@ export type ProgressAnchor = {
   cumulativeMaterialUsage: Record<string, number>;
   /** Spend per cost component — summed across every saved day. */
   cumulativeCosts: CostAmounts;
+  /** Of cumulativeCosts.material, what went on materials not on the
+   * planned lines (logged as unplanned, 0073) — real spend, so it's in
+   * the costs to date, but not progress: it's left out of cost-based %
+   * complete, and of what automatic days measure against the plan's own
+   * material budget. Absent counts as 0. */
+  cumulativeUnplannedMaterialCost?: number;
   /** The days (YYYY-MM-DD) that have a saved entry — a working day that
    * doesn't counts its planned share automatically instead. */
   loggedDates: readonly string[];
@@ -324,10 +346,75 @@ export function computeDailyPlan({
   };
 }
 
+/**
+ * Today's automatic values — what today counts while nothing's saved for
+ * it, and so what its Daily Progress Update starts from: its planned
+ * share (computeDailyPlan), capped the way computeProgressBreakdown caps
+ * every automatic day — never more than what's left of each part after
+ * every other day so far, saved or automatic. `anchor` is the saved days
+ * other than today.
+ */
+export function computeTodayPlan({
+  plannedCosts,
+  estimatedQuantity,
+  plannedMaterials,
+  anchor,
+  today,
+  ...schedule
+}: Schedule & {
+  plannedCosts: CostAmounts;
+  estimatedQuantity: number;
+  plannedMaterials: PlannedMaterial[];
+  anchor: ProgressAnchor;
+  today: Date;
+}): DailyPlan {
+  const daily = computeDailyPlan({
+    ...schedule,
+    plannedCosts,
+    estimatedQuantity,
+    plannedMaterials,
+    date: today,
+  });
+  // Everything so far but today — today counted as saved, with nothing.
+  const before = computeProgressBreakdown({
+    ...schedule,
+    plannedCosts,
+    estimatedQuantity,
+    plannedMaterials,
+    anchor: { ...anchor, loggedDates: [...anchor.loggedDates, toIsoDate(today)] },
+    today,
+  });
+  const left = (dayShare: number, planned: number, toDate: number) =>
+    Math.min(dayShare, Math.max(0, planned - toDate));
+
+  const materials: Record<string, number> = {};
+  for (const material of plannedMaterials) {
+    materials[material.key] = left(
+      daily.materials[material.key] ?? 0,
+      material.plannedQuantity,
+      before.materialUsageToDate[material.key] ?? 0
+    );
+  }
+  return {
+    costs: {
+      labor: left(daily.costs.labor, plannedCosts.labor, before.costsToDate.labor),
+      material: left(
+        daily.costs.material,
+        plannedCosts.material,
+        before.costsToDate.material - (anchor.cumulativeUnplannedMaterialCost ?? 0)
+      ),
+      equipment: left(daily.costs.equipment, plannedCosts.equipment, before.costsToDate.equipment),
+      other: left(daily.costs.other, plannedCosts.other, before.costsToDate.other),
+    },
+    quantity: left(daily.quantity, estimatedQuantity, before.quantityToDate),
+    materials,
+  };
+}
+
 export type PercentCompleteBreakdown = {
   /** Spend to date per cost component: every saved day's, plus each
    * working day so far (today included) without an entry counting its
-   * planned share. */
+   * planned share — never past the plan (see computeProgressBreakdown). */
   costsToDate: CostAmounts;
   plannedCostTotal: number;
   /** Cost to date ÷ planned cost — how much of the budget is spent; %
@@ -376,6 +463,14 @@ export type PercentCompleteBreakdown = {
  * was actually typed (more, less, or nothing at all — a rained-out day
  * saved as 0 holds the task back).
  *
+ * Automatic days never take a part past its plan: together they add only
+ * what's left of it after the saved days, at most their planned share.
+ * So a day saved ahead of plan (0.8 of a 1-lot task's 0.5 a day) leaves
+ * the next automatic day just the 0.2 that's left — not 1.3 — while one
+ * saved behind (0.2) still leaves it its usual 0.5 (0.7, still behind:
+ * an automatic day assumes a normal day's work, never a catch-up). Only
+ * a saved entry can take a part over its plan.
+ *
  * This is the task's OWN percent — its contribution to the project is
  * this times its weight (getProjectProgress, lib/progress/data.ts).
  * Returns exact, unrounded values — callers format them for display.
@@ -419,27 +514,37 @@ export function computeProgressBreakdown({
   }
   const share =
     totalWorkingDays !== null ? automaticDays / totalWorkingDays : 0;
+  // What the automatic days add to one part: their planned share of it,
+  // but only what's left of its plan after the saved days.
+  const automatic = (planned: number, saved: number) =>
+    Math.min(planned * share, Math.max(0, planned - saved));
 
+  const saved = anchor.cumulativeCosts;
+  // Spent on materials not in the plan — in the costs to date, but not
+  // measured against the plan's material budget, nor progress.
+  const unplanned = anchor.cumulativeUnplannedMaterialCost ?? 0;
   const costsToDate: CostAmounts = {
-    labor: anchor.cumulativeCosts.labor + plannedCosts.labor * share,
-    material: anchor.cumulativeCosts.material + plannedCosts.material * share,
-    equipment: anchor.cumulativeCosts.equipment + plannedCosts.equipment * share,
-    other: anchor.cumulativeCosts.other + plannedCosts.other * share,
+    labor: saved.labor + automatic(plannedCosts.labor, saved.labor),
+    material: saved.material + automatic(plannedCosts.material, saved.material - unplanned),
+    equipment: saved.equipment + automatic(plannedCosts.equipment, saved.equipment),
+    other: saved.other + automatic(plannedCosts.other, saved.other),
   };
   const plannedCostTotal = sumCosts(plannedCosts);
   const costPercent =
     plannedCostTotal > 0
-      ? clampPercent((sumCosts(costsToDate) / plannedCostTotal) * 100)
+      ? clampPercent(((sumCosts(costsToDate) - unplanned) / plannedCostTotal) * 100)
       : null;
 
-  const quantityToDate = anchor.cumulativeQuantityCompleted + estimatedQuantity * share;
+  const quantityToDate =
+    anchor.cumulativeQuantityCompleted +
+    automatic(estimatedQuantity, anchor.cumulativeQuantityCompleted);
   const quantityPercent =
     estimatedQuantity > 0 ? clampPercent((quantityToDate / estimatedQuantity) * 100) : null;
 
   const materialUsageToDate: Record<string, number> = { ...anchor.cumulativeMaterialUsage };
   for (const material of plannedMaterials) {
-    materialUsageToDate[material.key] =
-      (materialUsageToDate[material.key] ?? 0) + material.plannedQuantity * share;
+    const used = materialUsageToDate[material.key] ?? 0;
+    materialUsageToDate[material.key] = used + automatic(material.plannedQuantity, used);
   }
   const measurable = plannedMaterials.filter((m) => m.plannedQuantity > 0);
   let materialsPercent: number | null = null;

@@ -7,8 +7,13 @@ import { requireProjectAccess } from "@/lib/auth/project-access";
 import { isAdminRole } from "@/lib/auth/roles";
 import { logOverride } from "@/lib/progress-logs/write";
 import { entryCosts } from "@/lib/task-progress/data";
-import { priceMaterialsUsed } from "@/lib/task-progress/material-cost";
-import { COST_COMPONENTS, type CostAmounts } from "@/lib/task-progress/calculate";
+import { priceMaterialsUsed, readUnplannedMaterials } from "@/lib/task-progress/material-cost";
+import {
+  COST_COMPONENTS,
+  unplannedMaterialCost,
+  type CostAmounts,
+  type UnplannedMaterial,
+} from "@/lib/task-progress/calculate";
 import {
   replaceAttendance,
   resolveAttendance,
@@ -50,21 +55,25 @@ function todayIso() {
  * 0048_category_progress_tracking.sql's own doc comment for why this
  * exists at all). Identical shape/behavior throughout, minus materials —
  * a task-less category has no planned material list to log against.
- * Labor's priced from attendance the same way.
+ * Labor's typed the same way.
  */
 export async function recordCategoryProgress(
   categoryId: number,
   projectId: number,
   input: {
     quantityCompletedToday: number;
-    /** Labor's ignored — it's priced from `attendance`; material is just
-     * typed only for a category without Material Breakdown lines — what's
-     * used is priced here. */
+    /** Material is just typed only for a category without Material
+     * Breakdown lines — what's used is priced here. */
     costs: CostAmounts;
-    attendance: AttendanceInput;
+    /** Who worked — the progress window no longer sends it (labor's
+     * typed); any given is still kept with the day. */
+    attendance?: AttendanceInput;
     /** Used of the category's own Material Breakdown lines today (0070) —
      * empty for a category without any. */
     materialsUsed?: { name: string; unit: string | null; quantity: number }[];
+    /** Materials used that aren't on its own lines (0073), each at the
+     * unit cost typed for it — priced here as quantity × unit cost. */
+    unplannedMaterials?: UnplannedMaterial[];
   }
 ): Promise<CategoryProgressActionState> {
   return safely(async () => {
@@ -84,6 +93,10 @@ export async function recordCategoryProgress(
         return { error: "Material quantity used can't be negative." };
       }
     }
+    const unplanned = readUnplannedMaterials(input.unplannedMaterials);
+    if ("error" in unplanned) {
+      return { error: unplanned.error };
+    }
     if (
       COST_COMPONENTS.some(
         (component) =>
@@ -96,7 +109,7 @@ export async function recordCategoryProgress(
     const supabase = await createClient();
     const entryDate = todayIso();
 
-    const crew = await resolveAttendance(supabase, input.attendance, entryDate, {
+    const crew = await resolveAttendance(supabase, input.attendance ?? [], entryDate, {
       categoryId,
     });
     if ("error" in crew) {
@@ -104,13 +117,16 @@ export async function recordCategoryProgress(
     }
 
     // Material cost: what was used, priced from the category's own
-    // Material Breakdown (like labor from attendance) — or, without any
+    // Material Breakdown — or, without any
     // lines, typed.
     const priced = await priceMaterialsUsed(supabase, { categoryId }, materialsUsed);
     if ("error" in priced) {
       return { error: priced.error };
     }
-    const materialCost = Math.round((priced.cost + input.costs.material) * 100) / 100;
+    const materialCost =
+      Math.round(
+        (priced.cost + input.costs.material + unplannedMaterialCost(unplanned.materials)) * 100
+      ) / 100;
 
     const { data: savedEntry, error: upsertError } = await supabase
       .from("category_progress_entries")
@@ -119,7 +135,7 @@ export async function recordCategoryProgress(
           category_id: categoryId,
           entry_date: entryDate,
           quantity_completed: input.quantityCompletedToday,
-          labor_cost: crew.laborCost,
+          labor_cost: input.costs.labor,
           material_cost: materialCost,
           equipment_cost: input.costs.equipment,
           other_cost: input.costs.other,
@@ -151,8 +167,9 @@ export async function recordCategoryProgress(
     }
 
     // Materials used, replaced the same way as a task's — skipped
-    // entirely for a category with no Material Breakdown lines.
-    if (materialsUsed.length > 0) {
+    // entirely for a category with no Material Breakdown lines (and so
+    // none not on them either).
+    if (materialsUsed.length > 0 || unplanned.materials.length > 0) {
       const { error: deleteError } = await supabase
         .from("category_progress_material_entries")
         .delete()
@@ -166,7 +183,7 @@ export async function recordCategoryProgress(
         return { error: "Could not save materials used. Please try again." };
       }
 
-      const materialRows = materialsUsed
+      const plannedRows = materialsUsed
         .filter((material) => material.quantity > 0 && material.name.trim())
         .map((material) => ({
           progress_entry_id: savedEntry.id,
@@ -174,6 +191,16 @@ export async function recordCategoryProgress(
           unit: material.unit?.trim() || null,
           quantity_used: material.quantity,
         }));
+      // Its own unit cost marks one not on the lines — only sent when
+      // there is one, so a DB without 0073 yet still saves the rest.
+      const unplannedRows = unplanned.materials.map((material) => ({
+        progress_entry_id: savedEntry.id,
+        material_name: material.name,
+        unit: material.unit,
+        quantity_used: material.quantity,
+        unit_cost: material.unitCost,
+      }));
+      const materialRows = [...plannedRows, ...unplannedRows];
 
       if (materialRows.length > 0) {
         const { error: insertError } = await supabase
@@ -197,18 +224,21 @@ export async function recordCategoryProgress(
       entryDate,
       quantityCompleted: input.quantityCompletedToday,
       costs: {
-        labor: crew.laborCost,
+        labor: input.costs.labor,
         material: materialCost,
         equipment: input.costs.equipment,
         other: input.costs.other,
       },
-      materialsUsed: materialsUsed
-        .filter((material) => material.quantity > 0 && material.name.trim())
-        .map((material) => ({
-          name: material.name.trim(),
-          unit: material.unit?.trim() || null,
-          quantity: material.quantity,
-        })),
+      materialsUsed: [
+        ...materialsUsed
+          .filter((material) => material.quantity > 0 && material.name.trim())
+          .map((material) => ({
+            name: material.name.trim(),
+            unit: material.unit?.trim() || null,
+            quantity: material.quantity,
+          })),
+        ...unplanned.materials,
+      ],
       attendance: crew.rows.map((row) => ({
         name: row.worker_name,
         hours: row.hours,

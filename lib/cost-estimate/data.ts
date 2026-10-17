@@ -144,6 +144,10 @@ export type CostCategory = {
   /** Always directly set, never a rollup of its tasks' own priorities
    * (unlike Start/End) — see 0046_category_priority.sql's own comment. */
   priority: TaskPriority;
+  /** A task-less category marked as a milestone — a single-date diamond
+   * on the Gantt chart, like a task's own isMilestone. Ignored once it
+   * has tasks. See 0072_estimate_category_milestone.sql. */
+  isMilestone: boolean;
   /** This category's own direct labor cost — same "only meaningful
    * while it has no tasks yet" rule as plannedStartDate/plannedEndDate
    * above, one level up from CostTask's own laborEstimate. See
@@ -436,6 +440,8 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     plannedStartDate: row.planned_start_date,
     plannedEndDate: row.planned_end_date,
     priority: toTaskPriority(row.priority),
+    // Undefined until 0072 has run — then just not a milestone.
+    isMilestone: row.is_milestone ?? false,
     categoryLaborEstimate: row.category_labor_estimate ?? 0,
     categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
     categoryOtherEstimate: row.category_other_estimate ?? 0,

@@ -9,8 +9,6 @@ import type { ProjectRow } from "@/lib/projects/data";
 import { projectStatusBadgeClasses, projectStatusLabel } from "@/lib/projects/status";
 import type { Worker, WorkerAssignment } from "@/lib/workers/data";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 // How many crew avatars show before "+N".
 const TEAM_PREVIEW = 4;
 
@@ -27,20 +25,14 @@ function shortDate(iso: string) {
   return toDate(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function daysBetween(fromIso: string, toIso: string) {
-  return Math.round((toDate(toIso).getTime() - toDate(fromIso).getTime()) / DAY_MS);
-}
-
-/** One figure in the stats strip — a small caps label, the figure, and a
- * line under it. */
-function Stat({ label, value, caption }: { label: string; value: ReactNode; caption: ReactNode }) {
+/** One figure in the stats strip — a small caps label, then the figure. */
+function Stat({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="min-w-0 px-8 py-4">
       <p className="text-xs font-medium tracking-wider text-zinc-400 uppercase">{label}</p>
       <div className="mt-1.5 flex min-w-0 items-center gap-2 text-lg font-semibold text-zinc-900">
         {value}
       </div>
-      <p className="mt-1 truncate text-sm text-zinc-400">{caption}</p>
     </div>
   );
 }
@@ -59,7 +51,7 @@ function Person({ role, name }: { role: string; name: string | null }) {
  * The project's own header, over its tabs: what it is and where, who runs
  * it and who's on its crew, then a strip of four figures — overall
  * progress, the schedule, the next milestone, and planning health (any
- * task past its End and not done, and what starts this week).
+ * task past its End and not done).
  */
 export function ProjectHeader({
   project,
@@ -90,7 +82,7 @@ export function ProjectHeader({
         start: category.plannedStartDate,
         end: category.plannedEndDate,
         percent: category.percentComplete,
-        milestone: false,
+        milestone: category.isMilestone,
       });
       continue;
     }
@@ -113,14 +105,10 @@ export function ProjectHeader({
     .map((item) => ({ name: item.name, date: item.end ?? item.start }))
     .filter((item): item is { name: string; date: string } => !!item.date && item.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
-  const milestoneIn = nextMilestone ? daysBetween(today, nextMilestone.date) : 0;
 
-  // Planning health: past its End and not done; starting within a week.
-  const work = items.filter((item) => !item.milestone);
-  const overdue = work.filter((item) => item.end && item.end < today && item.percent < 99.995).length;
-  const weekEnd = localIso(new Date(toDate(today).getTime() + 6 * DAY_MS));
-  const startingThisWeek = work.filter(
-    (item) => item.start && item.start >= today && item.start <= weekEnd
+  // Planning health: any task past its End and not done.
+  const overdue = items.filter(
+    (item) => !item.milestone && item.end && item.end < today && item.percent < 99.995
   ).length;
 
   // The crew: everyone on one of its tasks or phases.
@@ -132,8 +120,6 @@ export function ProjectHeader({
   const crew = workers.filter((worker) => crewIds.has(worker.id));
 
   const scheduled = project.startDate && project.targetEndDate;
-  const startYear = project.startDate?.slice(0, 4);
-  const endYear = project.targetEndDate?.slice(0, 4);
 
   return (
     <div className="bg-white pt-6">
@@ -203,18 +189,7 @@ export function ProjectHeader({
       <div className="mt-5 grid grid-cols-2 border-y border-zinc-200 lg:grid-cols-4 lg:divide-x lg:divide-zinc-200">
         <Stat
           label="Overall progress"
-          value={
-            <>
-              <span className="tabular-nums">{progress.toFixed(2)}%</span>
-              <span className="h-1.5 w-20 overflow-hidden rounded-full bg-zinc-200">
-                <span
-                  className="block h-full rounded-full bg-zinc-900"
-                  style={{ width: `${progress}%` }}
-                />
-              </span>
-            </>
-          }
-          caption="Weighted completion across all tasks"
+          value={<span className="tabular-nums">{progress.toFixed(2)}%</span>}
         />
         <Stat
           label="Project schedule"
@@ -226,13 +201,6 @@ export function ProjectHeader({
             ) : (
               <span className="text-zinc-400">Not scheduled</span>
             )
-          }
-          caption={
-            scheduled
-              ? `${startYear === endYear ? startYear : `${startYear} – ${endYear}`} · ${
-                  daysBetween(project.startDate!, project.targetEndDate!) + 1
-                } calendar days`
-              : "Set its start and target end"
           }
         />
         <Stat
@@ -246,13 +214,6 @@ export function ProjectHeader({
             ) : (
               <span className="text-zinc-400">None</span>
             )
-          }
-          caption={
-            nextMilestone
-              ? `${shortDate(nextMilestone.date)} · ${
-                  milestoneIn === 0 ? "Today" : milestoneIn === 1 ? "Tomorrow" : `In ${milestoneIn} days`
-                }`
-              : "No upcoming milestones"
           }
         />
         <Stat
@@ -270,9 +231,6 @@ export function ProjectHeader({
               </>
             )
           }
-          caption={`${
-            overdue === 0 ? "No overdue tasks" : `${overdue} past their end, not done`
-          } · ${startingThisWeek} starting this week`}
         />
       </div>
     </div>

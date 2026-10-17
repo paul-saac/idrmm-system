@@ -20,7 +20,14 @@ export type OverrideLog = {
   savedByRole: string | null;
   quantityCompleted: number;
   costs: CostAmounts;
-  materialsUsed: { name: string; unit: string | null; quantity: number }[];
+  /** What was used that day — a material not on the planned lines with
+   * the unit cost typed for it (0073). */
+  materialsUsed: {
+    name: string;
+    unit: string | null;
+    quantity: number;
+    unitCost?: number | null;
+  }[];
   /** Who worked that day, their hours and hourly rate then. */
   attendance: { name: string; hours: number; rate: number }[];
 };
