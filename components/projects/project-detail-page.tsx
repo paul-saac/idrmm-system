@@ -13,6 +13,7 @@ import {
 } from "@/lib/workers/data";
 import { listTaskProgressToday } from "@/lib/task-progress/data";
 import { listCategoryProgressToday } from "@/lib/category-progress/data";
+import { listProjectOverrideHistory } from "@/lib/progress-logs/actions";
 import { listProjectEvents } from "@/lib/project-events/data";
 import { getProjectProgress } from "@/lib/progress/data";
 import { listDailyLogs, listSurveyQuestions } from "@/lib/daily-logs/data";
@@ -26,7 +27,7 @@ import { buildMaterialRecords } from "@/lib/materials/records";
 import { listMaterialRequests } from "@/lib/material-requests/data";
 import { listEquipmentRequests } from "@/lib/equipment-requests/data";
 import {
-  listProgressEquipmentCosts,
+  listProgressExpenses,
   listProjectEquipmentAssignments,
 } from "@/lib/equipment/data";
 import { buildEquipmentCostRecords } from "@/lib/equipment/records";
@@ -70,7 +71,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     progressMaterialUsage,
     materialRequests,
     equipmentRequests,
-    equipmentCosts,
+    progressExpenses,
     projectEquipmentAssignments,
     laborExpenses,
     materialExpenses,
@@ -84,6 +85,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     categoryWorkerAssignments,
     taskProgressToday,
     categoryProgressToday,
+    overrideHistory,
     events,
     memberGroups,
   ] = await Promise.all([
@@ -98,7 +100,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listProgressMaterialUsage(projectId),
     listMaterialRequests(projectId),
     listEquipmentRequests(projectId),
-    listProgressEquipmentCosts(projectId),
+    listProgressExpenses(projectId),
     listProjectEquipmentAssignments(projectId),
     listLaborExpenses(projectId),
     listMaterialExpenses(projectId),
@@ -112,6 +114,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listCategoryWorkerAssignments(projectId),
     listTaskProgressToday(projectId),
     listCategoryProgressToday(projectId),
+    listProjectOverrideHistory(projectId),
     listProjectEvents(projectId),
     listMemberGroups(),
   ]);
@@ -135,6 +138,8 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
 
   // Every task's equipment cost — the Equipment tab's: its budget, what's
   // been spent of it from its progress updates, and its cost log.
+  const equipmentCosts = progressExpenses.filter((entry) => entry.costs.equipment > 0)
+    .map(({ costs, ...entry }) => ({ ...entry, amount: costs.equipment }));
   const equipmentCostRecords = buildEquipmentCostRecords(costEstimate, equipmentCosts);
 
   const expenseOverview = summarizeExpenses(
@@ -203,14 +208,11 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       fulfillableMaterialRequests={fulfillableMaterialRequests}
       equipmentRequests={equipmentRequests}
       fulfillableEquipmentRequests={fulfillableEquipmentRequests}
-      expenseOverview={expenseOverview}
-      laborExpenses={laborExpenses}
-      materialExpenses={materialExpenses}
-      equipmentExpenses={equipmentExpenses}
-      otherExpenses={otherExpenses}
+      progressExpenses={progressExpenses}
       currentUserName={currentUserName}
       projectEquipmentAssignments={projectEquipmentAssignments}
       equipmentCostRecords={equipmentCostRecords}
+      equipmentCostLogs={equipmentCosts}
       recentEquipmentCosts={equipmentCosts.slice(0, 10)}
       ganttCanUndo={ganttUndoRedoState.canUndo}
       ganttCanRedo={ganttUndoRedoState.canRedo}
@@ -221,6 +223,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       categoryWorkerAssignments={categoryWorkerAssignments}
       taskProgressToday={taskProgressToday}
       categoryProgressToday={categoryProgressToday}
+      overrideHistory={overrideHistory}
       events={events}
     />
   );

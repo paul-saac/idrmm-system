@@ -24,7 +24,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
 import { AssignWorkersModalContent } from "@/components/projects/progress/assign-workers-modal-content";
-import { ProgressTrackingModalContent } from "@/components/projects/progress/progress-tracking-modal-content";
+import { ProgressTrackingModal, type ProgressModalTarget } from "@/components/projects/progress/progress-tracking-modal";
 import {
   ProjectCalendarView,
   type CalendarItem,
@@ -57,12 +57,7 @@ import {
 } from "@/lib/cost-estimate/undo-redo-actions";
 import type { CostCategory, CostTask, TaskPriority } from "@/lib/cost-estimate/data";
 import { setTaskWorkers, setCategoryWorkers } from "@/lib/workers/actions";
-import { deleteTaskProgressEntry, recordTaskProgress } from "@/lib/task-progress/actions";
-import { listOverrideLogs } from "@/lib/progress-logs/actions";
-import {
-  deleteCategoryProgressEntry,
-  recordCategoryProgress,
-} from "@/lib/category-progress/actions";
+import type { ProjectOverrideHistory } from "@/lib/progress-logs/types";
 import type {
   Worker,
   WorkerAssignment,
@@ -74,10 +69,7 @@ import type { TaskProgressToday } from "@/lib/task-progress/data";
 import {
   computeExpectedProgress,
   countWorkingDays,
-  groupPlannedMaterials,
-  materialKey,
   scheduleStatusFor,
-  EMPTY_PROGRESS_ANCHOR,
   ZERO_COSTS,
   type ScheduleStatus,
 } from "@/lib/task-progress/calculate";
@@ -154,12 +146,6 @@ function ExpectedProgressCell({
   );
 }
 
-const EMPTY_PROGRESS_TODAY: TaskProgressToday = {
-  ...EMPTY_PROGRESS_ANCHOR,
-  today: null,
-  latest: null,
-  todayAttendance: [],
-};
 
 function toDate(iso: string) {
   return new Date(`${iso}T00:00:00`);
@@ -650,6 +636,7 @@ export function GanttChartView({
   categoryWorkerAssignments,
   taskProgressToday,
   categoryProgressToday,
+  overrideHistory,
   onOpenMaterialBreakdown,
   onImportBom,
 }: {
@@ -710,6 +697,9 @@ export function GanttChartView({
    * reachable for a category with no tasks yet (see
    * percentCompleteByCategoryId's own doc comment). */
   categoryProgressToday: Record<number, TaskProgressToday>;
+  /** Preloaded per-task/phase override history, keyed by `task-<id>` or
+   * `category-<id>`, so the Progress Tracking modal renders it immediately. */
+  overrideHistory: ProjectOverrideHistory;
   /** Opens the shared Material Breakdown modal — owned by
    * project-detail-view.tsx, the nearest common ancestor with
    * CostEstimateView (which owns that modal's own trigger too) —
@@ -916,11 +906,7 @@ export function GanttChartView({
   // for display alongside the form.
   // highlightLatest: opened from a notification — its Last override (the
   // change it was about) is highlighted.
-  const [progressModal, setProgressModal] = useState<
-    | { kind: "task"; task: CostTask; highlightLatest?: boolean }
-    | { kind: "category"; category: CostCategory; highlightLatest?: boolean }
-    | null
-  >(null);
+  const [progressModal, setProgressModal] = useState<ProgressModalTarget | null>(null);
 
   // A notification's View Progress (?progress=task-12 or category-5)
   // opens that row's Daily Progress Update straight away. Compared with
@@ -930,9 +916,17 @@ export function GanttChartView({
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const progressParam = searchParams.get("progress");
+  const rawProgressDate = searchParams.get("progressDate");
+  const progressDate =
+    rawProgressDate && /^\d{4}-\d{2}-\d{2}$/.test(rawProgressDate)
+      ? rawProgressDate
+      : undefined;
+  const progressTargetKey = progressParam
+    ? `${progressParam}:${progressDate ?? ""}`
+    : null;
   const [handledProgressParam, setHandledProgressParam] = useState<string | null>(null);
-  if (progressParam !== handledProgressParam) {
-    setHandledProgressParam(progressParam);
+  if (progressTargetKey !== handledProgressParam) {
+    setHandledProgressParam(progressTargetKey);
     const [kind, rawId] = (progressParam ?? "").split("-");
     const id = Number(rawId);
     if (kind === "task") {
@@ -940,12 +934,22 @@ export function GanttChartView({
         .flatMap((category) => category.tasks)
         .find((t) => t.id === id);
       if (task && !task.isMilestone) {
-        setProgressModal({ kind: "task", task, highlightLatest: true });
+        setProgressModal({
+          kind: "task",
+          task,
+          highlightLatest: !progressDate,
+          highlightEntryDate: progressDate,
+        });
       }
     } else if (kind === "category") {
       const category = categoriesForDisplay.find((c) => c.id === id);
       if (category && category.tasks.length === 0 && !category.isMilestone) {
-        setProgressModal({ kind: "category", category, highlightLatest: true });
+        setProgressModal({
+          kind: "category",
+          category,
+          highlightLatest: !progressDate,
+          highlightEntryDate: progressDate,
+        });
       }
     }
   }
@@ -953,6 +957,7 @@ export function GanttChartView({
     if (!progressParam) return;
     const params = new URLSearchParams(searchParams.toString());
     params.delete("progress");
+    params.delete("progressDate");
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [progressParam, pathname, router, searchParams]);
@@ -1549,26 +1554,6 @@ export function GanttChartView({
     );
   }
 
-  // Every material line in the project's estimate — a phase's own and
-  // each task's — once per name and unit, with its unit cost: what the
-  // progress window suggests for a material used that isn't on a task's
-  // own lines.
-  const materialPrices = useMemo(() => {
-    const byKey = new Map<string, { name: string; unit: string | null; unitCost: number }>();
-    for (const category of categoriesForDisplay) {
-      const lines = [
-        ...category.materialAssignments,
-        ...category.tasks.flatMap((task) => task.materialAssignments),
-      ];
-      for (const line of lines) {
-        const name = line.materialName.trim();
-        if (!name || line.unitCost <= 0) continue;
-        const key = materialKey(name, line.unit);
-        if (!byKey.has(key)) byKey.set(key, { name, unit: line.unit, unitCost: line.unitCost });
-      }
-    }
-    return Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [categoriesForDisplay]);
 
   const workerById = useMemo(() => {
     const map = new Map<number, Worker>();
@@ -4144,105 +4129,17 @@ export function GanttChartView({
         )}
       </Modal>
 
-      <Modal
-        open={progressModal !== null}
+      <ProgressTrackingModal
+        target={progressModal}
+        projectId={projectId}
+        categories={categoriesForDisplay}
+        workingDays={workingDays}
+        holidays={holidays}
+        taskProgressToday={taskProgressToday}
+        categoryProgressToday={categoryProgressToday}
+        overrideHistory={overrideHistory}
         onClose={() => setProgressModal(null)}
-        // Large: the day's log on the left, its override history in a
-        // column of its own on the right, with room to breathe.
-        size="large"
-        bare
-        title={
-          progressModal
-            ? progressModal.kind === "task"
-              ? progressModal.task.name
-              : progressModal.category.name
-            : "Progress Tracking"
-        }
-      >
-        {progressModal && progressModal.kind === "task" && (
-          <ProgressTrackingModalContent
-            estimatedQuantity={progressModal.task.estimatedQuantity}
-            unit={progressModal.task.unit}
-            plannedStartDate={progressModal.task.plannedStartDate}
-            plannedEndDate={progressModal.task.plannedEndDate}
-            plannedMaterials={groupPlannedMaterials(
-              progressModal.task.materialAssignments
-            )}
-            plannedCosts={{
-              labor: progressModal.task.laborEstimate,
-              material: progressModal.task.materialEstimate,
-              equipment: progressModal.task.equipmentEstimate,
-              other: progressModal.task.otherCostEstimate,
-            }}
-            workingDays={workingDays}
-            holidays={holidays}
-            progressToday={
-              taskProgressToday[progressModal.task.id] ?? EMPTY_PROGRESS_TODAY
-            }
-            materialPrices={materialPrices}
-            highlightLatest={progressModal.highlightLatest ?? false}
-            onSave={(input) =>
-              recordTaskProgress(progressModal.task.id, projectId, input)
-            }
-            // Admins and super admins can delete an override; foremen can't.
-            onDeleteOverride={
-              isAdmin
-                ? (entryDate) =>
-                    deleteTaskProgressEntry(progressModal.task.id, projectId, entryDate)
-                : undefined
-            }
-            loadOverrideHistory={() =>
-              listOverrideLogs(projectId, { kind: "task", id: progressModal.task.id })
-            }
-            onClose={() => setProgressModal(null)}
-          />
-        )}
-        {progressModal && progressModal.kind === "category" && (
-          <ProgressTrackingModalContent
-            estimatedQuantity={progressModal.category.estimatedQuantity}
-            unit={progressModal.category.unit}
-            plannedStartDate={progressModal.category.plannedStartDate}
-            plannedEndDate={progressModal.category.plannedEndDate}
-            // A task-less category's own Material Breakdown lines — its
-            // Materials used inputs, the same as a task's.
-            plannedMaterials={groupPlannedMaterials(
-              progressModal.category.materialAssignments
-            )}
-            plannedCosts={{
-              labor: progressModal.category.categoryLaborEstimate,
-              material: progressModal.category.categoryMaterialEstimate,
-              equipment: progressModal.category.categoryEquipmentEstimate,
-              other: progressModal.category.categoryOtherEstimate,
-            }}
-            workingDays={workingDays}
-            holidays={holidays}
-            progressToday={
-              categoryProgressToday[progressModal.category.id] ??
-              EMPTY_PROGRESS_TODAY
-            }
-            materialPrices={materialPrices}
-            highlightLatest={progressModal.highlightLatest ?? false}
-            onSave={(input) =>
-              recordCategoryProgress(progressModal.category.id, projectId, {
-                quantityCompletedToday: input.quantityCompletedToday,
-                costs: input.costs,
-                materialsUsed: input.materialsUsed,
-                unplannedMaterials: input.unplannedMaterials,
-              })
-            }
-            onDeleteOverride={
-              isAdmin
-                ? (entryDate) =>
-                    deleteCategoryProgressEntry(progressModal.category.id, projectId, entryDate)
-                : undefined
-            }
-            loadOverrideHistory={() =>
-              listOverrideLogs(projectId, { kind: "category", id: progressModal.category.id })
-            }
-            onClose={() => setProgressModal(null)}
-          />
-        )}
-      </Modal>
+      />
     </div>
   );
 }

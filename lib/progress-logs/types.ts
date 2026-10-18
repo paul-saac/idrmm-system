@@ -31,3 +31,8 @@ export type OverrideLog = {
   /** Who worked that day, their hours and hourly rate then. */
   attendance: { name: string; hours: number; rate: number }[];
 };
+
+/** Every saved override history in a project, grouped by its task or
+ * task-less phase key (`task-<id>` / `category-<id>`). Preloaded with the
+ * project so opening a Progress Tracking modal needs no second fetch. */
+export type ProjectOverrideHistory = Record<string, OverrideLog[]>;

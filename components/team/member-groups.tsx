@@ -69,12 +69,14 @@ export function GroupsPanel({
   }
 
   return (
-    // Level with the "All members" heading beside it — the box's top with
-    // that heading's row, its pt-1.5 putting "Groups" in line with it.
+    // Group header separated from its cards, like the member table.
     <div className="min-w-0">
-      <aside className="flex flex-col rounded-lg border border-zinc-200 bg-white px-3 pt-1.5 pb-3">
-        <h2 className="px-1 pb-3 text-base font-semibold text-zinc-900">Groups</h2>
-        <div className="flex flex-col gap-2">
+      <aside className="flex flex-col rounded-lg border border-zinc-200 bg-white">
+        <div className="flex items-baseline gap-2 border-b border-zinc-200 px-4 py-3">
+          <h2 className="text-base font-semibold text-zinc-900">Groups</h2>
+          <span className="text-xs text-zinc-400 tabular-nums">{groups.length}</span>
+        </div>
+        <div className="flex flex-col gap-2 p-3">
           {groups.map((group) => {
             const people = group.memberIds.flatMap((id) => {
               const member = memberById.get(id);
@@ -134,12 +136,11 @@ export function GroupsPanel({
           })}
         </div>
 
-        {/* Under a line when there are groups above it. */}
-        <div className={groups.length > 0 ? "mt-3 border-t border-zinc-200 pt-2" : ""}>
+        <div className="flex justify-start px-3 pb-3">
           <button
             type="button"
             onClick={() => setPanel({ mode: "add" })}
-            className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded py-2 text-sm font-medium text-[var(--team-accent)] transition hover:bg-[var(--team-accent-soft)]"
+            className="flex cursor-pointer items-center gap-1.5 py-1.5 text-sm font-medium text-zinc-900 transition hover:text-zinc-600"
           >
             <Plus className="size-4" />
             New Group

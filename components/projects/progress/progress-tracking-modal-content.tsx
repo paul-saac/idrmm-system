@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   CalendarDays,
@@ -440,22 +440,36 @@ function OverrideHistory({
   logs,
   loggedDates,
   unit,
-  highlight,
+  highlightLatest,
+  highlightEntryDate,
   onDelete,
 }: {
   logs: OverrideLog[];
   /** Days that still have a saved update. */
   loggedDates: readonly string[];
   unit: string | null;
-  highlight: boolean;
+  highlightLatest: boolean;
+  highlightEntryDate?: string;
   onDelete?: (entryDate: string) => void;
 }) {
+  // An actual progress entry is unique per item and day. The append-only
+  // history can contain multiple re-saves for that day, so choose its
+  // newest matching save.
+  const targetIndex = highlightEntryDate
+    ? logs.findIndex((log) => log.entryDate === highlightEntryDate)
+    : highlightLatest
+      ? 0
+      : -1;
+  const targetLog = targetIndex >= 0 ? logs[targetIndex] : null;
+  const targetLogId = targetLog?.id ?? null;
+  const targetNeedsReveal = targetIndex >= HISTORY_PREVIEW;
   const [showAll, setShowAll] = useState(false);
   // Which cards are open for review — the newest already, when the window
   // was opened from a notification about it.
   const [openIds, setOpenIds] = useState<ReadonlySet<number>>(
-    () => new Set(highlight && logs[0] ? [logs[0].id] : [])
+    () => new Set(targetLogId === null ? [] : [targetLogId])
   );
+  const [highlightedId, setHighlightedId] = useState<number | null>(targetLogId);
   function toggle(id: number) {
     setOpenIds((prev) => {
       const next = new Set(prev);
@@ -464,10 +478,16 @@ function OverrideHistory({
       return next;
     });
   }
-  const newestRef = useRef<HTMLLIElement>(null);
+  const targetRef = useRef<HTMLLIElement>(null);
+  useLayoutEffect(() => {
+    if (targetLogId === null) return;
+    targetRef.current?.scrollIntoView({ block: "center", behavior: "instant" });
+  }, [targetLogId]);
   useEffect(() => {
-    if (highlight) newestRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [highlight]);
+    if (targetLogId === null) return;
+    const timeout = window.setTimeout(() => setHighlightedId(null), 2500);
+    return () => window.clearTimeout(timeout);
+  }, [targetLogId]);
 
   const logged = new Set(loggedDates);
   const seenDays = new Set<string>();
@@ -477,7 +497,7 @@ function OverrideHistory({
     seenDays.add(log.entryDate);
     if (log.action === "saved" && logged.has(log.entryDate)) currentIds.add(log.id);
   }
-  const shown = showAll ? logs : logs.slice(0, HISTORY_PREVIEW);
+  const shown = showAll || targetNeedsReveal ? logs : logs.slice(0, HISTORY_PREVIEW);
 
   return (
     <section className="flex flex-col gap-3">
@@ -487,13 +507,13 @@ function OverrideHistory({
       <ol className="flex flex-col">
         {shown.map((log, index) => {
           const current = currentIds.has(log.id);
-          const highlighted = highlight && index === 0;
+          const highlighted = highlightedId === log.id;
           const last = index === shown.length - 1;
-          const open = openIds.has(log.id);
+          const open = openIds.has(log.id) || log.id === targetLogId;
           return (
             <li
               key={log.id}
-              ref={index === 0 ? newestRef : undefined}
+              ref={log.id === targetLogId ? targetRef : undefined}
               className={`relative flex gap-3 ${last ? "" : "pb-5"}`}
             >
               {/* From this marker's bottom edge (its mt-1 + 16px) to the
@@ -603,7 +623,7 @@ function OverrideHistory({
           );
         })}
       </ol>
-      {logs.length > HISTORY_PREVIEW && (
+      {logs.length > HISTORY_PREVIEW && !targetNeedsReveal && (
         <button
           type="button"
           onClick={() => setShowAll((all) => !all)}
@@ -634,6 +654,7 @@ function OverrideHistory({
  * Labor's typed, like equipment and other cost.
  */
 export function ProgressTrackingModalContent({
+  readOnly = false,
   estimatedQuantity,
   unit,
   plannedStartDate,
@@ -645,11 +666,15 @@ export function ProgressTrackingModalContent({
   progressToday,
   materialPrices = [],
   highlightLatest = false,
+  highlightEntryDate,
+  overrideHistory,
   onSave,
   onDeleteOverride,
   loadOverrideHistory,
   onClose,
 }: {
+  /** Equipment records show saved progress and history without editing controls. */
+  readOnly?: boolean;
   estimatedQuantity: number;
   unit: string | null;
   plannedStartDate: string | null;
@@ -667,6 +692,10 @@ export function ProgressTrackingModalContent({
   materialPrices?: { name: string; unit: string | null; unitCost: number }[];
   /** Opened from a notification — highlight its Last override. */
   highlightLatest?: boolean;
+  /** A date selected from the Equipment Cost record. */
+  highlightEntryDate?: string;
+  /** Preloaded project data, so the Log history is visible on first paint. */
+  overrideHistory: OverrideLog[];
   onSave: (input: {
     quantityCompletedToday: number;
     costs: CostAmounts;
@@ -676,8 +705,7 @@ export function ProgressTrackingModalContent({
   /** Deletes a day's override — given for admins and super admins only,
    * who then get its Delete. */
   onDeleteOverride?: (entryDate: string) => Promise<ProgressActionResult>;
-  /** The override history (every save and delete, 0071), loaded when the
-   * window opens. */
+  /** Optional fallback for a future caller that does not preload history. */
   loadOverrideHistory?: () => Promise<OverrideLog[]>;
   onClose: () => void;
 }) {
@@ -697,7 +725,7 @@ export function ProgressTrackingModalContent({
   }
 
   async function handleDeleteOverride() {
-    if (!deleteDate || !onDeleteOverride) return;
+    if (readOnly || !deleteDate || !onDeleteOverride) return;
     setDeletingOverride(true);
     setDeleteOverrideError(null);
     const result = await onDeleteOverride(deleteDate);
@@ -711,8 +739,8 @@ export function ProgressTrackingModalContent({
     onClose();
   }
 
-  // The override history — null until it's loaded.
-  const [history, setHistory] = useState<OverrideLog[] | null>(null);
+  // The override history is already present when this modal opens.
+  const [history, setHistory] = useState<OverrideLog[]>(overrideHistory);
   useEffect(() => {
     if (!loadOverrideHistory) return;
     let active = true;
@@ -914,7 +942,7 @@ export function ProgressTrackingModalContent({
 
   // Same shared function getCostEstimate calls server-side, so this
   // preview always matches what the Gantt chart shows after saving.
-  const breakdown = computeProgressBreakdown({
+  const breakdown = readOnly ? savedStanding : computeProgressBreakdown({
     ...schedule,
     plannedCosts,
     estimatedQuantity,
@@ -962,6 +990,7 @@ export function ProgressTrackingModalContent({
   };
 
   async function handleSave() {
+    if (readOnly) return;
     setError(null);
     if (quantity === null) {
       setError("Quantity completed must be 0 or more.");
@@ -1020,12 +1049,10 @@ export function ProgressTrackingModalContent({
   }
 
   return (
-    // Two columns on a wide screen, each scrolling on its own — the day's
-    // log on the left, its override history on the right, a line between
-    // them top to bottom; on a narrow one, the history under the log and
-    // the whole thing scrolling as one.
-    <div className="compact-text h-full overflow-y-auto lg:grid lg:grid-cols-[minmax(0,1fr)_28rem] lg:overflow-hidden">
-      <div className="flex flex-col gap-6 px-6 py-5 lg:overflow-y-auto">
+    // Equipment records use one scrolling column; editing keeps the
+    // form and history side by side on wide screens.
+    <div className={`compact-text h-full overflow-y-auto ${readOnly ? "" : "lg:grid lg:grid-cols-[minmax(0,1fr)_28rem] lg:overflow-hidden"}`}>
+      <div className={`flex flex-col gap-6 px-6 py-5 ${readOnly ? "" : "lg:overflow-y-auto"}`}>
         {/* Live — follows what's typed below, beside the modal's own title. */}
         {breakdown.scheduleStatus && (
           <ModalHeaderAddon>
@@ -1122,6 +1149,8 @@ export function ProgressTrackingModalContent({
           </section>
         </div>
 
+        {!readOnly && (
+          <>
         <EdgeDivider />
 
         {/* Today's own record — an override of today. Each field's figure
@@ -1201,10 +1230,13 @@ export function ProgressTrackingModalContent({
           </div>
         </section>
 
+          </>
+        )}
+
         {/* Materials used today: each
             line's cost is what's used of it × its unit cost from the
             Material Breakdown, and the day's material cost is their total. */}
-        {hasItemizedMaterials && (
+        {!readOnly && hasItemizedMaterials && (
           <>
             <EdgeDivider />
             <section className="flex flex-col gap-4">
@@ -1419,28 +1451,30 @@ export function ProgressTrackingModalContent({
       {/* The override history — its own column: every save, newest first
           (0071) — or, on a database without that yet, just the last
           override as before. */}
-      <aside className="history-text flex flex-col gap-4 border-t border-zinc-200 px-6 py-5 lg:overflow-y-auto lg:border-t-0 lg:border-l">
-        {history && history.length > 0 ? (
+      <aside className={`history-text flex flex-col gap-4 px-6 ${readOnly ? "pb-5" : "border-t border-zinc-200 py-5 lg:overflow-y-auto lg:border-t-0 lg:border-l"}`}>
+        {history.length > 0 ? (
           <OverrideHistory
+            key={`${highlightLatest ? "latest" : "date"}:${highlightEntryDate ?? ""}`}
             logs={history}
             loggedDates={progressToday.loggedDates}
             unit={unit}
-            highlight={highlightLatest}
-            onDelete={onDeleteOverride ? askToDelete : undefined}
+            highlightLatest={highlightLatest}
+            highlightEntryDate={highlightEntryDate}
+            onDelete={!readOnly && onDeleteOverride ? askToDelete : undefined}
           />
         ) : (
           <section className="flex flex-col gap-3">
             <HistoryHeading />
-            {loadOverrideHistory && history === null ? (
-              <p className="text-sm text-zinc-400">Loading override history…</p>
-            ) : progressToday.latest ? (
+            {progressToday.latest ? (
               <LastOverride
                 latest={progressToday.latest}
                 unit={unit}
                 plannedMaterials={plannedMaterials}
-                highlight={highlightLatest}
+                highlight={
+                  highlightLatest || progressToday.latest.entryDate === highlightEntryDate
+                }
                 onDelete={
-                  onDeleteOverride
+                  !readOnly && onDeleteOverride
                     ? () => askToDelete(progressToday.latest!.entryDate)
                     : undefined
                 }
@@ -1454,7 +1488,7 @@ export function ProgressTrackingModalContent({
 
       {/* Asks before deleting an override (admins only) — a centered
           dialog of its own, above this one. */}
-      {onDeleteOverride && (
+      {!readOnly && onDeleteOverride && (
         <ConfirmDialog
           open={deleteDate !== null}
           title="Delete this override?"
@@ -1471,7 +1505,7 @@ export function ProgressTrackingModalContent({
       )}
 
       {/* Along the window's bottom edge, however long it gets. */}
-      <ModalFooter>
+      {!readOnly && <ModalFooter>
         {error ? (
           <p role="alert" className="mr-auto text-sm text-red-600">
             {error}
@@ -1495,7 +1529,7 @@ export function ProgressTrackingModalContent({
           <Check aria-hidden className="size-4" />
           {pending ? "Saving..." : "Save"}
         </button>
-      </ModalFooter>
+      </ModalFooter>}
     </div>
   );
 }

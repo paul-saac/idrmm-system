@@ -397,11 +397,55 @@ export function TeamBrowser({
       <GroupsPanel groups={memberGroups} members={members} />
 
       <div className="flex min-w-0 flex-col gap-3">
-        <div className="flex h-9 items-center justify-between gap-3">
+        <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-2">
             <h2 className="text-base font-semibold text-zinc-900">All members</h2>
             <span className="text-xs text-zinc-400 tabular-nums">{members.length}</span>
           </div>
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            {selectedMembers.length > 0 && (
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-medium text-zinc-900">{selectedMembers.length} selected</span>
+                <button type="button" onClick={() => setSelected(new Set())} className="cursor-pointer text-sm font-medium text-zinc-500 transition hover:text-zinc-900">
+                  Clear
+                </button>
+                {memberGroups.length > 0 && (
+                  <div className="relative">
+                    <select value="" onChange={(e) => handleAddToGroup(Number(e.target.value))} aria-label="Add to group" className={SELECT}>
+                      <option value="" disabled>Add to Group</option>
+                      {memberGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
+                  </div>
+                )}
+                {canManageMembers && deletableSelected.length > 0 && (
+                  <button type="button" onClick={() => handleDelete(deletableSelected)} disabled={deleting} className={BULK_DELETE_BUTTON}>
+                    <Trash2 className="size-4" />
+                    Delete
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-400" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search name, role, number or company"
+                aria-label="Search members"
+                className="w-full rounded-md border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+              />
+            </div>
+            <FilterSelect
+              label="Availability"
+              value={availabilityFilter}
+              options={[
+                { value: "available", label: "Available" },
+                { value: "assigned", label: "Assigned" },
+              ]}
+              onChange={setAvailabilityFilter}
+            />
           {canManageMembers && (
             <button
               type="button"
@@ -412,10 +456,11 @@ export function TeamBrowser({
               Add Member
             </button>
           )}
+          </div>
         </div>
 
         <section className="min-w-0 rounded-lg border border-zinc-200 bg-white">
-          {/* The open tab underlined in black, its count beside it; the
+          {/* The open tab underlined in black; the
               gray line under them all an inset shadow, so a narrow screen
               can still scroll the tabs sideways. */}
           <div className="flex gap-6 overflow-x-auto px-6 pt-4 shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
@@ -434,93 +479,12 @@ export function TeamBrowser({
                   }`}
                 >
                   {group.label}
-                  {active && (
-                    <span className="rounded bg-[var(--team-accent-soft)] px-1.5 py-0.5 text-xs font-semibold text-[var(--team-accent)] tabular-nums">
-                      {group.members.length}
-                    </span>
-                  )}
                 </button>
               );
             })}
-          </div>
-
-          {/* Search and the availability filter; on the right, how many
-              members the tab lists — or, with rows checked, what to do with
-              them. */}
-          <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 px-6 py-3">
-            <div className="relative w-full max-w-xs">
-              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-400" />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search name, role, number or company"
-                className="w-full rounded-md border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-              />
-            </div>
-
-            <FilterSelect
-              label="Availability"
-              value={availabilityFilter}
-              options={[
-                { value: "available", label: "Available" },
-                { value: "assigned", label: "Assigned" },
-              ]}
-              onChange={setAvailabilityFilter}
-            />
-
-            <div className="ml-auto flex items-center gap-3">
-              {selectedMembers.length > 0 ? (
-                <>
-                  <span className="text-sm font-medium text-zinc-900">
-                    {selectedMembers.length} selected
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setSelected(new Set())}
-                    className="cursor-pointer text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
-                  >
-                    Clear
-                  </button>
-                  {memberGroups.length > 0 && (
-                    <div className="relative">
-                      {/* Picking a group adds the checked members to it. */}
-                      <select
-                        value=""
-                        onChange={(e) => handleAddToGroup(Number(e.target.value))}
-                        aria-label="Add to group"
-                        className={SELECT}
-                      >
-                        <option value="" disabled>
-                          Add to Group
-                        </option>
-                        {memberGroups.map((group) => (
-                          <option key={group.id} value={group.id}>
-                            {group.name}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
-                    </div>
-                  )}
-                  {canManageMembers && deletableSelected.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(deletableSelected)}
-                      disabled={deleting}
-                      className={BULK_DELETE_BUTTON}
-                    >
-                      <Trash2 className="size-4" />
-                      Delete
-                    </button>
-                  )}
-                </>
-              ) : (
-                <span className="text-sm text-zinc-500">
-                  {total} {total === 1 ? "member" : "members"}
-                </span>
-              )}
-            </div>
+            <span className="ml-auto shrink-0 pb-3 text-sm text-zinc-500">
+              {total} {total === 1 ? "member" : "members"}
+            </span>
           </div>
 
           {deleteError && !panel && (

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import type { ProgressExpense } from "@/lib/expenses/progress";
 
 export type EquipmentStatus = "available" | "assigned" | "maintenance" | "retired";
 
@@ -164,20 +165,33 @@ export type ProgressEquipmentCost = {
   savedByName: string | null;
 };
 
-/**
- * Every equipment cost typed into the progress window (each task's
- * task_progress_entries, and a task-less phase's category_progress_entries
- * — only the days with one) — newest day first, then newest save. The
- * Equipment tab's cost log and recent activity.
+/** Load all pages so long projects do not silently lose expenses at the API row limit. */
+async function readExpensePages<T>(fetchPage: (from: number, to: number) => PromiseLike<{
+  data: T[] | null;
+  error: { message: string } | null;
+}>): Promise<T[]> {
+  const rows: T[] = [];
+  const pageSize = 500;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await fetchPage(from, from + pageSize - 1);
+    if (error) throw new Error(`Unable to load progress expenses: ${error.message}`);
+    rows.push(...(data ?? []));
+    if (!data || data.length < pageSize) return rows;
+  }
+}
+
+/** Current saved costs in all four categories, shared by Expenses and Equipment.
+ * Never sum the append-only audit history: re-saving a day replaces its expense.
+ * material_cost already includes the priced material usage on that entry.
  */
-export async function listProgressEquipmentCosts(
+export async function listProgressExpenses(
   projectId: number
-): Promise<ProgressEquipmentCost[]> {
+): Promise<ProgressExpense[]> {
   const supabase = await createClient();
 
-  const [{ data: tasks }, { data: categories }] = await Promise.all([
-    supabase.from("estimate_tasks").select("id, task_name, category_id").eq("project_id", projectId),
-    supabase.from("estimate_categories").select("id, category_name").eq("project_id", projectId),
+  const [tasks, categories] = await Promise.all([
+    readExpensePages((from, to) => supabase.from("estimate_tasks").select("id, task_name, category_id").eq("project_id", projectId).order("id").range(from, to)),
+    readExpensePages((from, to) => supabase.from("estimate_categories").select("id, category_name").eq("project_id", projectId).order("id").range(from, to)),
   ]);
   const categoryName = new Map((categories ?? []).map((row) => [row.id, row.category_name]));
   const taskName = new Map(
@@ -188,42 +202,42 @@ export async function listProgressEquipmentCosts(
   );
 
   // "*" so a DB missing a newer column still loads.
-  const [{ data: taskEntries }, { data: categoryEntries }] = await Promise.all([
+  const [taskEntries, categoryEntries] = await Promise.all([
     taskName.size > 0
-      ? supabase.from("task_progress_entries").select("*").in("task_id", [...taskName.keys()])
-      : Promise.resolve({ data: [] }),
+      ? readExpensePages((from, to) => supabase.from("task_progress_entries").select("*").in("task_id", [...taskName.keys()]).order("id").range(from, to))
+      : Promise.resolve([]),
     categoryName.size > 0
-      ? supabase
+      ? readExpensePages((from, to) => supabase
           .from("category_progress_entries")
           .select("*")
-          .in("category_id", [...categoryName.keys()])
-      : Promise.resolve({ data: [] }),
+          .in("category_id", [...categoryName.keys()]).order("id").range(from, to))
+      : Promise.resolve([]),
   ]);
 
-  const costs: (ProgressEquipmentCost & { createdAt: string; recordedBy: string | null })[] = [];
+  const costs: (ProgressExpense & { createdAt: string; recordedBy: string | null })[] = [];
   for (const row of taskEntries ?? []) {
-    const amount = Number(row.equipment_cost) || 0;
-    if (amount <= 0) continue;
+    const amounts = { material: Number(row.material_cost) || 0, equipment: Number(row.equipment_cost) || 0, labor: Number(row.labor_cost) || 0, other: Number(row.other_cost) || 0 };
+    if (!Object.values(amounts).some((amount) => amount > 0)) continue;
     costs.push({
       id: `task-${row.id}`,
       entryDate: row.entry_date,
       itemName: taskName.get(row.task_id) ?? "",
       itemKey: `task-${row.task_id}`,
-      amount,
+      costs: amounts,
       savedByName: null,
       createdAt: row.created_at,
       recordedBy: row.recorded_by ?? null,
     });
   }
   for (const row of categoryEntries ?? []) {
-    const amount = Number(row.equipment_cost) || 0;
-    if (amount <= 0) continue;
+    const amounts = { material: Number(row.material_cost) || 0, equipment: Number(row.equipment_cost) || 0, labor: Number(row.labor_cost) || 0, other: Number(row.other_cost) || 0 };
+    if (!Object.values(amounts).some((amount) => amount > 0)) continue;
     costs.push({
       id: `category-${row.id}`,
       entryDate: row.entry_date,
       itemName: categoryName.get(row.category_id) ?? "",
       itemKey: `category-${row.category_id}`,
-      amount,
+      costs: amounts,
       savedByName: null,
       createdAt: row.created_at,
       recordedBy: row.recorded_by ?? null,

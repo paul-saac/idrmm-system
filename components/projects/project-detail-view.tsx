@@ -17,6 +17,7 @@ import {
   type ImportBomStep,
 } from "@/components/projects/cost-estimate/import-bom-modal-content";
 import { ProgressView } from "@/components/projects/progress/progress-view";
+import { ProgressTrackingModal, type ProgressModalTarget } from "@/components/projects/progress/progress-tracking-modal";
 // gantt-task-react renders its timeline as an SVG sized from
 // client-measured container layout, computed post-mount — loaded with
 // ssr:false so that mismatch never reaches hydration at all, instead of
@@ -44,11 +45,8 @@ import {
   EquipmentRecordView,
   type EquipmentRecordList,
 } from "@/components/projects/equipment/equipment-record-view";
-import { ExpenseOverviewView } from "@/components/projects/expenses/expense-overview-view";
-import { LaborExpensesView } from "@/components/projects/expenses/labor-expenses-view";
-import { MaterialExpensesView } from "@/components/projects/expenses/material-expenses-view";
-import { EquipmentExpensesView } from "@/components/projects/expenses/equipment-expenses-view";
-import { OtherExpensesView } from "@/components/projects/expenses/other-expenses-view";
+import { ProgressExpensesView } from "@/components/projects/expenses/progress-expenses-view";
+import type { ProgressExpense } from "@/lib/expenses/progress";
 import type {
   MaterialsOverviewCounts,
   ProgressMaterialUsage,
@@ -59,13 +57,6 @@ import type { MaterialRequestDetail } from "@/lib/material-requests/data";
 import type { EquipmentRequestDetail } from "@/lib/equipment-requests/data";
 import type { EquipmentAssignmentRow, ProgressEquipmentCost } from "@/lib/equipment/data";
 import type { EquipmentCostRecord } from "@/lib/equipment/records";
-import type {
-  ExpenseOverview,
-  LaborExpenseGroup,
-  MaterialExpenseGroup,
-  EquipmentExpenseGroup,
-  OtherExpenseGroup,
-} from "@/lib/expenses/data";
 import { deleteProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
@@ -81,6 +72,7 @@ import type {
   CategoryWorkerAssignments,
 } from "@/lib/workers/data";
 import type { TaskProgressToday } from "@/lib/task-progress/data";
+import type { ProjectOverrideHistory } from "@/lib/progress-logs/types";
 import { sumCosts } from "@/lib/task-progress/calculate";
 import type { ProjectEvent } from "@/lib/project-events/types";
 
@@ -111,14 +103,6 @@ const PROGRESS_SUB_TABS = [
 ] as const;
 type ProgressSubTab = (typeof PROGRESS_SUB_TABS)[number]["value"];
 
-const EXPENSES_SUB_TABS = [
-  { value: "overview", label: "Expense Overview" },
-  { value: "labor", label: "Labor Expenses" },
-  { value: "material", label: "Material Expenses" },
-  { value: "equipment", label: "Equipment Expenses" },
-  { value: "other", label: "Other Expenses" },
-] as const;
-type ExpensesSubTab = (typeof EXPENSES_SUB_TABS)[number]["value"];
 
 const deleteInitialState: ProjectActionState = {};
 
@@ -277,14 +261,11 @@ export function ProjectDetailView({
   fulfillableMaterialRequests,
   equipmentRequests,
   fulfillableEquipmentRequests,
-  expenseOverview,
-  laborExpenses,
-  materialExpenses,
-  equipmentExpenses,
-  otherExpenses,
+  progressExpenses,
   currentUserName,
   projectEquipmentAssignments,
   equipmentCostRecords,
+  equipmentCostLogs,
   recentEquipmentCosts,
   ganttCanUndo,
   ganttCanRedo,
@@ -295,6 +276,7 @@ export function ProjectDetailView({
   categoryWorkerAssignments,
   taskProgressToday,
   categoryProgressToday,
+  overrideHistory,
   events,
 }: {
   project: ProjectRow;
@@ -327,18 +309,15 @@ export function ProjectDetailView({
   /** Requests that can still receive an acquisition — for the Add Daily
    * Log modal's Equipment Acquisition "Select Equipment Request" picker. */
   fulfillableEquipmentRequests: EquipmentRequestDetail[];
-  /** Roll-up of the four expense ledgers below, plus the Cost Estimate's
-   * planned totals — see summarizeExpenses in lib/expenses/data.ts. */
-  expenseOverview: ExpenseOverview;
-  laborExpenses: LaborExpenseGroup[];
-  materialExpenses: MaterialExpenseGroup[];
-  equipmentExpenses: EquipmentExpenseGroup[];
-  otherExpenses: OtherExpenseGroup[];
+  progressExpenses: ProgressExpense[];
   currentUserName: string;
   projectEquipmentAssignments: EquipmentAssignmentRow[];
   /** Every task's equipment cost — the Equipment record's Equipment cost
    * view (buildEquipmentCostRecords). */
   equipmentCostRecords: EquipmentCostRecord[];
+  /** Every non-zero equipment cost saved in a Progress Tracking Override,
+   * newest first. The Equipment record lists these as individual rows. */
+  equipmentCostLogs: ProgressEquipmentCost[];
   /** The newest equipment costs typed into progress updates — the
    * Equipment overview's recent activity. */
   recentEquipmentCosts: ProgressEquipmentCost[];
@@ -369,6 +348,8 @@ export function ProjectDetailView({
    * Tracking Override — see lib/category-progress/data.ts, fetched
    * alongside costEstimate/progress in page.tsx. */
   categoryProgressToday: Record<number, TaskProgressToday>;
+  /** All override histories, preloaded so the Gantt modal has no loading state. */
+  overrideHistory: ProjectOverrideHistory;
   /** The project's calendar events — see lib/project-events/data.ts. */
   events: ProjectEvent[];
 }) {
@@ -393,18 +374,19 @@ export function ProjectDetailView({
     : PROGRESS_SUB_TABS.filter((tab) => tab.value !== "daily-logs");
 
   const [activeTab, setActiveTab] = useState<MainTab>(initialTab);
+  // Shared progress URLs still land on the Gantt chart in Overview.
+  // Equipment-row clicks open the shared modal directly below.
+  const progressTarget = searchParams.get("progress");
+  const [handledProgressTarget, setHandledProgressTarget] = useState<string | null>(null);
+  if (progressTarget !== handledProgressTarget) {
+    setHandledProgressTarget(progressTarget);
+    if (progressTarget) setActiveTab("overview");
+  }
   const [activeProgressSubTab, setActiveProgressSubTab] =
     useState<ProgressSubTab>(
       initialTab === "progress" &&
         progressSubTabs.some((tab) => tab.value === subtabParam)
         ? (subtabParam as ProgressSubTab)
-        : "overview"
-    );
-  const [activeExpensesSubTab, setActiveExpensesSubTab] =
-    useState<ExpensesSubTab>(
-      initialTab === "expenses" &&
-        EXPENSES_SUB_TABS.some((tab) => tab.value === subtabParam)
-        ? (subtabParam as ExpensesSubTab)
         : "overview"
     );
   const [editOpen, setEditOpen] = useState(false);
@@ -530,6 +512,29 @@ export function ProjectDetailView({
       equipmentRecordRef.current;
     if (pageScrollRef.current && target) scrollAreaTo(pageScrollRef.current, target, "smooth");
   }
+
+  const [equipmentProgressTarget, setEquipmentProgressTarget] =
+    useState<ProgressModalTarget | null>(null);
+
+  function openEquipmentProgressLog(itemKey: string, entryDate: string) {
+    // Open the same modal as Gantt directly, without a route round trip
+    // or waiting for the chart to mount. Its history is already loaded.
+    const [kind, rawId] = itemKey.split("-");
+    const id = Number(rawId);
+    if (kind === "task") {
+      const task = costEstimate.categories.flatMap((category) => category.tasks)
+        .find((task) => task.id === id);
+      if (task && !task.isMilestone) {
+        setEquipmentProgressTarget({ kind, task, highlightEntryDate: entryDate });
+      }
+    } else if (kind === "category") {
+      const category = costEstimate.categories.find((category) => category.id === id);
+      if (category && category.tasks.length === 0 && !category.isMilestone) {
+        setEquipmentProgressTarget({ kind, category, highlightEntryDate: entryDate });
+      }
+    }
+  }
+
   // Opens the shared "Import with AI" modal from the Material Breakdown
   // modal's own footer (see MaterialBreakdownModalContent) — lifted up
   // here rather than owned by CostEstimateView so the same modal
@@ -673,14 +678,6 @@ export function ProjectDetailView({
           />
         )}
 
-        {activeTab === "expenses" && (
-          <SubTabsRow
-            tabs={EXPENSES_SUB_TABS}
-            active={activeExpensesSubTab}
-            onChange={setActiveExpensesSubTab}
-            toolbarRef={setToolbarSlotEl}
-          />
-        )}
 
         {activeTab === "progress" ? (
           activeProgressSubTab === "overview" ? (
@@ -752,11 +749,12 @@ export function ProjectDetailView({
             <div ref={equipmentRecordRef} className="scroll-mt-16">
               <EquipmentRecordView
                 projectId={project.id}
-                costRecords={equipmentCostRecords}
+                costLogs={equipmentCostLogs}
                 assignments={projectEquipmentAssignments}
                 requests={equipmentRequests}
                 view={equipmentRecordList}
                 onViewChange={setEquipmentRecordList}
+                onOpenProgressLog={openEquipmentProgressLog}
                 openRequestIds={openEquipmentRequestIds}
                 onToggleRequest={toggleEquipmentRequest}
                 currentUserName={currentUserName}
@@ -764,23 +762,11 @@ export function ProjectDetailView({
             </div>
           </div>
         ) : activeTab === "expenses" ? (
-          activeExpensesSubTab === "overview" ? (
-            <ExpenseOverviewView overview={expenseOverview} />
-          ) : activeExpensesSubTab === "labor" ? (
-            <LaborExpensesView projectId={project.id} groups={laborExpenses} />
-          ) : activeExpensesSubTab === "material" ? (
-            <MaterialExpensesView
-              projectId={project.id}
-              groups={materialExpenses}
-            />
-          ) : activeExpensesSubTab === "equipment" ? (
-            <EquipmentExpensesView
-              projectId={project.id}
-              groups={equipmentExpenses}
-            />
-          ) : (
-            <OtherExpensesView projectId={project.id} groups={otherExpenses} />
-          )
+          <ProgressExpensesView
+            entries={progressExpenses}
+            planned={costEstimate.summary.totalsByColumn}
+            onOpenProgressLog={openEquipmentProgressLog}
+          />
         ) : (
           // Inset in the page's padding on the gray content area: the
           // Cost overview card, then the Gantt Chart's own section.
@@ -877,6 +863,7 @@ export function ProjectDetailView({
               categoryWorkerAssignments={categoryWorkerAssignments}
               taskProgressToday={taskProgressToday}
               categoryProgressToday={categoryProgressToday}
+              overrideHistory={overrideHistory}
               events={events}
               onOpenMaterialBreakdown={openMaterialBreakdown}
               onImportBom={() => {
@@ -902,6 +889,19 @@ export function ProjectDetailView({
         </Modal>
         </div>
       </main>
+
+      <ProgressTrackingModal
+        target={equipmentProgressTarget}
+        readOnly
+        projectId={project.id}
+        categories={costEstimate.categories}
+        workingDays={project.workingDays}
+        holidays={project.holidays}
+        taskProgressToday={taskProgressToday}
+        categoryProgressToday={categoryProgressToday}
+        overrideHistory={overrideHistory}
+        onClose={() => setEquipmentProgressTarget(null)}
+      />
 
       {isAdmin && (
         <>
