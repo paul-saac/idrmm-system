@@ -45,6 +45,8 @@ const SIZE_CLASS = {
   // A short question and its two buttons (ConfirmDialog).
   small: "max-w-md",
   default: "max-w-2xl",
+  // A table-based form that needs a little more room than the default.
+  medium: "max-w-3xl",
   // A form beside a side column (the progress window and its history).
   wide: "max-w-5xl",
   large: "max-w-6xl",

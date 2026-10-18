@@ -617,6 +617,7 @@ export function CostEstimateView({
         open={laborBreakdownOpen}
         onClose={() => setLaborBreakdownOpen(false)}
         title="Labor Breakdown"
+        size="medium"
       >
         <LaborBreakdownModalContent
           projectId={projectId}

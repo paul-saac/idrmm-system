@@ -1830,23 +1830,33 @@ export function GanttChartView({
   useEffect(() => {
     const el = chartOuterRef.current;
     if (!el) return;
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let measured = false;
+    let committedWidth = 0;
     const observer = new ResizeObserver((entries) => {
       const newWidth = entries[0].contentRect.width;
-      // A functional update, comparing against the *previous* width
-      // rather than always setting the newly-observed one — cheap
-      // insurance against any sub-pixel layout noise feeding back
-      // through effectiveColumnWidth into a further tiny width change:
-      // any change under 2px is ignored outright, since
-      // effectiveColumnWidth's own Math.floor(chartAreaWidth /
-      // unitCount) already can't possibly react to a sub-2px difference
-      // in chartAreaWidth once there's more than a couple of date
-      // columns, the normal case.
-      setContainerWidth((prev) =>
-        Math.abs(prev - newWidth) < 2 ? prev : newWidth
-      );
+      // The hover sidebar animates its width for 300ms. Rendering the
+      // entire SVG/task list for every intermediate width blocks that
+      // animation. Measure immediately on mount, then commit only after
+      // resizing settles (also handles window resize and hover reversal).
+      clearTimeout(resizeTimer);
+      if (measured && Math.abs(committedWidth - newWidth) < 2) return;
+      const commitWidth = () => {
+        committedWidth = newWidth;
+        setContainerWidth((prev) => Math.abs(prev - newWidth) < 2 ? prev : newWidth);
+      };
+      if (!measured) {
+        measured = true;
+        commitWidth();
+      } else {
+        resizeTimer = setTimeout(commitWidth, 120);
+      }
     });
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      clearTimeout(resizeTimer);
+      observer.disconnect();
+    };
   }, []);
 
   const effectiveColumnWidth = useMemo(() => {

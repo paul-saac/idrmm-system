@@ -2,6 +2,7 @@
 
 import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Calculator } from "lucide-react";
 import { updateProjectDefaultLaborCostPercent } from "@/lib/projects/actions";
 import {
   applyLaborRateProjectWide,
@@ -15,6 +16,9 @@ import {
   GroupLabel,
   MAIN_TASK_ROW,
   STICKY_FOOTER,
+  SUBTASK_NAME_CELL,
+  TREE_CELL,
+  TreeLine,
 } from "@/components/projects/cost-estimate/breakdown-table-shared";
 
 function formatCurrency(amount: number | null | undefined) {
@@ -60,11 +64,6 @@ function taskLaborPercent(task: CostTask, projectBase: number) {
 function categoryLaborPercent(category: CostCategory, projectBase: number) {
   return projectBase > 0 ? (category.categoryLaborEstimate / projectBase) * 100 : 0;
 }
-
-// A subtask's dark left accent, as an inset shadow rather than a border:
-// on the table's own left edge, a collapsed border makes the whole first
-// column reserve its width, leaving a gap beside every other row.
-const SUBTASK_NAME_CELL = `${DIVIDER} px-4 shadow-[inset_3px_0_0_var(--color-zinc-900)]`;
 
 // Never hoverable — Amount is always computed from Labor Percentage,
 // never itself typed into (unlike Material Breakdown's own Amount cell).
@@ -308,39 +307,48 @@ export function LaborBreakdownModalContent({
 
   return (
     <div className="flex min-h-full flex-col gap-5">
-      <div className="flex items-center justify-end gap-2">
-        <label
-          htmlFor="defaultLaborRatePercent"
-          className="text-sm font-medium text-zinc-700"
-        >
-          Labor Rate %
-        </label>
-        <input
-          id="defaultLaborRatePercent"
-          type="number"
-          min={0}
-          max={100}
-          step="0.01"
-          value={ratePercentInput}
-          onChange={(e) => {
-            setRatePercentInput(e.target.value);
-            setRateDirty(true);
-          }}
-          placeholder="—"
-          className="w-20 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-        />
+      <div className="flex flex-wrap items-center gap-4 rounded border border-sky-200 bg-sky-50 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-3 text-sm text-slate-500">
+          <Calculator aria-hidden className="size-4 shrink-0 text-slate-500" />
+          <span>Task rate × estimate = labor amount</span>
+        </div>
+        <div className="ml-auto flex items-center gap-3">
+          <label
+            htmlFor="defaultLaborRatePercent"
+            className="text-sm font-semibold text-slate-700"
+          >
+            Labor Rate
+          </label>
+          <div className="relative">
+            <input
+              id="defaultLaborRatePercent"
+              type="number"
+              min={0}
+              max={100}
+              step="0.01"
+              value={ratePercentInput}
+              onChange={(e) => {
+                setRatePercentInput(e.target.value);
+                setRateDirty(true);
+              }}
+              className="w-24 rounded border border-slate-300 bg-white py-2 pr-7 pl-2 text-right text-sm text-slate-700 outline-none [appearance:textfield] focus:border-slate-400 focus:ring-2 focus:ring-slate-200 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <span aria-hidden className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-sm text-slate-500">%</span>
+          </div>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
         <table className="w-full table-fixed text-left text-xs">
           <colgroup>
+            <col className="w-9" />
             <col />
             <col className="w-36" />
             <col className="w-32" />
           </colgroup>
           <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
             <tr>
-              <th className="border-r border-b border-zinc-200 px-4 py-2.5">Task</th>
+              <th colSpan={2} className="border-r border-b border-zinc-200 px-4 py-2.5">Task</th>
               <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">
                 Labor Percentage
               </th>
@@ -359,7 +367,7 @@ export function LaborBreakdownModalContent({
                   <tr className={MAIN_TASK_ROW}>
                     {/* With subtasks, its name spans Labor Percentage too —
                         its Amount is just their subtotal. */}
-                    <td colSpan={hasTasks ? 2 : 1} className={`${DIVIDER} px-4`}>
+                    <td colSpan={hasTasks ? 3 : 2} className={`${DIVIDER} px-4`}>
                       <GroupLabel label={category.name} />
                     </td>
                     {!hasTasks && (
@@ -376,8 +384,11 @@ export function LaborBreakdownModalContent({
                     )}
                     <td className={AMOUNT_CELL}>{formatCurrency(categoryTotal)}</td>
                   </tr>
-                  {tasks.map((task) => (
+                  {tasks.map((task, taskIndex) => (
                     <tr key={task.id} className={`${GROUP_ROW} bg-white`}>
+                      <td className={TREE_CELL}>
+                        <TreeLine branch end={taskIndex === tasks.length - 1} />
+                      </td>
                       <td className={SUBTASK_NAME_CELL}>
                         <GroupLabel label={task.name} />
                       </td>
