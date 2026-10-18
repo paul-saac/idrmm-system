@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ClipboardCheck,
   ClipboardList,
   HistoryIcon,
   Package,
@@ -407,7 +408,7 @@ function EmptyHistory() {
         </g>
         <circle className="fill-zinc-300" cx="142" cy="22" r="2" />
       </svg>
-      <p className="mt-3 text-sm font-semibold text-zinc-700">No overrides yet</p>
+      <p className="mt-3 text-sm font-semibold text-zinc-700">No logs yet</p>
       <p className="mt-1 max-w-60 text-xs text-zinc-500">
         Each saved daily log shows up here, with who saved it and when.
       </p>
@@ -421,17 +422,17 @@ function HistoryHeading() {
   return (
     <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-900">
       <HistoryIcon aria-hidden className="size-4 text-zinc-400" />
-      Override history
+      Log history
     </h3>
   );
 }
 
 /**
- * The override history — every save of this task's (or phase's) Daily
+ * The log history — every save of this task's (or phase's) Daily
  * Progress Updates, newest first: who, exactly when, and what was
  * entered. Deleted overrides aren't in it (see listOverrideLogs). The
  * version each day counts now (its newest save, while the day still has
- * its update) is marked Current — and is the one an admin can delete.
+ * its update) gets the orange check — and is the one an admin can delete.
  * The newest entry is highlighted (and scrolled to) when the window was
  * opened from a notification.
  */
@@ -533,11 +534,6 @@ function OverrideHistory({
                   <span className="text-xs text-zinc-500 tabular-nums">
                     {formatDateTime(log.createdAt)}
                   </span>
-                  {current && (
-                    <span className="rounded-sm bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                      Current
-                    </span>
-                  )}
                   {current && onDelete && (
                     <button
                       type="button"
@@ -753,6 +749,21 @@ export function ProgressTrackingModalContent({
     })
   );
 
+  // Where the task stands as saved, before anything typed here — every
+  // saved log (today's too, once saved), each day without one counting its
+  // planned share: the standing the Gantt chart shows. The Actual box reads
+  // it, so it holds still while today's log is typed.
+  const [savedStanding] = useState(() =>
+    computeProgressBreakdown({
+      ...schedule,
+      plannedCosts,
+      estimatedQuantity,
+      plannedMaterials,
+      anchor: progressToday,
+      today: new Date(),
+    })
+  );
+
   // With Material Breakdown lines (ones with a planned quantity), the
   // day's material cost is just the Materials used today table's total —
   // each line's quantity × its unit cost, the way the server prices it on
@@ -934,6 +945,22 @@ export function ProgressTrackingModalContent({
     },
   };
 
+  // The Actual box — the task as saved (savedStanding), not what's typed
+  // below; the figures under the inputs follow the typing instead. Its
+  // material priced the way the plan's is: with Material Breakdown lines,
+  // what's been used of them, plus what's gone on materials not on them.
+  const actualToDate = {
+    quantity: savedStanding.quantityToDate,
+    percent: savedStanding.percentComplete,
+    costs: {
+      ...savedStanding.costsToDate,
+      material: hasItemizedMaterials
+        ? itemizedMaterialCost(plannedMaterials, savedStanding.materialUsageToDate) +
+          (progressToday.cumulativeUnplannedMaterialCost ?? 0)
+        : savedStanding.costsToDate.material,
+    },
+  };
+
   async function handleSave() {
     setError(null);
     if (quantity === null) {
@@ -1010,49 +1037,90 @@ export function ProgressTrackingModalContent({
           </ModalHeaderAddon>
         )}
 
-        {/* The plan so far — each part's planned amount through today,
-            from automatic progress, to compare today's log (and the days
-            before it) against; Expected progress is the same share. Hidden
-            until the task has a Start and End to plan from. */}
-        {breakdown.totalWorkingDays !== null && (
-          <section aria-label="Planned so far" className="rounded-md border border-sky-200 bg-sky-50 p-4">
+        {/* The plan so far over where the task actually stands — the same
+            parts in the same columns, to read one against the other. */}
+        <div className="flex flex-col gap-3">
+          {/* The plan so far — each part's planned amount through today,
+              from automatic progress, to compare today's log (and the days
+              before it) against; Expected progress is the same share.
+              Hidden until the task has a Start and End to plan from. */}
+          {breakdown.totalWorkingDays !== null && (
+            <section aria-label="Planned so far" className="rounded-md border border-sky-200 bg-sky-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <span className="flex items-center gap-2">
+                  <ClipboardList aria-hidden className="size-4 text-sky-700" />
+                  <span
+                    title="The plan so far, through today — from automatic progress."
+                    className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                  >
+                    Planned
+                  </span>
+                </span>
+                <p className="text-xs text-zinc-500 tabular-nums">
+                  Expected progress: {(breakdown.timePercent ?? 0).toFixed(2)}%
+                </p>
+              </div>
+              {plannedShare === 0 ? (
+                <p className="mt-3 text-sm text-zinc-500">No work is planned yet — it hasn&apos;t started.</p>
+              ) : (
+                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
+                  <div className="min-w-0">
+                    <dt className="truncate text-xs text-zinc-500">Quantity</dt>
+                    <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
+                      {formatQuantity(plannedToDate.quantity)}
+                      {unit ? ` ${unit}` : ""}
+                    </dd>
+                  </div>
+                  {COST_COMPONENTS.map((component) => (
+                    <div key={component} className="min-w-0">
+                      <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
+                      <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
+                        {formatPeso(plannedToDate.costs[component])}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </section>
+          )}
+
+          {/* Where it actually stands, as saved — every saved log, each day
+              without one at its planned share; Actual progress is its
+              percent complete. Still while today's log is typed below. */}
+          <section aria-label="Actual so far" className="rounded-md border border-orange-200 bg-orange-50 p-4">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <span className="flex items-center gap-2">
-                <ClipboardList aria-hidden className="size-4 text-sky-700" />
+                <ClipboardCheck aria-hidden className="size-4 text-orange-600" />
                 <span
-                  title="The plan so far, through today — from automatic progress."
-                  className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                  title="Where it stands so far, through today — every saved log, each day without one at its planned share."
+                  className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 ring-1 ring-orange-200"
                 >
-                  Planned
+                  Actual
                 </span>
               </span>
               <p className="text-xs text-zinc-500 tabular-nums">
-                Expected progress: {(breakdown.timePercent ?? 0).toFixed(2)}%
+                Actual progress: {actualToDate.percent.toFixed(2)}%
               </p>
             </div>
-            {plannedShare === 0 ? (
-              <p className="mt-3 text-sm text-zinc-500">No work is planned yet — it hasn&apos;t started.</p>
-            ) : (
-              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
-                <div className="min-w-0">
-                  <dt className="truncate text-xs text-zinc-500">Quantity</dt>
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
+              <div className="min-w-0">
+                <dt className="truncate text-xs text-zinc-500">Quantity</dt>
+                <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
+                  {formatQuantity(actualToDate.quantity)}
+                  {unit ? ` ${unit}` : ""}
+                </dd>
+              </div>
+              {COST_COMPONENTS.map((component) => (
+                <div key={component} className="min-w-0">
+                  <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
                   <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
-                    {formatQuantity(plannedToDate.quantity)}
-                    {unit ? ` ${unit}` : ""}
+                    {formatPeso(actualToDate.costs[component])}
                   </dd>
                 </div>
-                {COST_COMPONENTS.map((component) => (
-                  <div key={component} className="min-w-0">
-                    <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
-                    <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
-                      {formatPeso(plannedToDate.costs[component])}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            )}
+              ))}
+            </dl>
           </section>
-        )}
+        </div>
 
         <EdgeDivider />
 

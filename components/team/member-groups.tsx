@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Users } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import {
   Checkbox,
@@ -28,10 +28,10 @@ type Panel =
   | { mode: "edit"; groupId: number };
 
 /**
- * The Team page's left side: "All members" — the members' card beside
- * it, the page's one view — then its groups, crews like "Mason Crew A"
- * made by admins, super admins and project managers, as cards one under
- * another, and New Group under them. A card opens its group to view
+ * The Team page's left side, a box headed Groups: its groups, crews like
+ * "Mason Crew A" made by admins, super admins and project managers, as
+ * cards one under another, and New Group under them. A card opens its
+ * group to view
  * (description, members by section), its pencil straight to the group's
  * form; editing and deleting are also in the view's ⋮ menu. Someone can
  * be in any number of groups, and the Gantt chart's Assign picker can put
@@ -69,20 +69,11 @@ export function GroupsPanel({
   }
 
   return (
+    // Level with the "All members" heading beside it — the box's top with
+    // that heading's row, its pt-1.5 putting "Groups" in line with it.
     <div className="min-w-0">
-      <aside className="flex flex-col rounded-lg border border-zinc-200 bg-white p-3">
-        <div className="flex items-center gap-2.5 rounded-md bg-[var(--team-accent-soft)] px-3 py-2.5 text-sm font-semibold text-[var(--team-accent)]">
-          <Users aria-hidden className="size-4 shrink-0" />
-          All members
-        </div>
-
-        <div className="mt-5 mb-2 flex items-center justify-between px-1">
-          <span className="text-[11px] font-semibold tracking-wider text-zinc-400 uppercase">
-            Team groups
-          </span>
-          <span className="text-xs text-zinc-400 tabular-nums">{groups.length}</span>
-        </div>
-
+      <aside className="flex flex-col rounded-lg border border-zinc-200 bg-white px-3 pt-1.5 pb-3">
+        <h2 className="px-1 pb-3 text-base font-semibold text-zinc-900">Groups</h2>
         <div className="flex flex-col gap-2">
           {groups.map((group) => {
             const people = group.memberIds.flatMap((id) => {
@@ -143,7 +134,8 @@ export function GroupsPanel({
           })}
         </div>
 
-        <div className="mt-3 border-t border-zinc-200 pt-2">
+        {/* Under a line when there are groups above it. */}
+        <div className={groups.length > 0 ? "mt-3 border-t border-zinc-200 pt-2" : ""}>
           <button
             type="button"
             onClick={() => setPanel({ mode: "add" })}

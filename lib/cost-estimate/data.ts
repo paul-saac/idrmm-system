@@ -3,9 +3,11 @@ import { listTaskProgressAnchors } from "@/lib/task-progress/data";
 import { listCategoryProgressAnchors } from "@/lib/category-progress/data";
 import { computeWeights } from "@/lib/cost-estimate/weights";
 import {
-  computeAutoPercentComplete,
+  computeProgressBreakdown,
   EMPTY_PROGRESS_ANCHOR,
   groupPlannedMaterials,
+  ZERO_COSTS,
+  type CostAmounts,
 } from "@/lib/task-progress/calculate";
 
 export type OtherCostItem = {
@@ -102,6 +104,10 @@ export type CostTask = {
    * complete is never stored — always a plain average of its tasks'
    * own percentComplete, computed in gantt-chart-view.tsx itself. */
   percentComplete: number;
+  /** What's been spent so far, per cost column, from its Daily Progress
+   * Updates — its saved logs, each working day without one at its planned
+   * share (computeProgressBreakdown). */
+  costsToDate: CostAmounts;
   materialAssignments: TaskMaterialAssignment[];
 };
 
@@ -173,6 +179,10 @@ export type CostCategory = {
    * percentCompleteByCategoryId's own doc comment in
    * gantt-chart-view.tsx). */
   percentComplete: number;
+  /** Same as CostTask's own costsToDate, from this category's own Daily
+   * Progress Updates — only meaningful while it has no tasks, like
+   * percentComplete above; one with tasks spends through them. */
+  costsToDate: CostAmounts;
 };
 
 export type CostEstimateSummary = {
@@ -186,6 +196,12 @@ export type CostEstimateSummary = {
     equipment: number;
     other: number;
   };
+  /** What's been spent so far, per cost column, from the Daily Progress
+   * Updates — every task's cost to date, and every task-less phase's own:
+   * its saved updates, plus each working day without one counting its
+   * planned share (computeProgressBreakdown). The Overview's Actual
+   * Expense. */
+  costsToDate: CostAmounts;
 };
 
 export type CostEstimate = {
@@ -263,8 +279,9 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
           .order("id", { ascending: true })
       : Promise.resolve({ data: [] as never[] }),
     // Every task's own Progress Tracking Override anchor (see
-    // lib/task-progress/data.ts) — what computeAutoPercentComplete
-    // below projects each task's live percentComplete forward from.
+    // lib/task-progress/data.ts) — what computeProgressBreakdown below
+    // projects each task's live percentComplete and cost to date
+    // forward from.
     listTaskProgressAnchors(taskIds),
     // Same idea, one level up, for a task-less category's own Progress
     // Tracking Override — see lib/category-progress/data.ts.
@@ -357,8 +374,35 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
 
   const tasksByCategory = new Map<number, CostTask[]>();
   const totalsByColumn = { labor: 0, material: 0, equipment: 0, other: 0 };
+  // Spend to date, added up below — see CostEstimateSummary.costsToDate.
+  const costsToDate: CostAmounts = { ...ZERO_COSTS };
+  function addCosts(costs: CostAmounts) {
+    costsToDate.labor += costs.labor;
+    costsToDate.material += costs.material;
+    costsToDate.equipment += costs.equipment;
+    costsToDate.other += costs.other;
+  }
 
   for (const row of taskRows ?? []) {
+    // Where the task stands today from its Daily Progress Updates — its
+    // percent complete, and its cost to date toward the project's.
+    const progress = computeProgressBreakdown({
+      plannedStartDate: row.planned_start_date,
+      plannedEndDate: row.planned_end_date,
+      estimatedQuantity: row.estimated_quantity ?? 0,
+      plannedMaterials: groupPlannedMaterials(materialAssignmentsByTask.get(row.id) ?? []),
+      plannedCosts: {
+        labor: row.labor_estimate ?? 0,
+        material: row.material_estimate ?? 0,
+        equipment: row.equipment_estimate ?? 0,
+        other: row.other_cost_estimate ?? 0,
+      },
+      workingDays,
+      holidays,
+      anchor: progressAnchorsByTask[row.id] ?? EMPTY_PROGRESS_ANCHOR,
+      today: new Date(),
+    });
+    addCosts(progress.costsToDate);
     // Coalesce every numeric column to 0: the hand-built tables may not
     // actually enforce `not null default 0` at the DB level (a column
     // that already existed before a migration keeps its original
@@ -396,24 +440,8 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       // task's own percent complete (see 0040_task_progress_tracking.
       // sql's own comment on why that column is left in place but no
       // longer read/written).
-      percentComplete: computeAutoPercentComplete({
-        plannedStartDate: row.planned_start_date,
-        plannedEndDate: row.planned_end_date,
-        estimatedQuantity: row.estimated_quantity ?? 0,
-        plannedMaterials: groupPlannedMaterials(
-          materialAssignmentsByTask.get(row.id) ?? []
-        ),
-        plannedCosts: {
-          labor: row.labor_estimate ?? 0,
-          material: row.material_estimate ?? 0,
-          equipment: row.equipment_estimate ?? 0,
-          other: row.other_cost_estimate ?? 0,
-        },
-        workingDays,
-        holidays,
-        anchor: progressAnchorsByTask[row.id] ?? EMPTY_PROGRESS_ANCHOR,
-        today: new Date(),
-      }),
+      percentComplete: progress.percentComplete,
+      costsToDate: progress.costsToDate,
       materialAssignments: materialAssignmentsByTask.get(row.id) ?? [],
     };
     const existing = tasksByCategory.get(row.category_id) ?? [];
@@ -426,28 +454,9 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     totalsByColumn.other += task.otherCostEstimate;
   }
 
-  const categories: CostCategory[] = (categoryRows ?? []).map((row) => ({
-    id: row.id,
-    name: row.category_name,
-    weight: 0,
-    tasks: tasksByCategory.get(row.id) ?? [],
-    materialDirectQuantity: row.material_direct_quantity ?? 0,
-    materialDirectUnit: row.material_direct_unit,
-    materialUnitCost: row.material_unit_cost ?? 0,
-    materialDirectAmountOverride: row.material_direct_amount,
-    categoryMaterialEstimate: row.category_material_estimate ?? 0,
-    materialAssignments: materialAssignmentsByCategory.get(row.id) ?? [],
-    plannedStartDate: row.planned_start_date,
-    plannedEndDate: row.planned_end_date,
-    priority: toTaskPriority(row.priority),
-    // Undefined until 0072 has run — then just not a milestone.
-    isMilestone: row.is_milestone ?? false,
-    categoryLaborEstimate: row.category_labor_estimate ?? 0,
-    categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
-    categoryOtherEstimate: row.category_other_estimate ?? 0,
-    estimatedQuantity: row.estimated_quantity ?? 0,
-    unit: row.unit,
-    percentComplete: computeAutoPercentComplete({
+  const categories: CostCategory[] = (categoryRows ?? []).map((row) => {
+    const tasks = tasksByCategory.get(row.id) ?? [];
+    const progress = computeProgressBreakdown({
       plannedStartDate: row.planned_start_date,
       plannedEndDate: row.planned_end_date,
       estimatedQuantity: row.estimated_quantity ?? 0,
@@ -465,8 +474,35 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       holidays,
       anchor: progressAnchorsByCategory[row.id] ?? EMPTY_PROGRESS_ANCHOR,
       today: new Date(),
-    }),
-  }));
+    });
+    // A phase with tasks spends through them — its own updates count only
+    // while it has none, the same as its own percent complete.
+    if (tasks.length === 0) addCosts(progress.costsToDate);
+    return {
+      id: row.id,
+      name: row.category_name,
+      weight: 0,
+      tasks,
+      materialDirectQuantity: row.material_direct_quantity ?? 0,
+      materialDirectUnit: row.material_direct_unit,
+      materialUnitCost: row.material_unit_cost ?? 0,
+      materialDirectAmountOverride: row.material_direct_amount,
+      categoryMaterialEstimate: row.category_material_estimate ?? 0,
+      materialAssignments: materialAssignmentsByCategory.get(row.id) ?? [],
+      plannedStartDate: row.planned_start_date,
+      plannedEndDate: row.planned_end_date,
+      priority: toTaskPriority(row.priority),
+      // Undefined until 0072 has run — then just not a milestone.
+      isMilestone: row.is_milestone ?? false,
+      categoryLaborEstimate: row.category_labor_estimate ?? 0,
+      categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
+      categoryOtherEstimate: row.category_other_estimate ?? 0,
+      estimatedQuantity: row.estimated_quantity ?? 0,
+      unit: row.unit,
+      percentComplete: progress.percentComplete,
+      costsToDate: progress.costsToDate,
+    };
+  });
 
   const { taskWeights, categoryWeights } = computeWeights(categories);
   for (const category of categories) {
@@ -515,6 +551,7 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       categoryCount: categories.length,
       taskCount,
       totalsByColumn,
+      costsToDate,
     },
   };
 }

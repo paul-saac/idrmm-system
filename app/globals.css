@@ -21,10 +21,9 @@
   --material-dropdown-line: #a8d5b9;
 
   /*
-   * The Team page's green — the open "All members", the open tab's count,
-   * the members' projects and New Group: their text and icons, and the
-   * soft green behind them. Click a value's color square to change it with
-   * the color picker.
+   * The Team page's green — the open tab's count, the members' projects
+   * and New Group: their text and icons, and the soft green behind them.
+   * Click a value's color square to change it with the color picker.
    */
   --team-accent: #2d7a55;
   --team-accent-soft: #e6f2eb;

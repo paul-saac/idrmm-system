@@ -302,7 +302,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       action: `requested equipment (${request.er_no})`,
       projectId: request.project_id,
       projectName: projectName.get(request.project_id) ?? "—",
-      path: `/equipment/requests/${request.id}`,
+      path: `?tab=equipment&subtab=requests&request=${request.id}`,
       at: request.created_at,
     });
   }

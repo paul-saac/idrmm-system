@@ -63,13 +63,11 @@ export function PendingApprovalsCard({
                 </p>
               </div>
               <Link
-                href={
-                  // A material request opens in its row of the project's
-                  // Materials tab; an equipment one has its own page.
-                  item.kind === "material"
-                    ? `${basePath}/projects/${item.projectId}?tab=materials&subtab=requests&request=${item.id}`
-                    : `${basePath}/projects/${item.projectId}/equipment/requests/${item.id}`
-                }
+                // A request opens in its row of the project's Materials or
+                // Equipment tab.
+                href={`${basePath}/projects/${item.projectId}?tab=${
+                  item.kind === "material" ? "materials" : "equipment"
+                }&subtab=requests&request=${item.id}`}
                 className="shrink-0 rounded border border-zinc-200 px-3 py-1 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50"
               >
                 View

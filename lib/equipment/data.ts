@@ -148,3 +148,112 @@ export async function listProjectEquipmentAssignments(
     };
   });
 }
+
+/** One day's equipment cost as typed in a Daily Progress Update. */
+export type ProgressEquipmentCost = {
+  id: string;
+  entryDate: string;
+  /** The task, or task-less phase, it was logged on — a task under its
+   * phase: "PAINTING WORKS - Wall & Ceiling Painting". */
+  itemName: string;
+  /** Which: task-<id> or category-<id>. */
+  itemKey: string;
+  amount: number;
+  /** Who saved it — their name, else their email's name part; null when
+   * unknown. */
+  savedByName: string | null;
+};
+
+/**
+ * Every equipment cost typed into the progress window (each task's
+ * task_progress_entries, and a task-less phase's category_progress_entries
+ * — only the days with one) — newest day first, then newest save. The
+ * Equipment tab's cost log and recent activity.
+ */
+export async function listProgressEquipmentCosts(
+  projectId: number
+): Promise<ProgressEquipmentCost[]> {
+  const supabase = await createClient();
+
+  const [{ data: tasks }, { data: categories }] = await Promise.all([
+    supabase.from("estimate_tasks").select("id, task_name, category_id").eq("project_id", projectId),
+    supabase.from("estimate_categories").select("id, category_name").eq("project_id", projectId),
+  ]);
+  const categoryName = new Map((categories ?? []).map((row) => [row.id, row.category_name]));
+  const taskName = new Map(
+    (tasks ?? []).map((row) => {
+      const phase = categoryName.get(row.category_id);
+      return [row.id, phase ? `${phase} - ${row.task_name}` : row.task_name];
+    })
+  );
+
+  // "*" so a DB missing a newer column still loads.
+  const [{ data: taskEntries }, { data: categoryEntries }] = await Promise.all([
+    taskName.size > 0
+      ? supabase.from("task_progress_entries").select("*").in("task_id", [...taskName.keys()])
+      : Promise.resolve({ data: [] }),
+    categoryName.size > 0
+      ? supabase
+          .from("category_progress_entries")
+          .select("*")
+          .in("category_id", [...categoryName.keys()])
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const costs: (ProgressEquipmentCost & { createdAt: string; recordedBy: string | null })[] = [];
+  for (const row of taskEntries ?? []) {
+    const amount = Number(row.equipment_cost) || 0;
+    if (amount <= 0) continue;
+    costs.push({
+      id: `task-${row.id}`,
+      entryDate: row.entry_date,
+      itemName: taskName.get(row.task_id) ?? "",
+      itemKey: `task-${row.task_id}`,
+      amount,
+      savedByName: null,
+      createdAt: row.created_at,
+      recordedBy: row.recorded_by ?? null,
+    });
+  }
+  for (const row of categoryEntries ?? []) {
+    const amount = Number(row.equipment_cost) || 0;
+    if (amount <= 0) continue;
+    costs.push({
+      id: `category-${row.id}`,
+      entryDate: row.entry_date,
+      itemName: categoryName.get(row.category_id) ?? "",
+      itemKey: `category-${row.category_id}`,
+      amount,
+      savedByName: null,
+      createdAt: row.created_at,
+      recordedBy: row.recorded_by ?? null,
+    });
+  }
+
+  // Who saved each — a name, else the email's name part.
+  const savers = Array.from(
+    new Set(costs.map((cost) => cost.recordedBy).filter((id): id is string => Boolean(id)))
+  );
+  const { data: profiles } =
+    savers.length > 0
+      ? await supabase.from("profiles").select("id, first_name, last_name, email").in("id", savers)
+      : { data: [] };
+  const nameOf = new Map(
+    (profiles ?? []).map((profile) => [
+      profile.id,
+      `${profile.first_name ?? ""} ${profile.last_name ?? ""}`.trim() ||
+        profile.email?.split("@")[0] ||
+        null,
+    ])
+  );
+
+  return costs
+    .sort(
+      (a, b) =>
+        b.entryDate.localeCompare(a.entryDate) || b.createdAt.localeCompare(a.createdAt)
+    )
+    .map(({ createdAt: _createdAt, recordedBy, ...rest }) => ({
+      ...rest,
+      savedByName: recordedBy ? (nameOf.get(recordedBy) ?? null) : null,
+    }));
+}

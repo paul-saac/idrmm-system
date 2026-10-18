@@ -39,8 +39,11 @@ import {
   MaterialsMonitoringView,
   type MaterialsRecordView,
 } from "@/components/projects/materials/materials-monitoring-view";
-import { ProjectEquipmentView } from "@/components/projects/equipment/project-equipment-view";
-import { EquipmentRequestsView } from "@/components/projects/equipment/equipment-requests-view";
+import { EquipmentOverviewView } from "@/components/projects/equipment/equipment-overview-view";
+import {
+  EquipmentRecordView,
+  type EquipmentRecordList,
+} from "@/components/projects/equipment/equipment-record-view";
 import { ExpenseOverviewView } from "@/components/projects/expenses/expense-overview-view";
 import { LaborExpensesView } from "@/components/projects/expenses/labor-expenses-view";
 import { MaterialExpensesView } from "@/components/projects/expenses/material-expenses-view";
@@ -53,11 +56,9 @@ import type {
 } from "@/lib/materials/data";
 import type { MaterialRecord } from "@/lib/materials/records";
 import type { MaterialRequestDetail } from "@/lib/material-requests/data";
-import type {
-  EquipmentRequestDetail,
-  EquipmentRequestListItem,
-} from "@/lib/equipment-requests/data";
-import type { EquipmentAssignmentRow } from "@/lib/equipment/data";
+import type { EquipmentRequestDetail } from "@/lib/equipment-requests/data";
+import type { EquipmentAssignmentRow, ProgressEquipmentCost } from "@/lib/equipment/data";
+import type { EquipmentCostRecord } from "@/lib/equipment/records";
 import type {
   ExpenseOverview,
   LaborExpenseGroup,
@@ -80,6 +81,7 @@ import type {
   CategoryWorkerAssignments,
 } from "@/lib/workers/data";
 import type { TaskProgressToday } from "@/lib/task-progress/data";
+import { sumCosts } from "@/lib/task-progress/calculate";
 import type { ProjectEvent } from "@/lib/project-events/types";
 
 const MAIN_TABS = [
@@ -108,12 +110,6 @@ const PROGRESS_SUB_TABS = [
   { value: "daily-logs", label: "Daily Logs" },
 ] as const;
 type ProgressSubTab = (typeof PROGRESS_SUB_TABS)[number]["value"];
-
-const EQUIPMENT_SUB_TABS = [
-  { value: "assigned", label: "Assigned" },
-  { value: "requests", label: "Requests" },
-] as const;
-type EquipmentSubTab = (typeof EQUIPMENT_SUB_TABS)[number]["value"];
 
 const EXPENSES_SUB_TABS = [
   { value: "overview", label: "Expense Overview" },
@@ -288,6 +284,8 @@ export function ProjectDetailView({
   otherExpenses,
   currentUserName,
   projectEquipmentAssignments,
+  equipmentCostRecords,
+  recentEquipmentCosts,
   ganttCanUndo,
   ganttCanRedo,
   workers,
@@ -322,7 +320,10 @@ export function ProjectDetailView({
   /** Requests that can still receive a delivery — for the Add Daily
    * Log modal's Material Procurement "Select Material Request" picker. */
   fulfillableMaterialRequests: MaterialRequestDetail[];
-  equipmentRequests: EquipmentRequestListItem[];
+  /** The project's equipment requests, newest first, in full — the
+   * Equipment tab's count, its requests panel and its record's requests,
+   * each opening in its row. */
+  equipmentRequests: EquipmentRequestDetail[];
   /** Requests that can still receive an acquisition — for the Add Daily
    * Log modal's Equipment Acquisition "Select Equipment Request" picker. */
   fulfillableEquipmentRequests: EquipmentRequestDetail[];
@@ -335,6 +336,12 @@ export function ProjectDetailView({
   otherExpenses: OtherExpenseGroup[];
   currentUserName: string;
   projectEquipmentAssignments: EquipmentAssignmentRow[];
+  /** Every task's equipment cost — the Equipment record's Equipment cost
+   * view (buildEquipmentCostRecords). */
+  equipmentCostRecords: EquipmentCostRecord[];
+  /** The newest equipment costs typed into progress updates — the
+   * Equipment overview's recent activity. */
+  recentEquipmentCosts: ProgressEquipmentCost[];
   /** Whether the Gantt Chart's own Undo/Redo toolbar buttons should be
    * enabled — see lib/cost-estimate/undo-redo.ts's getGanttUndoRedoState,
    * fetched alongside costEstimate/progress in page.tsx. */
@@ -392,13 +399,6 @@ export function ProjectDetailView({
         progressSubTabs.some((tab) => tab.value === subtabParam)
         ? (subtabParam as ProgressSubTab)
         : "overview"
-    );
-  const [activeEquipmentSubTab, setActiveEquipmentSubTab] =
-    useState<EquipmentSubTab>(
-      initialTab === "equipment" &&
-        EQUIPMENT_SUB_TABS.some((tab) => tab.value === subtabParam)
-        ? (subtabParam as EquipmentSubTab)
-        : "assigned"
     );
   const [activeExpensesSubTab, setActiveExpensesSubTab] =
     useState<ExpensesSubTab>(
@@ -478,6 +478,58 @@ export function ProjectDetailView({
       materialsRecordRef.current;
     if (pageScrollRef.current && target) scrollAreaTo(pageScrollRef.current, target, "smooth");
   }
+
+  // The Equipment tab's Equipment record, the Material record's twin: its
+  // cost, its assigned equipment, or its requests. A link to the latter
+  // two (?tab=equipment&subtab=assigned|requests) opens that list, scrolled
+  // to — and a request in it (&request=7, the dashboard's), opened.
+  const landOnEquipmentList: EquipmentRecordList | null =
+    initialTab === "equipment" && (subtabParam === "assigned" || subtabParam === "requests")
+      ? subtabParam
+      : null;
+  const landOnEquipmentRequestId =
+    landOnEquipmentList === "requests"
+      ? Number(searchParams.get("request")) || undefined
+      : undefined;
+  const [equipmentRecordList, setEquipmentRecordList] = useState<EquipmentRecordList>(
+    landOnEquipmentList ?? "cost"
+  );
+  const equipmentRecordRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!landOnEquipmentList) return;
+    // As the Material record's own landing above: to the request's row
+    // when there's one, the record's top otherwise.
+    const row = landOnEquipmentRequestId
+      ? equipmentRecordRef.current?.querySelector(`[data-request-id="${landOnEquipmentRequestId}"]`)
+      : null;
+    const target = row ?? equipmentRecordRef.current;
+    if (pageScrollRef.current && target) scrollAreaTo(pageScrollRef.current, target);
+  }, [landOnEquipmentList, landOnEquipmentRequestId]);
+  // The record's requests opened to their details — here, so a request in
+  // the Equipment overview can open there too.
+  const [openEquipmentRequestIds, setOpenEquipmentRequestIds] = useState<ReadonlySet<number>>(
+    () => new Set(landOnEquipmentRequestId ? [landOnEquipmentRequestId] : [])
+  );
+  function toggleEquipmentRequest(id: number) {
+    setOpenEquipmentRequestIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  // A request's row in the Equipment overview — openRequestInRecord, for
+  // equipment.
+  function openEquipmentRequestInRecord(id: number) {
+    flushSync(() => {
+      setEquipmentRecordList("requests");
+      setOpenEquipmentRequestIds((prev) => new Set(prev).add(id));
+    });
+    const target =
+      equipmentRecordRef.current?.querySelector(`[data-request-id="${id}"]`) ??
+      equipmentRecordRef.current;
+    if (pageScrollRef.current && target) scrollAreaTo(pageScrollRef.current, target, "smooth");
+  }
   // Opens the shared "Import with AI" modal from the Material Breakdown
   // modal's own footer (see MaterialBreakdownModalContent) — lifted up
   // here rather than owned by CostEstimateView so the same modal
@@ -521,16 +573,13 @@ export function ProjectDetailView({
   const breadcrumbLabel = MAIN_TABS.find((tab) => tab.value === activeTab)!
     .label;
 
-  // Live sum of the four expense ledgers — not project.actualExpense,
-  // which was a static number an admin typed into the Edit Project form
-  // and is gone now that the form no longer exposes it (see
-  // 0026_projects_column_cleanup.sql). This is the same computation the
-  // Reports page uses for its own "Actual Expense" card.
-  const actualExpenseTotal =
-    expenseOverview.actual.labor +
-    expenseOverview.actual.material +
-    expenseOverview.actual.equipment +
-    expenseOverview.actual.other;
+  // What's been spent, from the Daily Progress Updates: every task's (and
+  // task-less phase's) cost to date — the labor, equipment and other cost
+  // typed into its updates and the materials logged there, plus each
+  // working day without an update counting its planned share (see
+  // CostEstimateSummary.costsToDate). Not the Expenses tab's ledgers,
+  // which only daily logs (on hold) fill.
+  const actualExpenseTotal = sumCosts(costEstimate.summary.costsToDate);
 
   const remainingBudget =
     project.allocatedBudget != null
@@ -624,15 +673,6 @@ export function ProjectDetailView({
           />
         )}
 
-        {activeTab === "equipment" && (
-          <SubTabsRow
-            tabs={EQUIPMENT_SUB_TABS}
-            active={activeEquipmentSubTab}
-            onChange={setActiveEquipmentSubTab}
-            toolbarRef={setToolbarSlotEl}
-          />
-        )}
-
         {activeTab === "expenses" && (
           <SubTabsRow
             tabs={EXPENSES_SUB_TABS}
@@ -693,19 +733,36 @@ export function ProjectDetailView({
             </div>
           </div>
         ) : activeTab === "equipment" ? (
-          activeEquipmentSubTab === "assigned" ? (
-            <ProjectEquipmentView
-              projectId={project.id}
-              assignments={projectEquipmentAssignments}
-            />
-          ) : (
-            <EquipmentRequestsView
-              projectId={project.id}
+          // One page, no sub-tabs, as the Materials tab: the Equipment
+          // overview bar, then the Equipment record.
+          <div className="flex flex-col gap-6">
+            <EquipmentOverviewView
+              costRecords={equipmentCostRecords}
               requests={equipmentRequests}
-              currentUserName={currentUserName}
-              toolbarSlot={toolbarSlotEl}
+              recentCosts={recentEquipmentCosts}
+              onOpenRequest={openEquipmentRequestInRecord}
+              onSeeAllRequests={() => {
+                setEquipmentRecordList("requests");
+                if (pageScrollRef.current && equipmentRecordRef.current) {
+                  scrollAreaTo(pageScrollRef.current, equipmentRecordRef.current, "smooth");
+                }
+              }}
             />
-          )
+            {/* scroll-mt clears the sticky tabs bar when See all scrolls here. */}
+            <div ref={equipmentRecordRef} className="scroll-mt-16">
+              <EquipmentRecordView
+                projectId={project.id}
+                costRecords={equipmentCostRecords}
+                assignments={projectEquipmentAssignments}
+                requests={equipmentRequests}
+                view={equipmentRecordList}
+                onViewChange={setEquipmentRecordList}
+                openRequestIds={openEquipmentRequestIds}
+                onToggleRequest={toggleEquipmentRequest}
+                currentUserName={currentUserName}
+              />
+            </div>
+          </div>
         ) : activeTab === "expenses" ? (
           activeExpensesSubTab === "overview" ? (
             <ExpenseOverviewView overview={expenseOverview} />

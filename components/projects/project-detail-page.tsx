@@ -24,11 +24,12 @@ import {
 } from "@/lib/materials/data";
 import { buildMaterialRecords } from "@/lib/materials/records";
 import { listMaterialRequests } from "@/lib/material-requests/data";
+import { listEquipmentRequests } from "@/lib/equipment-requests/data";
 import {
-  listEquipmentRequests,
-  listFulfillableEquipmentRequests,
-} from "@/lib/equipment-requests/data";
-import { listProjectEquipmentAssignments } from "@/lib/equipment/data";
+  listProgressEquipmentCosts,
+  listProjectEquipmentAssignments,
+} from "@/lib/equipment/data";
+import { buildEquipmentCostRecords } from "@/lib/equipment/records";
 import {
   listLaborExpenses,
   listMaterialExpenses,
@@ -69,7 +70,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     progressMaterialUsage,
     materialRequests,
     equipmentRequests,
-    fulfillableEquipmentRequests,
+    equipmentCosts,
     projectEquipmentAssignments,
     laborExpenses,
     materialExpenses,
@@ -97,7 +98,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listProgressMaterialUsage(projectId),
     listMaterialRequests(projectId),
     listEquipmentRequests(projectId),
-    listFulfillableEquipmentRequests(projectId),
+    listProgressEquipmentCosts(projectId),
     listProjectEquipmentAssignments(projectId),
     listLaborExpenses(projectId),
     listMaterialExpenses(projectId),
@@ -127,6 +128,14 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
   const fulfillableMaterialRequests = materialRequests.filter(
     (request) => request.status === "approved" || request.status === "partially_fulfilled"
   );
+  // The same, for the Add Daily Log's Equipment Acquisition.
+  const fulfillableEquipmentRequests = equipmentRequests.filter(
+    (request) => request.status === "approved" || request.status === "partially_fulfilled"
+  );
+
+  // Every task's equipment cost — the Equipment tab's: its budget, what's
+  // been spent of it from its progress updates, and its cost log.
+  const equipmentCostRecords = buildEquipmentCostRecords(costEstimate, equipmentCosts);
 
   const expenseOverview = summarizeExpenses(
     laborExpenses,
@@ -201,6 +210,8 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       otherExpenses={otherExpenses}
       currentUserName={currentUserName}
       projectEquipmentAssignments={projectEquipmentAssignments}
+      equipmentCostRecords={equipmentCostRecords}
+      recentEquipmentCosts={equipmentCosts.slice(0, 10)}
       ganttCanUndo={ganttUndoRedoState.canUndo}
       ganttCanRedo={ganttUndoRedoState.canRedo}
       workers={workers}

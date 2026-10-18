@@ -12,31 +12,26 @@ import {
 } from "@/lib/equipment/actions";
 import type { EquipmentAssignmentRow } from "@/lib/equipment/data";
 
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString("en-US", {
-    day: "2-digit",
+/** "Oct 16, 2026" — from a timestamp. */
+function formatDay(iso: string) {
+  return new Date(iso).toLocaleDateString("en-US", {
     month: "short",
+    day: "numeric",
     year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
   });
 }
 
-function StatusBadge({ returnedAt }: { returnedAt: string | null }) {
-  if (returnedAt) {
-    return (
-      <span className="rounded-sm bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
-        Returned
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-sm bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-      Not returned
-    </span>
-  );
+/** Calendar days on site, both ends counted — the day it came through the
+ * day it left, or today while it's still there. */
+export function daysOnSite(assignedAt: string, returnedAt: string | null) {
+  const start = new Date(assignedAt);
+  start.setHours(0, 0, 0, 0);
+  const end = returnedAt ? new Date(returnedAt) : new Date();
+  end.setHours(0, 0, 0, 0);
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
 }
+
+const Dash = () => <span className="text-zinc-300">—</span>;
 
 const deleteInitialState: EquipmentActionState = {};
 
@@ -80,6 +75,7 @@ function DeleteAssignmentButton({
           type="submit"
           disabled={pending}
           aria-label="Delete assignment"
+          title="Delete assignment"
           className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Trash2 className="size-3.5" />
@@ -138,107 +134,105 @@ function ReturnAssignmentButton({
 }
 
 /**
- * "Assigned Equipments" sub-tab — the full checkout history for this
- * project (returned or not), what an admin's "Assign" on the Inventory
- * page reflects here (see lib/equipment/data.ts's
- * listProjectEquipmentAssignments). Editing/deleting a row here updates
- * the same equipment_assignments record Inventory's Assign/Return
- * actions write, so the two stay in sync either direction.
+ * The Equipment record's Assigned equipment view — every piece of the
+ * Inventory's equipment this project has had, on site or returned, what an
+ * admin's Assign on the Inventory page puts here (see
+ * listProjectEquipmentAssignments): its asset tag, what it's for, when it
+ * came and left, and how many days it's been on site. Marking it returned,
+ * editing or deleting a row here writes the same equipment_assignments
+ * record Inventory's own Assign/Return do, so the two stay in sync.
+ * Listed as given.
  */
-export function ProjectEquipmentView({
+export function AssignedEquipmentTable({
   projectId,
   assignments,
 }: {
   projectId: number;
   assignments: EquipmentAssignmentRow[];
 }) {
-  const [editTarget, setEditTarget] = useState<EquipmentAssignmentRow | null>(
-    null
-  );
+  const [editTarget, setEditTarget] = useState<EquipmentAssignmentRow | null>(null);
 
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-      <div className="border-b border-zinc-200 px-4 py-3">
-        <h3 className="text-sm font-semibold text-zinc-900">
-          Assigned Equipments
-        </h3>
-      </div>
-
-      {assignments.length === 0 ? (
-        <div className="py-10 text-center">
-          <p className="text-sm text-zinc-400">
-            No equipment has been assigned to this project yet.
-          </p>
-          <p className="mt-1 text-xs text-zinc-400">
-            Assign equipment from the Inventory page.
-          </p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
-              <tr>
-                <th className="px-4 py-2.5">Name</th>
-                <th className="px-4 py-2.5">Purpose</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5">Assigned Date</th>
-                <th className="px-4 py-2.5">Return Date</th>
-                <th className="px-4 py-2.5 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {assignments.map((assignment) => (
-                <tr key={assignment.id} className="transition-colors hover:bg-zinc-50">
-                  <td className="px-4 py-2.5 font-medium text-zinc-900">
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[56rem] text-left text-sm">
+        <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
+          <tr>
+            <th className="px-5 py-3">Equipment</th>
+            <th className="px-4 py-3">Purpose</th>
+            <th className="px-4 py-3">Status</th>
+            <th className="px-4 py-3">Assigned</th>
+            <th className="px-4 py-3">Returned</th>
+            <th className="px-4 py-3 text-center">Days on site</th>
+            <th className="w-28 py-3 pr-5">
+              <span className="sr-only">Actions</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100">
+          {assignments.map((assignment) => {
+            const onSite = !assignment.returnedAt;
+            return (
+              <tr key={assignment.id} className="transition-colors hover:bg-zinc-50">
+                <td className="max-w-72 px-5 py-3.5">
+                  <p className="truncate font-semibold text-zinc-900" title={assignment.equipmentName}>
                     {assignment.equipmentName}
-                  </td>
-                  <td
-                    className="max-w-64 truncate px-4 py-2.5 text-zinc-600"
-                    title={assignment.purpose ?? undefined}
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-zinc-400">{assignment.equipmentAssetTag}</p>
+                </td>
+                <td
+                  className="max-w-64 truncate px-4 py-3.5 text-zinc-600"
+                  title={assignment.purpose ?? undefined}
+                >
+                  {assignment.purpose || <Dash />}
+                </td>
+                <td className="px-4 py-3.5">
+                  <span
+                    className={`rounded-sm px-2 py-0.5 text-xs font-medium whitespace-nowrap ${
+                      onSite ? "bg-sky-50 text-sky-700" : "bg-zinc-100 text-zinc-600"
+                    }`}
                   >
-                    {assignment.purpose || "—"}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <StatusBadge returnedAt={assignment.returnedAt} />
-                  </td>
-                  <td className="px-4 py-2.5 text-zinc-500">
-                    {formatDateTime(assignment.assignedAt)}
-                  </td>
-                  <td className="px-4 py-2.5 text-zinc-500">
-                    {assignment.returnedAt
-                      ? formatDateTime(assignment.returnedAt)
-                      : "—"}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center justify-end gap-1">
-                      {!assignment.returnedAt && (
-                        <ReturnAssignmentButton
-                          equipmentId={assignment.equipmentId}
-                          projectId={projectId}
-                        />
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setEditTarget(assignment)}
-                        aria-label="Edit assignment"
-                        className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
-                      >
-                        <EditIcon className="size-3.5" />
-                      </button>
-                      <DeleteAssignmentButton
-                        assignmentId={assignment.id}
+                    {onSite ? "On site" : "Returned"}
+                  </span>
+                </td>
+                <td className="px-4 py-3.5 whitespace-nowrap text-zinc-600">
+                  {formatDay(assignment.assignedAt)}
+                </td>
+                <td className="px-4 py-3.5 whitespace-nowrap text-zinc-600">
+                  {assignment.returnedAt ? formatDay(assignment.returnedAt) : <Dash />}
+                </td>
+                <td className="px-4 py-3.5 text-center font-semibold text-zinc-900 tabular-nums">
+                  {daysOnSite(assignment.assignedAt, assignment.returnedAt)}
+                </td>
+                <td className="py-3.5 pr-5">
+                  <div className="flex items-center justify-end gap-1">
+                    {onSite && (
+                      <ReturnAssignmentButton
                         equipmentId={assignment.equipmentId}
                         projectId={projectId}
-                        equipmentName={assignment.equipmentName}
                       />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setEditTarget(assignment)}
+                      aria-label="Edit assignment"
+                      title="Edit assignment"
+                      className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                    >
+                      <EditIcon className="size-3.5" />
+                    </button>
+                    <DeleteAssignmentButton
+                      assignmentId={assignment.id}
+                      equipmentId={assignment.equipmentId}
+                      projectId={projectId}
+                      equipmentName={assignment.equipmentName}
+                    />
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
 
       <Modal
         open={editTarget !== null}

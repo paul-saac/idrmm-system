@@ -7,8 +7,6 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Folder,
   MoreHorizontal,
   Plus,
@@ -57,9 +55,6 @@ const TAB_NOUN: Record<Tab, [one: string, many: string]> = {
   subcontractors: ["subcontractor", "subcontractors"],
 };
 
-// Members to a page.
-const PAGE_SIZE = 10;
-
 // The members table: lines between its rows only, and roomier rows than
 // the app's shared list-table (Manage Accounts keeps that one).
 const TH = "px-4 py-3 font-medium";
@@ -72,23 +67,20 @@ const SELECT =
 const BULK_DELETE_BUTTON =
   "flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-red-600 transition hover:border-red-600 hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50";
 
-/** The page buttons: the first, the last, and the ones around the open
- * one — a "gap" where some are skipped. */
-function pageList(current: number, count: number): (number | "gap")[] {
-  const pages: (number | "gap")[] = [];
-  for (let page = 1; page <= count; page++) {
-    if (page === 1 || page === count || Math.abs(page - current) <= 1) pages.push(page);
-    else if (pages[pages.length - 1] !== "gap") pages.push("gap");
-  }
-  return pages;
+/** Whether a member is on a tab: a subcontractor on Subcontractors,
+ * whatever their trade; anyone else on their own category's. */
+function inTab(member: Worker, tab: Tab) {
+  return tab === "subcontractors"
+    ? member.employmentType === "subcontractor"
+    : member.employmentType !== "subcontractor" && member.category === tab;
 }
 
 /**
  * A row's ⋯ menu — its actions in a small list by the button, in the
  * Modal's own ⋮ menu's look. Fixed to the screen rather than placed in
- * the table, whose sideways scrolling would cut it off at the table's
- * edge; under the button, or over it near the bottom of the screen. It
- * closes on a click anywhere else, Escape, or any scrolling.
+ * the table, whose scrolling would cut it off at the table's edge; under
+ * the button, or over it near the bottom of the screen. It closes on a
+ * click anywhere else, Escape, or any scrolling.
  */
 function RowMenu({ label, items }: { label: string; items: ModalMenuItem[] }) {
   const [at, setAt] = useState<{ top?: number; bottom?: number; right: number } | null>(null);
@@ -187,9 +179,9 @@ function RowMenu({ label, items }: { label: string; items: ModalMenuItem[] }) {
  * WorkerAssignment) or Available, and the tasks and project they're on —
  * a tab per category of employee (Management, Skilled Workers, Engineers
  * & Architects) plus one for Subcontractors, searchable, filtered by
- * availability, sorted by name, a page at a time. A row opens the
- * member's form (MemberForm) straight away, its ⋯ menu holding Edit and
- * Delete — or, for someone with a login account, Manage in Accounts;
+ * availability, sorted by name, scrolling within the card. A row opens
+ * the member's form (MemberForm) straight away, its ⋯ menu holding Edit
+ * and Delete — or, for someone with a login account, Manage in Accounts;
  * checked rows can be removed together, or added to a group. Tasks get
  * members from the Gantt chart's Assigned column.
  *
@@ -220,7 +212,6 @@ export function TeamBrowser({
   const [query, setQuery] = useState("");
   const [availabilityFilter, setAvailabilityFilter] = useState<AvailabilityFilter>("all");
   const [ascending, setAscending] = useState(true);
-  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
   const [panel, setPanel] = useState<Panel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -257,40 +248,35 @@ export function TeamBrowser({
   }, [members, openByWorker, query, availabilityFilter, ascending]);
 
   // A tab per category for employees (MEMBER_CATEGORIES' own order), then
-  // every subcontractor together, whatever their trade. Searching and
-  // filtering apply to every tab, so the open one's count says how many
-  // of its members match.
+  // every subcontractor together. Searching and filtering apply to every
+  // tab, so the open one's count says how many of its members match.
   const filtering = query.trim() !== "" || availabilityFilter !== "all";
   const groups = [
     ...MEMBER_CATEGORIES.map((category) => ({
       key: category.value as Tab,
       label: category.label,
       defaults: { category: category.value, employmentType: "employee" as const },
-      members: filtered.filter(
-        (member) => member.employmentType !== "subcontractor" && member.category === category.value
-      ),
     })),
     {
       key: "subcontractors" as Tab,
       label: "Subcontractors",
       defaults: { category: "skilled" as const, employmentType: "subcontractor" as const },
-      members: filtered.filter((member) => member.employmentType === "subcontractor"),
     },
-  ];
+  ].map((group) => ({
+    ...group,
+    members: filtered.filter((member) => inTab(member, group.key)),
+  }));
   const activeGroup = groups.find((group) => group.key === tab) ?? groups[0];
-
-  // A page of the open tab — its last one, if fewer pages are left.
   const total = activeGroup.members.length;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount);
-  const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const pageMembers = activeGroup.members.slice(pageStart, pageStart + PAGE_SIZE);
+  // Everyone on the tab, whatever the search and filter hide — the
+  // footer's "of".
+  const tabTotal = members.filter((member) => inTab(member, activeGroup.key)).length;
   const [noun, nounPlural] = TAB_NOUN[activeGroup.key];
 
-  // Only what's on screen counts — a checked member on another tab or
-  // page, or one the search or filter hides, isn't touched.
-  const selectedMembers = pageMembers.filter((member) => selected.has(member.id));
-  const allChecked = pageMembers.length > 0 && selectedMembers.length === pageMembers.length;
+  // Only what's on screen counts — a checked member on another tab, or
+  // one the search or filter hides, isn't touched.
+  const selectedMembers = activeGroup.members.filter((member) => selected.has(member.id));
+  const allChecked = total > 0 && selectedMembers.length === total;
   // Anyone with a login account (Management's project managers and
   // foremen) is managed in Accounts — never deleted from here.
   const deletableSelected = selectedMembers.filter((member) => !member.profileId);
@@ -403,19 +389,24 @@ export function TeamBrowser({
   }
 
   return (
-    // The groups on the left; the members' card beside them — one above
-    // the other on a narrow screen.
+    // The groups on the left; the members beside them — one above the
+    // other on a narrow screen. The members under their own heading, the
+    // Material record's kind, how many there are beside it; the groups'
+    // box level with that heading.
     <div className="grid items-start gap-5 lg:grid-cols-[16rem_minmax(0,1fr)]">
       <GroupsPanel groups={memberGroups} members={members} />
 
-      <section className="min-w-0 rounded-lg border border-zinc-200 bg-white">
-        <div className="flex items-center justify-between gap-3 px-6 pt-5">
-          <h2 className="text-lg font-semibold text-zinc-900">All members</h2>
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="flex h-9 items-center justify-between gap-3">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <h2 className="text-base font-semibold text-zinc-900">All members</h2>
+            <span className="text-xs text-zinc-400 tabular-nums">{members.length}</span>
+          </div>
           {canManageMembers && (
             <button
               type="button"
               onClick={() => openPanel({ mode: "add", defaults: activeGroup.defaults })}
-              className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition-all duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white active:translate-y-0"
+              className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
             >
               <Plus className="size-4" />
               Add Member
@@ -423,458 +414,414 @@ export function TeamBrowser({
           )}
         </div>
 
-        {/* The open tab underlined in black, its count beside it; the
-            gray line under them all an inset shadow, so a narrow screen
-            can still scroll the tabs sideways. */}
-        <div className="mt-4 flex gap-6 overflow-x-auto px-6 shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
-          {groups.map((group) => {
-            const active = group.key === activeGroup.key;
-            return (
-              <button
-                key={group.key}
-                type="button"
-                onClick={() => {
-                  setTab(group.key);
-                  setPage(1);
-                }}
-                aria-pressed={active}
-                className={`flex shrink-0 cursor-pointer items-center gap-2 border-b-2 pb-3 text-sm font-medium whitespace-nowrap transition ${
-                  active
-                    ? "border-zinc-900 text-zinc-900"
-                    : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-900"
-                }`}
-              >
-                {group.label}
-                {active && (
-                  <span className="rounded bg-[var(--team-accent-soft)] px-1.5 py-0.5 text-xs font-semibold text-[var(--team-accent)] tabular-nums">
-                    {group.members.length}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Search and the availability filter; on the right, how many
-            members the tab lists — or, with rows checked, what to do with
-            them. */}
-        <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 px-6 py-3">
-          <div className="relative w-full max-w-xs">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-400" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setPage(1);
-              }}
-              placeholder="Search name, role, number or company"
-              className="w-full rounded-md border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-            />
+        <section className="min-w-0 rounded-lg border border-zinc-200 bg-white">
+          {/* The open tab underlined in black, its count beside it; the
+              gray line under them all an inset shadow, so a narrow screen
+              can still scroll the tabs sideways. */}
+          <div className="flex gap-6 overflow-x-auto px-6 pt-4 shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
+            {groups.map((group) => {
+              const active = group.key === activeGroup.key;
+              return (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => setTab(group.key)}
+                  aria-pressed={active}
+                  className={`flex shrink-0 cursor-pointer items-center gap-2 border-b-2 pb-3 text-sm font-medium whitespace-nowrap transition ${
+                    active
+                      ? "border-zinc-900 text-zinc-900"
+                      : "border-transparent text-zinc-500 hover:border-zinc-300 hover:text-zinc-900"
+                  }`}
+                >
+                  {group.label}
+                  {active && (
+                    <span className="rounded bg-[var(--team-accent-soft)] px-1.5 py-0.5 text-xs font-semibold text-[var(--team-accent)] tabular-nums">
+                      {group.members.length}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
-          <FilterSelect
-            label="Availability"
-            value={availabilityFilter}
-            options={[
-              { value: "available", label: "Available" },
-              { value: "assigned", label: "Assigned" },
-            ]}
-            onChange={(value) => {
-              setAvailabilityFilter(value);
-              setPage(1);
-            }}
-          />
+          {/* Search and the availability filter; on the right, how many
+              members the tab lists — or, with rows checked, what to do with
+              them. */}
+          <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 px-6 py-3">
+            <div className="relative w-full max-w-xs">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-zinc-400" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search name, role, number or company"
+                className="w-full rounded-md border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+              />
+            </div>
 
-          <div className="ml-auto flex items-center gap-3">
-            {selectedMembers.length > 0 ? (
-              <>
-                <span className="text-sm font-medium text-zinc-900">
-                  {selectedMembers.length} selected
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelected(new Set())}
-                  className="cursor-pointer text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
-                >
-                  Clear
-                </button>
-                {memberGroups.length > 0 && (
-                  <div className="relative">
-                    {/* Picking a group adds the checked members to it. */}
-                    <select
-                      value=""
-                      onChange={(e) => handleAddToGroup(Number(e.target.value))}
-                      aria-label="Add to group"
-                      className={SELECT}
-                    >
-                      <option value="" disabled>
-                        Add to Group
-                      </option>
-                      {memberGroups.map((group) => (
-                        <option key={group.id} value={group.id}>
-                          {group.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
-                  </div>
-                )}
-                {canManageMembers && deletableSelected.length > 0 && (
+            <FilterSelect
+              label="Availability"
+              value={availabilityFilter}
+              options={[
+                { value: "available", label: "Available" },
+                { value: "assigned", label: "Assigned" },
+              ]}
+              onChange={setAvailabilityFilter}
+            />
+
+            <div className="ml-auto flex items-center gap-3">
+              {selectedMembers.length > 0 ? (
+                <>
+                  <span className="text-sm font-medium text-zinc-900">
+                    {selectedMembers.length} selected
+                  </span>
                   <button
                     type="button"
-                    onClick={() => handleDelete(deletableSelected)}
-                    disabled={deleting}
-                    className={BULK_DELETE_BUTTON}
+                    onClick={() => setSelected(new Set())}
+                    className="cursor-pointer text-sm font-medium text-zinc-500 transition hover:text-zinc-900"
                   >
-                    <Trash2 className="size-4" />
-                    Delete
+                    Clear
                   </button>
-                )}
-              </>
-            ) : (
-              <span className="text-sm text-zinc-500">
-                {total} {total === 1 ? "member" : "members"}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {deleteError && !panel && (
-          <p role="alert" className="border-b border-zinc-200 px-6 py-2 text-sm text-red-600">
-            {deleteError}
-          </p>
-        )}
-
-        {total === 0 ? (
-          <p className="py-12 text-center text-sm text-zinc-400">
-            {filtering ? (
-              "No members match."
-            ) : !canManageMembers ? (
-              "No members yet."
-            ) : (
-              <>
-                No members yet.{" "}
-                <button
-                  type="button"
-                  onClick={() => openPanel({ mode: "add", defaults: activeGroup.defaults })}
-                  className="cursor-pointer font-medium text-zinc-700 hover:underline"
-                >
-                  Add one
-                </button>
-              </>
-            )}
-          </p>
-        ) : (
-          <>
-            <div className="overflow-x-auto">
-              {/* Fixed widths, so the columns stay put from tab to tab. */}
-              <table className="w-full min-w-5xl table-fixed text-left text-[13px] text-zinc-600">
-                <colgroup>
-                  <col className="w-12" />
-                  <col className="w-64" />
-                  <col className="w-48" />
-                  <col className="w-40" />
-                  <col className="w-32" />
-                  <col />
-                  <col className="w-52" />
-                  <col className="w-14" />
-                </colgroup>
-                <thead>
-                  <tr className="border-b border-zinc-200 bg-zinc-50/70 text-xs text-zinc-500">
-                    <SelectAllCell
-                      checked={allChecked}
-                      indeterminate={selectedMembers.length > 0 && !allChecked}
-                      onChange={() =>
-                        setChecked(
-                          pageMembers.map((member) => member.id),
-                          !allChecked
-                        )
-                      }
-                      label={`Select all ${activeGroup.label} on this page`}
-                    />
-                    <th className={TH}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setAscending((value) => !value);
-                          setPage(1);
-                        }}
-                        className="flex cursor-pointer items-center gap-1 font-medium transition hover:text-zinc-900"
+                  {memberGroups.length > 0 && (
+                    <div className="relative">
+                      {/* Picking a group adds the checked members to it. */}
+                      <select
+                        value=""
+                        onChange={(e) => handleAddToGroup(Number(e.target.value))}
+                        aria-label="Add to group"
+                        className={SELECT}
                       >
-                        Name
-                        {ascending ? (
-                          <ArrowDown aria-label="A to Z" className="size-3.5" />
-                        ) : (
-                          <ArrowUp aria-label="Z to A" className="size-3.5" />
-                        )}
-                      </button>
-                    </th>
-                    <th className={TH}>Role</th>
-                    <th className={TH}>Contact number</th>
-                    <th className={TH}>Availability</th>
-                    <th className={TH}>Current task</th>
-                    <th className={TH}>Current project</th>
-                    {/* relative: the hidden label is placed in its cell,
-                        not against the page — which it would otherwise
-                        stretch, invisibly, for a scroll to slide. */}
-                    <th className={`${TH} relative`}>
-                      <span className="sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-100">
-                  {pageMembers.map((member) => {
-                    const checked = selected.has(member.id);
-                    const open = openByWorker.get(member.id) ?? [];
-                    // Tasks and phases; a project they run shows only
-                    // under its project.
-                    const openTasks = open.filter((a) => a.kind !== "project");
-                    // Each project once, [id, name].
-                    const projects = Array.from(
-                      new Map(open.map((a) => [a.projectId, a.projectName] as const))
-                    );
-                    const company =
-                      member.employmentType === "subcontractor"
-                        ? member.subcontractorCompany
-                        : null;
-                    return (
-                      <tr
-                        key={member.id}
-                        onClick={() =>
-                          openPanel({ mode: canManageMembers ? "edit" : "view", memberId: member.id })
-                        }
-                        className={`cursor-pointer transition-colors ${
-                          checked ? "bg-zinc-100" : "hover:bg-zinc-50"
-                        }`}
-                      >
-                        <SelectCell
-                          checked={checked}
-                          onChange={() => setChecked([member.id], !checked)}
-                          label={`Select ${member.fullName}`}
-                        />
-                        <td className={TD}>
-                          <div className="flex items-center gap-3">
-                            <InitialsAvatar name={member.fullName} large />
-                            {/* Its click is the row's (bubbles up). */}
-                            <button
-                              type="button"
-                              className="min-w-0 cursor-pointer truncate text-left font-semibold text-zinc-900"
-                            >
-                              {member.fullName}
-                            </button>
-                          </div>
-                        </td>
-                        {/* A subcontractor's company follows their role. */}
-                        <td
-                          className={`${TD} truncate text-zinc-500`}
-                          title={
-                            company
-                              ? [member.title, company].filter(Boolean).join(" · ")
-                              : undefined
-                          }
-                        >
-                          {member.title}
-                          {company && (
-                            <span className="text-zinc-400">
-                              {member.title && " · "}
-                              {company}
-                            </span>
-                          )}
-                          {!member.title && !company && BLANK}
-                        </td>
-                        <td className={`${TD} truncate text-zinc-700 tabular-nums`}>
-                          {member.contactNumber || BLANK}
-                        </td>
-                        <td className={TD}>
-                          <AvailabilityBadge assigned={open.length > 0} />
-                        </td>
-                        {/* One line each, so every row keeps the same height —
-                            cut off with "…" (soonest-ending first, so what
-                            they're on now leads); the member's form lists
-                            them in full, and hovering shows them too. */}
-                        <td
-                          className={`${TD} truncate text-zinc-700`}
-                          title={openTasks.map(describeAssignment).join("\n") || undefined}
-                        >
-                          {openTasks.length === 0
-                            ? BLANK
-                            : openTasks.map((assignment) => assignment.itemName).join(", ")}
-                        </td>
-                        {/* Their first project, opening it; how many more
-                            after it, every one of them on hover. */}
-                        <td className={TD}>
-                          {projects.length === 0 ? (
-                            BLANK
-                          ) : (
-                            <span
-                              className="flex min-w-0 items-center gap-1.5"
-                              title={projects.map(([, name]) => name).join(", ")}
-                            >
-                              <Folder
-                                aria-hidden
-                                className="size-3.5 shrink-0 text-[var(--team-accent)]"
-                              />
-                              {projectsHref ? (
-                                <Link
-                                  href={`${projectsHref}/${projects[0][0]}`}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="truncate font-medium text-[var(--team-accent)] hover:underline"
-                                >
-                                  {projects[0][1]}
-                                </Link>
-                              ) : (
-                                <span className="truncate font-medium text-[var(--team-accent)]">
-                                  {projects[0][1]}
-                                </span>
-                              )}
-                              {projects.length > 1 && (
-                                <span className="shrink-0 text-xs text-zinc-400">
-                                  +{projects.length - 1}
-                                </span>
-                              )}
-                            </span>
-                          )}
-                        </td>
-                        <td className={`${TD} text-right`}>
-                          <RowMenu
-                            label={`Actions for ${member.fullName}`}
-                            items={rowMenuItems(member)}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 px-6 py-3 text-xs text-zinc-500">
-              <span>
-                Showing {pageStart + 1}–{pageStart + pageMembers.length} of {total}{" "}
-                {total === 1 ? noun : nounPlural}
-              </span>
-              <nav aria-label="Pages" className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setPage(currentPage - 1)}
-                  disabled={currentPage === 1}
-                  aria-label="Previous page"
-                  className="cursor-pointer rounded p-1 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-                >
-                  <ChevronLeft className="size-4" />
-                </button>
-                {pageList(currentPage, pageCount).map((item, index) =>
-                  item === "gap" ? (
-                    <span key={`gap-${index}`} className="px-1 text-zinc-400">
-                      …
-                    </span>
-                  ) : (
+                        <option value="" disabled>
+                          Add to Group
+                        </option>
+                        {memberGroups.map((group) => (
+                          <option key={group.id} value={group.id}>
+                            {group.name}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
+                    </div>
+                  )}
+                  {canManageMembers && deletableSelected.length > 0 && (
                     <button
-                      key={item}
                       type="button"
-                      onClick={() => setPage(item)}
-                      aria-current={item === currentPage ? "page" : undefined}
-                      className={`min-w-7 cursor-pointer rounded border px-2 py-1 text-xs font-medium tabular-nums transition ${
-                        item === currentPage
-                          ? "border-zinc-300 bg-white text-zinc-900 shadow-sm"
-                          : "border-transparent text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-                      }`}
+                      onClick={() => handleDelete(deletableSelected)}
+                      disabled={deleting}
+                      className={BULK_DELETE_BUTTON}
                     >
-                      {item}
+                      <Trash2 className="size-4" />
+                      Delete
                     </button>
-                  )
-                )}
-                <button
-                  type="button"
-                  onClick={() => setPage(currentPage + 1)}
-                  disabled={currentPage === pageCount}
-                  aria-label="Next page"
-                  className="cursor-pointer rounded p-1 text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-                >
-                  <ChevronRight className="size-4" />
-                </button>
-              </nav>
+                  )}
+                </>
+              ) : (
+                <span className="text-sm text-zinc-500">
+                  {total} {total === 1 ? "member" : "members"}
+                </span>
+              )}
             </div>
-          </>
-        )}
+          </div>
 
-        <Modal
-          open={panel !== null}
-          onClose={closePanel}
-          title={panelMember ? panelMember.fullName : "Add Member"}
-          menuItems={
-            canManageMembers && panelMember
-              ? panelMember.profileId
-                ? [
-                    // Someone with a login account (Management's project
-                    // managers and foremen) is managed in Accounts.
-                    { label: "Manage in Accounts", onSelect: () => manageInAccounts(panelMember) },
-                  ]
-                : [
-                    {
-                      label: "Delete",
-                      destructive: true,
-                      onSelect: () => handleDelete([panelMember]),
-                    },
-                  ]
-              : undefined
-          }
-        >
-          {deleteError && (
-            <p role="alert" className="mb-4 text-sm text-red-600">
+          {deleteError && !panel && (
+            <p role="alert" className="border-b border-zinc-200 px-6 py-2 text-sm text-red-600">
               {deleteError}
             </p>
           )}
-          {panel?.mode === "add" && (
-            <MemberForm
-              key="add"
-              defaults={panel.defaults}
-              onSuccess={closePanel}
-              onCancel={closePanel}
-            />
+
+          {total === 0 ? (
+            <p className="py-12 text-center text-sm text-zinc-400">
+              {filtering ? (
+                "No members match."
+              ) : !canManageMembers ? (
+                "No members yet."
+              ) : (
+                <>
+                  No members yet.{" "}
+                  <button
+                    type="button"
+                    onClick={() => openPanel({ mode: "add", defaults: activeGroup.defaults })}
+                    className="cursor-pointer font-medium text-zinc-700 hover:underline"
+                  >
+                    Add one
+                  </button>
+                </>
+              )}
+            </p>
+          ) : (
+            <>
+              {/* Every member of the tab, scrolling within the card past
+                  about eight rows — its header row staying put on top
+                  (sticky, which also keeps the header's hidden label in
+                  its cell rather than placed against the page). */}
+              <div className="max-h-[34rem] overflow-auto">
+                {/* Fixed widths, so the columns stay put from tab to tab. */}
+                <table className="w-full min-w-5xl table-fixed text-left text-[13px] text-zinc-600">
+                  <colgroup>
+                    <col className="w-12" />
+                    <col className="w-64" />
+                    <col className="w-48" />
+                    <col className="w-40" />
+                    <col className="w-32" />
+                    <col />
+                    <col className="w-52" />
+                    <col className="w-14" />
+                  </colgroup>
+                  <thead>
+                    <tr className="text-xs text-zinc-500 [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-zinc-50 [&>th]:shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
+                      <SelectAllCell
+                        checked={allChecked}
+                        indeterminate={selectedMembers.length > 0 && !allChecked}
+                        onChange={() =>
+                          setChecked(
+                            activeGroup.members.map((member) => member.id),
+                            !allChecked
+                          )
+                        }
+                        label={`Select all ${activeGroup.label}`}
+                      />
+                      <th className={TH}>
+                        <button
+                          type="button"
+                          onClick={() => setAscending((value) => !value)}
+                          className="flex cursor-pointer items-center gap-1 font-medium transition hover:text-zinc-900"
+                        >
+                          Name
+                          {ascending ? (
+                            <ArrowDown aria-label="A to Z" className="size-3.5" />
+                          ) : (
+                            <ArrowUp aria-label="Z to A" className="size-3.5" />
+                          )}
+                        </button>
+                      </th>
+                      <th className={TH}>Role</th>
+                      <th className={TH}>Contact number</th>
+                      <th className={TH}>Availability</th>
+                      <th className={TH}>Current task</th>
+                      <th className={TH}>Current project</th>
+                      <th className={TH}>
+                        <span className="sr-only">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {activeGroup.members.map((member) => {
+                      const checked = selected.has(member.id);
+                      const open = openByWorker.get(member.id) ?? [];
+                      // Tasks and phases; a project they run shows only
+                      // under its project.
+                      const openTasks = open.filter((a) => a.kind !== "project");
+                      // Each project once, [id, name].
+                      const projects = Array.from(
+                        new Map(open.map((a) => [a.projectId, a.projectName] as const))
+                      );
+                      const company =
+                        member.employmentType === "subcontractor"
+                          ? member.subcontractorCompany
+                          : null;
+                      return (
+                        <tr
+                          key={member.id}
+                          onClick={() =>
+                            openPanel({
+                              mode: canManageMembers ? "edit" : "view",
+                              memberId: member.id,
+                            })
+                          }
+                          className={`cursor-pointer transition-colors ${
+                            checked ? "bg-zinc-100" : "hover:bg-zinc-50"
+                          }`}
+                        >
+                          <SelectCell
+                            checked={checked}
+                            onChange={() => setChecked([member.id], !checked)}
+                            label={`Select ${member.fullName}`}
+                          />
+                          <td className={TD}>
+                            <div className="flex items-center gap-3">
+                              <InitialsAvatar name={member.fullName} large />
+                              {/* Its click is the row's (bubbles up). */}
+                              <button
+                                type="button"
+                                className="min-w-0 cursor-pointer truncate text-left font-semibold text-zinc-900"
+                              >
+                                {member.fullName}
+                              </button>
+                            </div>
+                          </td>
+                          {/* A subcontractor's company follows their role. */}
+                          <td
+                            className={`${TD} truncate text-zinc-500`}
+                            title={
+                              company
+                                ? [member.title, company].filter(Boolean).join(" · ")
+                                : undefined
+                            }
+                          >
+                            {member.title}
+                            {company && (
+                              <span className="text-zinc-400">
+                                {member.title && " · "}
+                                {company}
+                              </span>
+                            )}
+                            {!member.title && !company && BLANK}
+                          </td>
+                          <td className={`${TD} truncate text-zinc-700 tabular-nums`}>
+                            {member.contactNumber || BLANK}
+                          </td>
+                          <td className={TD}>
+                            <AvailabilityBadge assigned={open.length > 0} />
+                          </td>
+                          {/* One line each, so every row keeps the same
+                              height — cut off with "…" (soonest-ending
+                              first, so what they're on now leads); the
+                              member's form lists them in full, and hovering
+                              shows them too. */}
+                          <td
+                            className={`${TD} truncate text-zinc-700`}
+                            title={openTasks.map(describeAssignment).join("\n") || undefined}
+                          >
+                            {openTasks.length === 0
+                              ? BLANK
+                              : openTasks.map((assignment) => assignment.itemName).join(", ")}
+                          </td>
+                          {/* Their first project, opening it; how many more
+                              after it, every one of them on hover. */}
+                          <td className={TD}>
+                            {projects.length === 0 ? (
+                              BLANK
+                            ) : (
+                              <span
+                                className="flex min-w-0 items-center gap-1.5"
+                                title={projects.map(([, name]) => name).join(", ")}
+                              >
+                                <Folder
+                                  aria-hidden
+                                  className="size-3.5 shrink-0 text-[var(--team-accent)]"
+                                />
+                                {projectsHref ? (
+                                  <Link
+                                    href={`${projectsHref}/${projects[0][0]}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="truncate font-medium text-[var(--team-accent)] hover:underline"
+                                  >
+                                    {projects[0][1]}
+                                  </Link>
+                                ) : (
+                                  <span className="truncate font-medium text-[var(--team-accent)]">
+                                    {projects[0][1]}
+                                  </span>
+                                )}
+                                {projects.length > 1 && (
+                                  <span className="shrink-0 text-xs text-zinc-400">
+                                    +{projects.length - 1}
+                                  </span>
+                                )}
+                              </span>
+                            )}
+                          </td>
+                          <td className={`${TD} text-right`}>
+                            <RowMenu
+                              label={`Actions for ${member.fullName}`}
+                              items={rowMenuItems(member)}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="border-t border-zinc-200 px-6 py-3 text-xs text-zinc-500">
+                Showing <span className="font-semibold text-zinc-700">{total}</span> of{" "}
+                <span className="font-semibold text-zinc-700">{tabTotal}</span>{" "}
+                {tabTotal === 1 ? noun : nounPlural}
+              </div>
+            </>
           )}
-          {panel?.mode === "view" && panelMember && (
-            <MemberProfile
-              member={panelMember}
-              linkedAccount={
-                panelMember.profileId ? (accountById.get(panelMember.profileId) ?? null) : null
-              }
-              assignments={allByWorker.get(panelMember.id) ?? []}
-              groups={memberGroups
-                .filter((group) => group.memberIds.includes(panelMember.id))
-                .map((group) => group.name)}
-              hoursWorked={hoursWorked.filter((entry) => entry.workerId === panelMember.id)}
-              onEdit={
-                canManageMembers
-                  ? () => setPanel({ mode: "edit", memberId: panelMember.id })
-                  : undefined
-              }
-            />
-          )}
-          {panel?.mode === "edit" && panelMember && (
-            <MemberForm
-              key={panelMember.id}
-              member={panelMember}
-              onSuccess={closePanel}
-              onCancel={closePanel}
-            >
-              {/* Edge to edge: -mx-6 takes back the modal body's own px-6. */}
-              <div aria-hidden="true" className="-mx-6 my-1 border-t border-zinc-200 sm:col-span-2" />
-              {/* Everything in the row's Current task, in full — by start
-                  date, with the project, dates and status. */}
-              <section className="flex flex-col gap-2 sm:col-span-2">
-                <h3 className="text-sm font-semibold text-zinc-900">Currently Task Assigned To</h3>
-                {panelOpenTasks.length === 0 ? (
-                  <p className="text-sm text-zinc-400">Not assigned to any task right now.</p>
-                ) : (
-                  <AssignmentsTable assignments={panelOpenTasks} />
-                )}
-              </section>
-            </MemberForm>
-          )}
-        </Modal>
-      </section>
+
+          <Modal
+            open={panel !== null}
+            onClose={closePanel}
+            title={panelMember ? panelMember.fullName : "Add Member"}
+            menuItems={
+              canManageMembers && panelMember
+                ? panelMember.profileId
+                  ? [
+                      // Someone with a login account (Management's project
+                      // managers and foremen) is managed in Accounts.
+                      {
+                        label: "Manage in Accounts",
+                        onSelect: () => manageInAccounts(panelMember),
+                      },
+                    ]
+                  : [
+                      {
+                        label: "Delete",
+                        destructive: true,
+                        onSelect: () => handleDelete([panelMember]),
+                      },
+                    ]
+                : undefined
+            }
+          >
+            {deleteError && (
+              <p role="alert" className="mb-4 text-sm text-red-600">
+                {deleteError}
+              </p>
+            )}
+            {panel?.mode === "add" && (
+              <MemberForm
+                key="add"
+                defaults={panel.defaults}
+                onSuccess={closePanel}
+                onCancel={closePanel}
+              />
+            )}
+            {panel?.mode === "view" && panelMember && (
+              <MemberProfile
+                member={panelMember}
+                linkedAccount={
+                  panelMember.profileId ? (accountById.get(panelMember.profileId) ?? null) : null
+                }
+                assignments={allByWorker.get(panelMember.id) ?? []}
+                groups={memberGroups
+                  .filter((group) => group.memberIds.includes(panelMember.id))
+                  .map((group) => group.name)}
+                hoursWorked={hoursWorked.filter((entry) => entry.workerId === panelMember.id)}
+                onEdit={
+                  canManageMembers
+                    ? () => setPanel({ mode: "edit", memberId: panelMember.id })
+                    : undefined
+                }
+              />
+            )}
+            {panel?.mode === "edit" && panelMember && (
+              <MemberForm
+                key={panelMember.id}
+                member={panelMember}
+                onSuccess={closePanel}
+                onCancel={closePanel}
+              >
+                {/* Edge to edge: -mx-6 takes back the modal body's own px-6. */}
+                <div aria-hidden="true" className="-mx-6 my-1 border-t border-zinc-200 sm:col-span-2" />
+                {/* Everything in the row's Current task, in full — by start
+                    date, with the project, dates and status. */}
+                <section className="flex flex-col gap-2 sm:col-span-2">
+                  <h3 className="text-sm font-semibold text-zinc-900">Currently Task Assigned To</h3>
+                  {panelOpenTasks.length === 0 ? (
+                    <p className="text-sm text-zinc-400">Not assigned to any task right now.</p>
+                  ) : (
+                    <AssignmentsTable assignments={panelOpenTasks} />
+                  )}
+                </section>
+              </MemberForm>
+            )}
+          </Modal>
+        </section>
+      </div>
     </div>
   );
 }

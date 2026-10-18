@@ -466,7 +466,7 @@ export function MaterialsMonitoringView({
                   <th className="px-4 py-3 text-center">Planned</th>
                   <th className="px-4 py-3 text-center">Used</th>
                   <th className="px-4 py-3 text-center">Remaining</th>
-                  <th className="px-4 py-3 text-center">Spent / Budget</th>
+                  <th className="px-4 py-3 text-center">Spent / Planned</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Last used</th>
                   <th className="w-14 py-3 pr-5">
@@ -588,7 +588,7 @@ export function MaterialsMonitoringView({
                                       <span>Task</span>
                                       <span className="text-center">Planned</span>
                                       <span className="text-center">Used</span>
-                                      <span className="text-center">Spent / Budget</span>
+                                      <span className="text-center">Spent / Planned</span>
                                       <span className="text-center">Last used</span>
                                     </div>
                                     {record.items.map((item) => {

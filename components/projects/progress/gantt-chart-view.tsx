@@ -78,6 +78,7 @@ import {
   materialKey,
   scheduleStatusFor,
   EMPTY_PROGRESS_ANCHOR,
+  ZERO_COSTS,
   type ScheduleStatus,
 } from "@/lib/task-progress/calculate";
 
@@ -2478,6 +2479,7 @@ export function GanttChartView({
         estimatedQuantity: 0,
         unit: null,
         percentComplete: 0,
+        costsToDate: { ...ZERO_COSTS },
       },
     });
 
@@ -2525,6 +2527,7 @@ export function GanttChartView({
           estimatedQuantity: 0,
           unit: null,
           percentComplete: 0,
+          costsToDate: { ...ZERO_COSTS },
         },
       });
       setEditingCategoryId(result.categoryId);
@@ -2580,6 +2583,7 @@ export function GanttChartView({
       isMilestone: false,
       priority: "medium",
       percentComplete: 0,
+      costsToDate: { ...ZERO_COSTS },
       materialAssignments: [],
     };
     setPendingNewTask({ categoriesAtSet, categoryId, task: placeholderTask });

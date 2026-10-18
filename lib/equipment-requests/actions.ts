@@ -272,7 +272,6 @@ export async function updateEquipmentRequest(
   }
 
   revalidateProjectPaths(projectId);
-  revalidateProjectPaths(projectId, `/equipment/requests/${requestId}`);
   return { success: true };
 }
 
@@ -304,7 +303,6 @@ export async function approveEquipmentRequest(
   }
 
   revalidateProjectPaths(projectId);
-  revalidateProjectPaths(projectId, `/equipment/requests/${requestId}`);
   return { success: true };
 }
 
@@ -331,6 +329,94 @@ export async function cancelEquipmentRequest(
   }
 
   revalidateProjectPaths(projectId);
-  revalidateProjectPaths(projectId, `/equipment/requests/${requestId}`);
+  return { success: true };
+}
+
+/**
+ * Fulfilling an approved equipment request — each item's received
+ * quantity added to what's been fulfilled (never past what was asked
+ * for), and the request's status following it (Partially Fulfilled, then
+ * Fulfilled; see deriveEquipmentRequestStatus) — the step a Daily Log's
+ * Equipment Acquisition entry used to do, done from the request itself.
+ */
+export async function recordEquipmentRequestDelivery(
+  requestId: number,
+  projectId: number,
+  deliveries: { itemId: number; quantity: number }[]
+): Promise<EquipmentRequestActionState> {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) {
+    return { error: "You are not authorized to fulfill equipment requests." };
+  }
+
+  const received = new Map<number, number>();
+  for (const delivery of deliveries ?? []) {
+    const quantity = Number(delivery?.quantity);
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      return { error: "Received quantities must be 0 or more." };
+    }
+    if (quantity > 0) received.set(Number(delivery.itemId), quantity);
+  }
+  if (received.size === 0) {
+    return { error: "Enter how much of at least one item was received." };
+  }
+
+  const supabase = await createClient();
+  const { data: request, error: requestError } = await supabase
+    .from("equipment_requisitions")
+    .select("status")
+    .eq("id", requestId)
+    .eq("project_id", projectId)
+    .single();
+
+  if (requestError || !request) {
+    return { error: "This equipment request no longer exists." };
+  }
+  if (request.status !== "approved" && request.status !== "partially_fulfilled") {
+    return { error: "Only an approved request can be fulfilled." };
+  }
+
+  const { data: itemRows, error: itemsError } = await supabase
+    .from("equipment_requisition_items")
+    .select("id, quantity_needed, quantity_fulfilled")
+    .eq("equipment_request_id", requestId);
+
+  if (itemsError || !itemRows) {
+    console.error("[recordEquipmentRequestDelivery] items query failed:", itemsError?.message);
+    return { error: "Could not fulfill the request. Please try again." };
+  }
+
+  const items = itemRows.map((row) => ({
+    id: row.id,
+    quantityNeeded: Number(row.quantity_needed) || 0,
+    quantityFulfilled: Number(row.quantity_fulfilled) || 0,
+  }));
+  for (const item of items) {
+    const quantity = received.get(item.id);
+    if (!quantity) continue;
+    item.quantityFulfilled = Math.min(item.quantityNeeded, item.quantityFulfilled + quantity);
+    const { error } = await supabase
+      .from("equipment_requisition_items")
+      .update({ quantity_fulfilled: item.quantityFulfilled })
+      .eq("id", item.id);
+    if (error) {
+      console.error("[recordEquipmentRequestDelivery] item update failed:", error.message);
+      return { error: "Could not fulfill the request. Please try again." };
+    }
+  }
+
+  const nextStatus = deriveEquipmentRequestStatus(request.status, items);
+  if (nextStatus !== request.status) {
+    const { error } = await supabase
+      .from("equipment_requisitions")
+      .update({ status: nextStatus })
+      .eq("id", requestId);
+    if (error) {
+      console.error("[recordEquipmentRequestDelivery] status update failed:", error.message);
+      return { error: "Could not update the request's status. Please try again." };
+    }
+  }
+
+  revalidateProjectPaths(projectId);
   return { success: true };
 }
