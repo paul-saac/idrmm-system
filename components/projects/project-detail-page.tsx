@@ -29,6 +29,7 @@ import { listEquipmentRequests } from "@/lib/equipment-requests/data";
 import {
   listProgressExpenses,
   listProjectEquipmentAssignments,
+  listProjectEquipmentTaskMovements,
 } from "@/lib/equipment/data";
 import { buildEquipmentCostRecords } from "@/lib/equipment/records";
 import {
@@ -73,6 +74,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     equipmentRequests,
     progressExpenses,
     projectEquipmentAssignments,
+    equipmentTaskMovements,
     laborExpenses,
     materialExpenses,
     equipmentExpenses,
@@ -102,6 +104,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listEquipmentRequests(projectId),
     listProgressExpenses(projectId),
     listProjectEquipmentAssignments(projectId),
+    listProjectEquipmentTaskMovements(projectId),
     listLaborExpenses(projectId),
     listMaterialExpenses(projectId),
     listEquipmentExpenses(projectId),
@@ -211,6 +214,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       progressExpenses={progressExpenses}
       currentUserName={currentUserName}
       projectEquipmentAssignments={projectEquipmentAssignments}
+      equipmentTaskMovements={equipmentTaskMovements}
       equipmentCostRecords={equipmentCostRecords}
       equipmentCostLogs={equipmentCosts}
       recentEquipmentCosts={equipmentCosts.slice(0, 10)}

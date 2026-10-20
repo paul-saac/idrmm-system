@@ -1,4 +1,5 @@
 "use client";
+import { SheetsSection } from "@/components/projects/sheets/sheets-section";
 
 import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -55,7 +56,7 @@ import type {
 import type { MaterialRecord } from "@/lib/materials/records";
 import type { MaterialRequestDetail } from "@/lib/material-requests/data";
 import type { EquipmentRequestDetail } from "@/lib/equipment-requests/data";
-import type { EquipmentAssignmentRow, ProgressEquipmentCost } from "@/lib/equipment/data";
+import type { EquipmentAssignmentRow, EquipmentTaskMovementRow, ProgressEquipmentCost } from "@/lib/equipment/data";
 import type { EquipmentCostRecord } from "@/lib/equipment/records";
 import { deleteProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { ProjectRow } from "@/lib/projects/data";
@@ -264,6 +265,7 @@ export function ProjectDetailView({
   progressExpenses,
   currentUserName,
   projectEquipmentAssignments,
+  equipmentTaskMovements,
   equipmentCostRecords,
   equipmentCostLogs,
   recentEquipmentCosts,
@@ -312,6 +314,7 @@ export function ProjectDetailView({
   progressExpenses: ProgressExpense[];
   currentUserName: string;
   projectEquipmentAssignments: EquipmentAssignmentRow[];
+  equipmentTaskMovements: EquipmentTaskMovementRow[];
   /** Every task's equipment cost — the Equipment record's Equipment cost
    * view (buildEquipmentCostRecords). */
   equipmentCostRecords: EquipmentCostRecord[];
@@ -466,7 +469,7 @@ export function ProjectDetailView({
   // two (?tab=equipment&subtab=assigned|requests) opens that list, scrolled
   // to — and a request in it (&request=7, the dashboard's), opened.
   const landOnEquipmentList: EquipmentRecordList | null =
-    initialTab === "equipment" && (subtabParam === "assigned" || subtabParam === "requests")
+    initialTab === "equipment" && (subtabParam === "assigned" || subtabParam === "monitoring" || subtabParam === "requests")
       ? subtabParam
       : null;
   const landOnEquipmentRequestId =
@@ -477,6 +480,16 @@ export function ProjectDetailView({
     landOnEquipmentList ?? "cost"
   );
   const equipmentRecordRef = useRef<HTMLDivElement>(null);
+  const requestTarget = `${tabParam}:${subtabParam}:${searchParams.get("request")}`;
+  const [handledRequestTarget, setHandledRequestTarget] = useState(requestTarget);
+  if (requestTarget !== handledRequestTarget) {
+    setHandledRequestTarget(requestTarget);
+    if (subtabParam === "requests" && (tabParam === "materials" || tabParam === "equipment")) {
+      setActiveTab(tabParam);
+      if (tabParam === "materials") setMaterialsRecordView("requests");
+      else setEquipmentRecordList("requests");
+    }
+  }
   useEffect(() => {
     if (!landOnEquipmentList) return;
     // As the Material record's own landing above: to the request's row
@@ -619,13 +632,7 @@ export function ProjectDetailView({
       </header>
 
       <main>
-        {/* No rounding at all — this block sits flush against the
-            breadcrumb header directly above it (bg-white, no gap
-            between them) and against the sticky tabs block directly
-            below it (same bg-white), so any rounded corner here —
-            top or bottom — just pokes a stray notch of the page's own
-            background through rather than reading as a deliberate
-            floating card. */}
+        {/* Project workspace header above the sticky navigation. */}
         <ProjectHeader
           project={project}
           categories={costEstimate.categories}
@@ -751,6 +758,12 @@ export function ProjectDetailView({
                 projectId={project.id}
                 costLogs={equipmentCostLogs}
                 assignments={projectEquipmentAssignments}
+                taskMovements={equipmentTaskMovements}
+                tasks={costEstimate.categories.flatMap((category) =>
+                  category.tasks
+                    .filter((task) => !task.isMilestone)
+                    .map((task) => ({ id: task.id, name: task.name, phaseName: category.name }))
+                )}
                 requests={equipmentRequests}
                 view={equipmentRecordList}
                 onViewChange={setEquipmentRecordList}
@@ -771,6 +784,7 @@ export function ProjectDetailView({
           // Inset in the page's padding on the gray content area: the
           // Cost overview card, then the Gantt Chart's own section.
           <div className="flex flex-col gap-6 pt-6">
+            <div className="flex flex-col">
             <div className="rounded border border-zinc-200 bg-white">
               <button
                 type="button"
@@ -846,6 +860,9 @@ export function ProjectDetailView({
                   />
                 </div>
               )}
+            </div>
+
+              <SheetsSection projectId={project.id} />
             </div>
 
             <GanttChartView

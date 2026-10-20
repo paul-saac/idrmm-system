@@ -71,12 +71,12 @@ export function GroupsPanel({
   return (
     // Group header separated from its cards, like the member table.
     <div className="min-w-0">
-      <aside className="flex flex-col rounded-lg border border-zinc-200 bg-white">
-        <div className="flex items-baseline gap-2 border-b border-zinc-200 px-4 py-3">
+      <aside className="flex flex-col py-5">
+        <div className="flex items-baseline gap-2 border-b border-zinc-200 px-6 pb-4">
           <h2 className="text-base font-semibold text-zinc-900">Groups</h2>
           <span className="text-xs text-zinc-400 tabular-nums">{groups.length}</span>
         </div>
-        <div className="flex flex-col gap-2 p-3">
+        <div className="flex flex-col gap-3 px-6 py-4">
           {groups.map((group) => {
             const people = group.memberIds.flatMap((id) => {
               const member = memberById.get(id);
@@ -96,7 +96,7 @@ export function GroupsPanel({
                     setPanel({ mode: "view", groupId: group.id });
                   }
                 }}
-                className="flex w-full cursor-pointer flex-col items-start gap-2.5 rounded-lg border border-zinc-200 bg-white px-4 py-3 text-left transition hover:border-zinc-400"
+                className="flex w-full cursor-pointer flex-col items-start gap-2.5 rounded border border-zinc-200 bg-white px-3 py-4 text-left transition hover:border-zinc-300 hover:bg-zinc-50"
               >
                 <div className="flex w-full items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -119,16 +119,21 @@ export function GroupsPanel({
                   </button>
                 </div>
                 {people.length > 0 && (
-                  <div className="flex -space-x-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     {people.slice(0, FACES).map((member) => (
                       <span
                         key={member.id}
                         title={member.fullName}
-                        className="rounded-full ring-2 ring-white"
+                        className="rounded-full"
                       >
-                        <InitialsAvatar name={member.fullName} />
+                        <InitialsAvatar name={member.fullName} neutral />
                       </span>
                     ))}
+                    {people.length > FACES && (
+                      <span className="text-xs text-zinc-400">
+                        +{people.length - FACES}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -136,7 +141,7 @@ export function GroupsPanel({
           })}
         </div>
 
-        <div className="flex justify-start px-3 pb-3">
+        <div className="flex justify-start px-6">
           <button
             type="button"
             onClick={() => setPanel({ mode: "add" })}
@@ -224,7 +229,7 @@ function GroupView({ group, members }: { group: MemberGroup; members: Worker[] }
                     key={member.id}
                     className="flex items-center gap-2.5 px-2 py-1.5 text-sm"
                   >
-                    <InitialsAvatar name={member.fullName} />
+                    <InitialsAvatar name={member.fullName} neutral />
                     <span className="truncate font-medium text-zinc-900">{member.fullName}</span>
                     {member.title && (
                       <span className="shrink-0 text-xs text-zinc-400">{member.title}</span>

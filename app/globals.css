@@ -331,14 +331,16 @@ input[type="date"][data-empty="true"] {
  * A phase's own bar (a "project" row, i.e. a phase with tasks) as a
  * summary bracket: a thin slate band (colors from the <Gantt>'s
  * project* props in gantt-chart-view.tsx) with a small triangle hanging
- * from each end, its progress filled in along the band like a task's.
+ * from each end. A phase is only the grouping/summary for its subtasks,
+ * so its own bar stays unfilled regardless of rolled-up progress; each
+ * subtask bar remains responsible for showing its own progress.
  *
  * The library draws, in order: a full-height background rect, the
  * full-height progress rect, then its own half-height band — on top, so
  * it would hide the progress. So that band is hidden, and the background
  * rect, cut to its top half, stands in for it instead; the progress
- * rect, cut the same, then draws over it. Corners square, and each end
- * triangle shrinks to half from its own outer top corner. Its name
+ * rect is hidden. Corners square, and each end triangle shrinks to half
+ * from its own outer top corner. Its name
  * label is hidden — the band's too thin to hold it, and the task list
  * already names the phase. `_1KJ6x`/`_2RbVy`/`_2pZMF` are the library's
  * projectWrapper/projectBackground/projectTop (confirmed directly from
@@ -353,9 +355,7 @@ input[type="date"][data-empty="true"] {
 }
 
 .gantt-task-react-root ._1KJ6x > rect:nth-of-type(2) {
-  clip-path: inset(0 0 50% 0);
-  rx: 0;
-  ry: 0;
+  display: none;
 }
 
 .gantt-task-react-root ._1KJ6x rect._2pZMF {

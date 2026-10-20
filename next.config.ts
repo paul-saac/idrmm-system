@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  outputFileTracingIncludes: {
+    "/api/pdf-assets/*": ["./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/wasm/**/*"],
+  },
   // Next.js blocks cross-origin requests to the dev server by default —
   // only `localhost` is allowed unless explicitly listed here. Needed to
   // test on a phone/other device over the LAN during development; has no

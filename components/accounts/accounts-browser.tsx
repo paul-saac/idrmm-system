@@ -103,14 +103,20 @@ export function AccountsBrowser({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative min-w-55 max-w-sm flex-1">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="flex items-baseline gap-2 text-base font-semibold text-zinc-900">
+          {roleFilter === "all" ? "All users" : roleFilter === "foreman" ? "Foremen" : `${roleLabel(roleFilter)}s`}
+          <span className="text-xs font-normal tabular-nums text-zinc-400">{filtered.length}</span>
+        </h2>
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+        <div className="relative w-72 max-w-full">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name or email"
+            aria-label="Search name or email"
             className="w-full rounded-md border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           />
         </div>
@@ -124,7 +130,9 @@ export function AccountsBrowser({
           />
         )}
 
-        <div className="ml-auto flex items-center gap-3">
+        <button type="button" onClick={() => setAddOpen(true)} className="flex items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"><Plus className="size-4" />Add User</button>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 empty:hidden">
           {selectedAccounts.length > 0 && (
             <>
               <span className="text-sm font-medium text-zinc-900">
@@ -161,25 +169,18 @@ export function AccountsBrowser({
               )}
             </>
           )}
-          <button
-            type="button"
-            onClick={() => setAddOpen(true)}
-            className={`${TOOLBAR_BUTTON} text-zinc-900 duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white active:translate-y-0`}
-          >
-            <Plus className="size-4" />
-            Add User
-          </button>
         </div>
       </div>
 
       {bulkError && (
-        <p role="alert" className="text-sm text-red-600">
+        <p role="alert" className="px-5 py-3 text-sm text-red-600">
           {bulkError}
         </p>
       )}
 
+      <div className="overflow-hidden rounded border border-zinc-200 bg-white">
       {filtered.length === 0 ? (
-        <p className="rounded-lg border border-zinc-200 bg-white py-10 text-center text-sm text-zinc-400">
+        <p className="py-10 text-center text-sm text-zinc-400">
           {accounts.length === 0 ? "No users yet." : "No users match."}
         </p>
       ) : (
@@ -192,6 +193,8 @@ export function AccountsBrowser({
         />
       )}
 
+      <div className="border-t border-zinc-200 px-5 py-4 text-xs text-zinc-500">Showing {filtered.length} of {accounts.length} users</div>
+      </div>
       <Modal
         open={openAccount !== undefined}
         onClose={() => setOpenId(null)}

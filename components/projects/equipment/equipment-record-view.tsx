@@ -8,8 +8,8 @@ import {
   EQUIPMENT_REQUEST_STATUSES,
   EquipmentRequestsTable,
 } from "@/components/projects/equipment/equipment-requests-table";
-import { AssignedEquipmentTable } from "@/components/projects/equipment/project-equipment-view";
-import type { EquipmentAssignmentRow, ProgressEquipmentCost } from "@/lib/equipment/data";
+import { AssignedEquipmentTable, EquipmentMonitoringTable } from "@/components/projects/equipment/project-equipment-view";
+import type { EquipmentAssignmentRow, EquipmentTaskMovementRow, EquipmentTaskOption, ProgressEquipmentCost } from "@/lib/equipment/data";
 import type { EquipmentCostStatus } from "@/lib/equipment/records";
 import type {
   EquipmentRequestDetail,
@@ -17,11 +17,12 @@ import type {
 } from "@/lib/equipment-requests/data";
 
 /** Which list the Equipment record shows. */
-export type EquipmentRecordList = "cost" | "assigned" | "requests";
+export type EquipmentRecordList = "cost" | "assigned" | "monitoring" | "requests";
 
 const RECORD_VIEWS: ViewOption<EquipmentRecordList>[] = [
   { value: "cost", label: "Equipment cost" },
   { value: "assigned", label: "Assigned equipment" },
+  { value: "monitoring", label: "Equipment monitoring" },
   { value: "requests", label: "Equipment requests" },
 ];
 
@@ -125,6 +126,8 @@ export function EquipmentRecordView({
   projectId,
   costLogs,
   assignments,
+  taskMovements,
+  tasks,
   requests,
   view,
   onViewChange,
@@ -136,6 +139,8 @@ export function EquipmentRecordView({
   projectId: number;
   costLogs: ProgressEquipmentCost[];
   assignments: EquipmentAssignmentRow[];
+  taskMovements: EquipmentTaskMovementRow[];
+  tasks: EquipmentTaskOption[];
   requests: EquipmentRequestDetail[];
   view: EquipmentRecordList;
   onViewChange: (view: EquipmentRecordList) => void;
@@ -148,6 +153,7 @@ export function EquipmentRecordView({
   const [costQuery, setCostQuery] = useState("");
   const [assignedQuery, setAssignedQuery] = useState("");
   const [assignedStatus, setAssignedStatus] = useState<"on_site" | "returned" | "all">("all");
+  const [monitoringQuery, setMonitoringQuery] = useState("");
   const [requestQuery, setRequestQuery] = useState("");
   const [requestStatus, setRequestStatus] = useState<EquipmentRequestStatus | "all">("all");
   const [requestOpen, setRequestOpen] = useState(false);
@@ -180,7 +186,8 @@ export function EquipmentRecordView({
       return (
         !q ||
         assignment.equipmentName.toLowerCase().includes(q) ||
-        assignment.equipmentAssetTag.toLowerCase().includes(q)
+        assignment.equipmentAssetTag.toLowerCase().includes(q) ||
+        assignment.currentTaskName?.toLowerCase().includes(q)
       );
     });
   }, [assignments, assignedQuery, assignedStatus]);
@@ -198,6 +205,15 @@ export function EquipmentRecordView({
         );
       });
   }, [requests, requestQuery, requestStatus]);
+  const movementsShown = useMemo(() => {
+    const q = monitoringQuery.trim().toLowerCase();
+    return taskMovements.filter((movement) =>
+      !q ||
+      movement.equipmentName.toLowerCase().includes(q) ||
+      movement.equipmentAssetTag.toLowerCase().includes(q) ||
+      movement.taskName.toLowerCase().includes(q)
+    );
+  }, [taskMovements, monitoringQuery]);
 
   const onSiteCount = assignments.filter((assignment) => !assignment.returnedAt).length;
   const returnedCount = assignments.length - onSiteCount;
@@ -206,6 +222,8 @@ export function EquipmentRecordView({
       ? { shown: costLogsShown.length, total: costLogs.length, noun: ["log", "logs"] }
       : view === "assigned"
         ? { shown: assignedShown.length, total: assignments.length, noun: ["equipment", "equipment"] }
+        : view === "monitoring"
+          ? { shown: movementsShown.length, total: taskMovements.length, noun: ["movement", "movements"] }
         : { shown: requestsShown.length, total: requests.length, noun: ["request", "requests"] };
 
   return (
@@ -225,6 +243,10 @@ export function EquipmentRecordView({
             <span className="text-xs text-zinc-400">
               {onSiteCount} on site
               {returnedCount > 0 && ` · ${returnedCount} returned`}
+            </span>
+          ) : view === "monitoring" ? (
+            <span className="text-xs text-zinc-400">
+              {taskMovements.length} {taskMovements.length === 1 ? "movement" : "movements"}
             </span>
           ) : (
             <span className="text-xs text-zinc-400">
@@ -271,6 +293,13 @@ export function EquipmentRecordView({
                 ]}
               />
             </>
+          ) : view === "monitoring" ? (
+            <SearchBox
+              value={monitoringQuery}
+              onChange={setMonitoringQuery}
+              placeholder="Search equipment, asset tag, or task..."
+              label="Search equipment movement history"
+            />
           ) : (
             <>
               <SearchBox
@@ -291,7 +320,15 @@ export function EquipmentRecordView({
           )}
         </div>
 
-        {view === "requests" ? (
+        {view === "monitoring" ? (
+          movementsShown.length === 0 ? (
+            <p className="py-10 text-center text-sm text-zinc-400">
+              {taskMovements.length === 0 ? "No equipment task movements yet." : "No movements match your search."}
+            </p>
+          ) : (
+            <EquipmentMonitoringTable movements={movementsShown} />
+          )
+        ) : view === "requests" ? (
           requestsShown.length === 0 ? (
             <p className="py-10 text-center text-sm text-zinc-400">
               {requests.length === 0
@@ -314,7 +351,7 @@ export function EquipmentRecordView({
                 : "No equipment matches your filters."}
             </p>
           ) : (
-            <AssignedEquipmentTable projectId={projectId} assignments={assignedShown} />
+            <AssignedEquipmentTable projectId={projectId} assignments={assignedShown} tasks={tasks} />
           )
         ) : costLogsShown.length === 0 ? (
           <p className="py-10 text-center text-sm text-zinc-400">

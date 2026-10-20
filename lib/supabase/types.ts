@@ -1,4 +1,6 @@
 import type { UserRole } from "@/lib/auth/roles";
+import type { CloseoutRecord } from "@/lib/reports/closeout-model";
+import type { Sheet, SheetReview } from "@/lib/sheets/model";
 
 export type ProjectStatus = "planning" | "ongoing" | "completed";
 
@@ -23,6 +25,24 @@ export type AccountEventAction =
 export interface Database {
   public: {
     Tables: {
+      project_sheets: {
+        Row: Sheet;
+        Insert: Omit<Sheet, "id" | "created_at" | "reviewed_by" | "reviewed_name" | "reviewed_at" | "review_notes">;
+        Update: { status?: Sheet["status"]; review_notes?: string };
+        Relationships: [];
+      };
+      project_sheet_reviews: {
+        Row: SheetReview & { reviewer_id: string };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
+      project_closeout_reports: {
+        Row: CloseoutRecord;
+        Insert: Pick<CloseoutRecord, "project_id"> & Partial<Omit<CloseoutRecord, "project_id">>;
+        Update: Partial<Omit<CloseoutRecord, "project_id">>;
+        Relationships: [];
+      };
       profiles: {
         Row: {
           id: string;
@@ -361,10 +381,10 @@ export interface Database {
           recipient_id: string;
           actor_id: string | null;
           actor_name: string | null;
-          kind: "progress_override";
+          kind: "progress_override" | "material_request" | "equipment_request";
           project_id: number;
           project_name: string;
-          item_kind: "task" | "category";
+          item_kind: "task" | "category" | "material_request" | "equipment_request";
           item_id: number;
           item_name: string;
           entry_date: string;
@@ -375,10 +395,10 @@ export interface Database {
           recipient_id: string;
           actor_id?: string | null;
           actor_name?: string | null;
-          kind?: "progress_override";
+          kind?: "progress_override" | "material_request" | "equipment_request";
           project_id: number;
           project_name: string;
-          item_kind: "task" | "category";
+          item_kind: "task" | "category" | "material_request" | "equipment_request";
           item_id: number;
           item_name: string;
           entry_date: string;
@@ -1428,6 +1448,41 @@ export interface Database {
         };
         Relationships: [];
       };
+      equipment_task_assignments: {
+        Row: {
+          id: number;
+          equipment_assignment_id: number;
+          project_id: number;
+          task_id: number | null;
+          task_name: string;
+          assigned_by: string | null;
+          assigned_at: string;
+          released_at: string | null;
+          release_reason: "moved" | "returned" | null;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          equipment_assignment_id: number;
+          project_id: number;
+          task_id?: number | null;
+          task_name: string;
+          assigned_by?: string | null;
+          assigned_at?: string;
+          released_at?: string | null;
+          release_reason?: "moved" | "returned" | null;
+          notes?: string | null;
+        };
+        Update: {
+          task_id?: number | null;
+          task_name?: string;
+          assigned_at?: string;
+          released_at?: string | null;
+          release_reason?: "moved" | "returned" | null;
+          notes?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
@@ -1451,6 +1506,23 @@ export interface Database {
       };
       sync_equipment_status: {
         Args: { p_equipment_id: number };
+        Returns: undefined;
+      };
+      move_equipment_to_task: {
+        Args: {
+          p_equipment_assignment_id: number;
+          p_project_id: number;
+          p_task_id: number;
+          p_notes?: string | null;
+        };
+        Returns: undefined;
+      };
+      close_equipment_task_assignment: {
+        Args: {
+          p_equipment_assignment_id: number;
+          p_project_id: number;
+          p_released_at?: string;
+        };
         Returns: undefined;
       };
       /** See 0060_team_member_details.sql. */

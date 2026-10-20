@@ -6,10 +6,11 @@ import { getSessionProfile } from "@/lib/auth/session";
 /** One notification in the bell — see 0061_notifications.sql. */
 export type AppNotification = {
   id: number;
+  kind: "progress_override" | "material_request" | "equipment_request";
   actorName: string | null;
   projectId: number;
   projectName: string;
-  itemKind: "task" | "category";
+  itemKind: "task" | "category" | "material_request" | "equipment_request";
   itemId: number;
   itemName: string;
   /** The day whose progress was overridden, YYYY-MM-DD. */
@@ -48,6 +49,7 @@ export async function listMyNotifications(): Promise<{
   return {
     items: (data ?? []).map((row) => ({
       id: row.id,
+      kind: row.kind,
       actorName: row.actor_name,
       projectId: row.project_id,
       projectName: row.project_name,

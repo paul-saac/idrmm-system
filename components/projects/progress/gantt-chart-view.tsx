@@ -3896,10 +3896,10 @@ export function GanttChartView({
                   // (Tailwind's blue-600 / blue-700).
                   milestoneBackgroundColor="#155dfc"
                   milestoneBackgroundSelectedColor="#1447e6"
-                  // A phase's summary bar: a slate band (Tailwind's
-                  // slate-500 / slate-600), its progress filled in the
-                  // same purple a task's is (the library's own task
-                  // progress colors) — its bracket shape is globals.css's.
+                  // A phase's summary bar: a slate bracket (Tailwind's
+                  // slate-500 / slate-600). Its rolled-up progress remains
+                  // available to the table/tooltip, while globals.css hides
+                  // only the bracket's visual progress fill.
                   projectBackgroundColor="#62748e"
                   projectBackgroundSelectedColor="#45556c"
                   projectProgressColor="#a3a3ff"

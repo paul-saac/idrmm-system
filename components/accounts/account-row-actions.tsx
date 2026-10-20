@@ -40,7 +40,7 @@ export function AccountRowActions({ account }: { account: AccountRow }) {
           disabled={pending}
           title={label}
           aria-label={`${label} ${fullName || account.email}`}
-          className={`${ICON_BUTTON} ${
+          className={`${ICON_BUTTON} border border-zinc-200 ${
             active
               ? "hover:bg-red-50 hover:text-red-600"
               : "hover:bg-emerald-50 hover:text-emerald-600"

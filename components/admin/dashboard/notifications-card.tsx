@@ -1,4 +1,5 @@
 "use client";
+import { notificationLink } from "@/lib/notifications/link";
 
 import { useRouter } from "next/navigation";
 import { usePortal } from "@/components/portal/portal-context";
@@ -21,7 +22,7 @@ export function NotificationsCard() {
     // Opens that row's Daily Progress Update, its Last override highlighted
     // (see GanttChartView's own ?progress handling).
     router.push(
-      `${basePath}/projects/${notification.projectId}?progress=${notification.itemKind}-${notification.itemId}`
+      notificationLink(basePath, notification)
     );
   }
 

@@ -1,4 +1,5 @@
 "use client";
+import { notificationLink } from "@/lib/notifications/link";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -74,7 +75,7 @@ export function NotificationBell() {
     // Opens that row's Daily Progress Update, its Last override highlighted
     // (see GanttChartView's own ?progress handling).
     router.push(
-      `${basePath}/projects/${notification.projectId}?progress=${notification.itemKind}-${notification.itemId}`
+      notificationLink(basePath, notification)
     );
   }
 

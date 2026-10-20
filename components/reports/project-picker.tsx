@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronRight, Search } from "lucide-react";
+import { ChevronDown, Search } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { usePortal } from "@/components/portal/portal-context";
 
@@ -28,10 +28,10 @@ export function ProjectPicker({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex cursor-pointer flex-shrink-0 items-center gap-1 rounded border border-zinc-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-700"
+        className="flex cursor-pointer flex-shrink-0 items-center gap-1 rounded border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
       >
-        Select Project
-        <ChevronRight className="size-4" />
+        {selectedProjectId ? "Change project" : "Select Project"}
+        <ChevronDown className="size-4" />
       </button>
 
       <Modal open={open} onClose={() => setOpen(false)} title="Select a Project">

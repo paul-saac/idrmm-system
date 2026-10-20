@@ -22,11 +22,11 @@ function formatAxisValue(amount: number) {
   return `${amount}`;
 }
 
-export function MonthlyExpenseChart({ data }: { data: MonthlyExpensePoint[] }) {
+export function MonthlyExpenseChart({ data }: { data: (MonthlyExpensePoint & { other?: number })[] }) {
   if (data.length === 0) {
     return (
       <p className="flex h-64 items-center justify-center text-sm text-zinc-400">
-        No approved expenses yet to chart.
+        No logged expenses yet to chart.
       </p>
     );
   }
@@ -93,6 +93,16 @@ export function MonthlyExpenseChart({ data }: { data: MonthlyExpensePoint[] }) {
           fillOpacity={0.18}
           strokeWidth={2}
         />
+        {data.some((point) => point.other !== undefined) && <Area
+          type="monotone"
+          dataKey="other"
+          name="Other"
+          stackId="1"
+          stroke={CATEGORY_COLORS.other}
+          fill={CATEGORY_COLORS.other}
+          fillOpacity={0.18}
+          strokeWidth={2}
+        />}
       </AreaChart>
     </ResponsiveContainer>
   );

@@ -40,7 +40,7 @@ function Stat({ label, value }: { label: string; value: ReactNode }) {
 function Person({ role, name }: { role: string; name: string | null }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <InitialsAvatar name={name ?? "?"} />
+      <InitialsAvatar name={name ?? "?"} neutral />
       <span className="text-zinc-400">{role}</span>
       <span className="truncate font-medium text-zinc-900">{name ?? "—"}</span>
     </span>
@@ -168,16 +168,16 @@ export function ProjectHeader({
           <div className="flex items-center gap-3">
             <span className="text-zinc-400">Project team</span>
             <div
-              className="flex -space-x-1.5"
+              className="flex flex-wrap items-center gap-1.5"
               title={crew.map((worker) => worker.fullName).join(", ")}
             >
               {crew.slice(0, TEAM_PREVIEW).map((worker) => (
-                <span key={worker.id} className="rounded-full ring-2 ring-white">
-                  <InitialsAvatar name={worker.fullName} />
+                <span key={worker.id} className="rounded-full">
+                  <InitialsAvatar name={worker.fullName} neutral />
                 </span>
               ))}
               {crew.length > TEAM_PREVIEW && (
-                <span className="flex size-6 items-center justify-center rounded-full bg-zinc-100 text-[10px] font-semibold text-zinc-600 ring-2 ring-white">
+                <span className="text-xs text-zinc-400">
                   +{crew.length - TEAM_PREVIEW}
                 </span>
               )}

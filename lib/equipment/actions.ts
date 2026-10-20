@@ -12,6 +12,39 @@ export type EquipmentActionState = {
   success?: boolean;
 };
 
+/** Assigns checked-out equipment to its first task or moves it between tasks.
+ * The database function closes and opens the task periods atomically. */
+export async function moveEquipmentToTask(
+  assignmentId: number,
+  projectId: number,
+  _prevState: EquipmentActionState,
+  formData: FormData
+): Promise<EquipmentActionState> {
+  const profile = await requireProjectAccess(projectId);
+  if (!profile) return { error: "You are not authorized to assign this equipment." };
+
+  const taskId = Number(formData.get("taskId"));
+  const notes = String(formData.get("notes") ?? "").trim();
+  if (!Number.isInteger(taskId) || taskId <= 0) {
+    return { error: "Select a task for this equipment." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("move_equipment_to_task", {
+    p_equipment_assignment_id: assignmentId,
+    p_project_id: projectId,
+    p_task_id: taskId,
+    p_notes: notes || null,
+  });
+  if (error) {
+    console.error("[moveEquipmentToTask] Supabase rpc failed:", error.message);
+    return { error: error.message.includes("already assigned") ? error.message : "Could not assign the equipment to that task." };
+  }
+
+  revalidateProjectPaths(projectId);
+  return { success: true };
+}
+
 /**
  * Asset Tag is system-assigned, not typed in the Add Equipment form —
  * "EQ-001", "EQ-002", ... Based on the highest existing sequence number
@@ -326,15 +359,29 @@ export async function returnEquipment(
     .from("equipment_assignments")
     .select("id")
     .eq("equipment_id", equipmentId)
+    .eq("project_id", projectId)
     .is("returned_at", null)
     .order("assigned_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   if (activeAssignment) {
+    const now = new Date().toISOString();
+    const { error: placementError } = await supabase.rpc(
+      "close_equipment_task_assignment",
+      {
+        p_equipment_assignment_id: activeAssignment.id,
+        p_project_id: projectId,
+        p_released_at: now,
+      }
+    );
+    if (placementError) {
+      console.error("[returnEquipment] task placement close failed:", placementError.message);
+      return { error: "Could not close the equipment's current task assignment." };
+    }
     await supabase
       .from("equipment_assignments")
-      .update({ returned_at: new Date().toISOString() })
+      .update({ returned_at: now })
       .eq("id", activeAssignment.id);
   }
 
@@ -372,6 +419,7 @@ async function syncEquipmentStatus(
     console.error("[syncEquipmentStatus] Supabase rpc failed:", error.message);
     return error.message;
   }
+
   return null;
 }
 
@@ -434,6 +482,21 @@ export async function updateEquipmentAssignment(
       error.message
     );
     return { error: "Could not update the assignment. Please try again." };
+  }
+
+  if (returnedAt) {
+    const { error: placementError } = await supabase.rpc(
+      "close_equipment_task_assignment",
+      {
+        p_equipment_assignment_id: assignmentId,
+        p_project_id: projectId,
+        p_released_at: returnedAt.toISOString(),
+      }
+    );
+    if (placementError) {
+      console.error("[updateEquipmentAssignment] task placement close failed:", placementError.message);
+      return { error: "The assignment was saved, but its task placement could not be closed." };
+    }
   }
 
   await syncEquipmentStatus(supabase, equipmentId);

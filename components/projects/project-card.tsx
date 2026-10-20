@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ChevronRight, Folder, MapPin } from "lucide-react";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 import {
@@ -14,32 +15,34 @@ export function ProjectCard({
   basePath: PortalBasePath;
 }) {
   return (
-    <div className="flex flex-col rounded-lg border border-zinc-200 bg-white p-5">
-      <div className="flex items-start justify-between gap-3">
-        <h3 className="text-sm font-semibold text-zinc-900">
+    <div className="flex flex-col overflow-hidden rounded border border-zinc-200 bg-white">
+      <div className="flex-1 p-6">
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <span className="flex size-9 items-center justify-center rounded bg-zinc-50 text-zinc-500"><Folder aria-hidden className="size-5" /></span>
+        <span className={`rounded-sm px-2 py-1 text-xs font-medium ${projectStatusBadgeClasses(project.status)}`}>{projectStatusLabel(project.status)}</span>
+      </div>
+        <h3 className="text-base font-semibold text-zinc-900">
           {project.name}
         </h3>
-        <span
-          className={`flex-shrink-0 rounded-sm px-2 py-0.5 text-xs font-medium ${projectStatusBadgeClasses(project.status)}`}
-        >
-          {projectStatusLabel(project.status)}
-        </span>
-      </div>
 
       {project.location && (
-        <p className="mt-2 text-xs text-zinc-500">{project.location}</p>
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500"><MapPin aria-hidden className="size-3.5 shrink-0" />{project.location}</p>
       )}
 
-      <div className="mt-3 space-y-0.5 text-xs text-zinc-500">
-        <p>Project Manager: {project.projectManagerName ?? "—"}</p>
-        <p>Foreman: {project.foremanName ?? "—"}</p>
+      <div className="mt-5 grid grid-cols-1 gap-4 border-t border-zinc-200 pt-5 sm:grid-cols-2">
+        {[["Project Manager", project.projectManagerName], ["Foreman", project.foremanName]].map(([role, name]) => <div key={role} className="flex min-w-0 items-center gap-2.5">
+          <span aria-hidden className="flex size-9 shrink-0 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-xs text-zinc-500">{name ? name.split(/\s+/).filter(Boolean).map(part => part[0]).filter((_, index, letters) => index === 0 || index === letters.length - 1).join("").toUpperCase() : "—"}</span>
+          <div className="min-w-0"><p className="text-xs text-zinc-500">{role}</p><p className="mt-1 break-words text-sm text-zinc-900">{name ?? "Unassigned"}</p></div>
+        </div>)}
+      </div>
       </div>
 
       <Link
         href={`${basePath}/projects/${project.id}`}
-        className="mt-4 rounded border border-zinc-200 py-2 text-center text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+        className="flex items-center justify-between border-t border-zinc-200 px-6 py-4 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
       >
         View Details
+        <ChevronRight aria-hidden className="size-4 text-zinc-500" />
       </Link>
     </div>
   );

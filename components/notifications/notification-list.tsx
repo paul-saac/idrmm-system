@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, TrendingUp, XCircle } from "lucide-react";
+import { ArrowUpRight, Package, TrendingUp, Wrench, XCircle } from "lucide-react";
 import type { AppNotification } from "@/lib/notifications/actions";
 import { initials } from "@/lib/initials";
 import { notificationTime } from "@/lib/time-ago";
@@ -41,37 +41,34 @@ function NotificationCard({
   textSize: TextSize;
 }) {
   const text = TEXT[textSize];
+  const request = notification.kind !== "progress_override";
+  const Icon = notification.kind === "material_request" ? Package : notification.kind === "equipment_request" ? Wrench : TrendingUp;
   return (
     <li
       className={`rounded-md border border-zinc-200 p-4 ${
         notification.read ? "bg-white" : "bg-zinc-50"
       }`}
     >
-      <span
-        aria-label={notification.read ? undefined : "Unread"}
-        className={`mb-2 block size-1.5 rounded-full ${
-          notification.read ? "bg-transparent" : "bg-orange-500"
-        }`}
-      />
       <div className="flex items-start gap-3">
         <span className="relative shrink-0">
           <span className="flex size-9 items-center justify-center rounded-full bg-zinc-900 text-xs font-semibold text-white">
             {initials(notification.actorName)}
           </span>
           <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border border-white bg-orange-100 text-orange-600">
-            <TrendingUp className="size-2.5" />
+            <Icon className="size-2.5" />
           </span>
         </span>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className={`${text.title} text-zinc-900`}>
             <span className="font-semibold">{notification.actorName ?? "Someone"}</span>{" "}
-            overrode the progress of{" "}
+            {request ? `submitted ${notification.kind === "material_request" ? "material" : "equipment"} request ` : "overrode the progress of "}
             <span className="font-semibold">{notification.itemName}</span>
           </p>
           <p className={`mt-0.5 ${text.detail} text-zinc-500`}>
-            {notification.projectName} · progress for {formatDay(notification.entryDate)}
+            {notification.projectName} · {request ? "requested" : "progress for"} {formatDay(notification.entryDate)}
           </p>
         </div>
+        {!notification.read && <span aria-label="Unread" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-zinc-700" />}
       </div>
       <div className="mt-3 flex items-center gap-2">
         <button
@@ -80,7 +77,7 @@ function NotificationCard({
           className={`flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 ${text.button} font-medium text-white transition hover:bg-zinc-800`}
         >
           <ArrowUpRight className="size-3.5" />
-          View Progress
+          {request ? "View Requests" : "View Progress"}
         </button>
         <button
           type="button"

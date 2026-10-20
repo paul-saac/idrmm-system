@@ -392,11 +392,11 @@ export function TeamBrowser({
     // The groups on the left; the members beside them — one above the
     // other on a narrow screen. The members under their own heading, the
     // Material record's kind, how many there are beside it; the groups'
-    // box level with that heading.
-    <div className="grid items-start gap-5 lg:grid-cols-[16rem_minmax(0,1fr)]">
+    // sidebar separated from the member content by a single divider.
+    <div className="grid flex-1 items-stretch lg:grid-cols-[17rem_minmax(0,1fr)]">
       <GroupsPanel groups={memberGroups} members={members} />
 
-      <div className="flex min-w-0 flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-3 border-t border-zinc-200 p-6 sm:p-8 lg:border-t-0 lg:border-l">
         <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-2">
             <h2 className="text-base font-semibold text-zinc-900">All members</h2>
@@ -603,7 +603,7 @@ export function TeamBrowser({
                           />
                           <td className={TD}>
                             <div className="flex items-center gap-3">
-                              <InitialsAvatar name={member.fullName} large />
+                              <InitialsAvatar name={member.fullName} large neutral />
                               {/* Its click is the row's (bubbles up). */}
                               <button
                                 type="button"

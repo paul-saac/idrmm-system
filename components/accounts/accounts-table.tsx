@@ -1,43 +1,24 @@
-import { AccountRowActions } from "@/components/accounts/account-row-actions";
 import {
   BLANK,
   BODY,
   CELL,
   HEAD_CELL,
-  HEAD_ROW,
   InitialsAvatar,
   SelectAllCell,
   SelectCell,
   TABLE,
-  TABLE_FRAME,
-  rowClass,
 } from "@/components/ui/list-table";
 import { roleLabel } from "@/lib/auth/roles";
-import type { AccountRow, AssignedProject } from "@/lib/accounts/data";
+import type { AccountRow } from "@/lib/accounts/data";
 
 function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString("en-US", {
+  const date = new Date(iso);
+  return <div className="space-y-1"><p className="text-zinc-700">{date.toLocaleDateString("en-US", {
     day: "2-digit",
     month: "short",
     year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-/** Every project they're on, one per line. */
-function AssignedProjectsCell({ projects }: { projects: AssignedProject[] }) {
-  if (projects.length === 0) return BLANK;
-  return (
-    <ul className="flex flex-col gap-0.5">
-      {projects.map((project) => (
-        <li key={project.id} className="whitespace-nowrap">
-          {project.name}
-        </li>
-      ))}
-    </ul>
-  );
+    timeZone: "Asia/Manila",
+  })}</p><p className="text-xs text-zinc-400">{date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "Asia/Manila" })}</p></div>;
 }
 
 /** The accounts list, in the Team table's own style (see list-table). */
@@ -61,10 +42,10 @@ export function AccountsTable({
   const allChecked = checkedCount === ids.length;
 
   return (
-    <div className={TABLE_FRAME}>
-      <table className={TABLE}>
+    <div className="overflow-x-auto">
+      <table className={`${TABLE} [&_tbody_td]:py-5`}>
         <thead>
-          <tr className={HEAD_ROW}>
+          <tr className="border-b border-zinc-200 bg-zinc-50 text-xs text-zinc-500">
             <SelectAllCell
               checked={allChecked}
               indeterminate={checkedCount > 0 && !allChecked}
@@ -75,10 +56,8 @@ export function AccountsTable({
             <th className={HEAD_CELL}>Email</th>
             {showRoleColumn && <th className={HEAD_CELL}>Role</th>}
             <th className={HEAD_CELL}>Status</th>
-            <th className={HEAD_CELL}>Assigned Projects</th>
             <th className={HEAD_CELL}>Last Sign-in</th>
             <th className={HEAD_CELL}>Date Created</th>
-            <th className={HEAD_CELL}>Actions</th>
           </tr>
         </thead>
         <tbody className={BODY}>
@@ -89,7 +68,7 @@ export function AccountsTable({
               <tr
                 key={account.id}
                 onClick={() => onOpen(account.id)}
-                className={`cursor-pointer ${rowClass(checked)}`}
+                className={`cursor-pointer transition-colors ${checked ? "bg-zinc-100" : "hover:bg-zinc-50"}`}
               >
                 <SelectCell
                   checked={checked}
@@ -98,7 +77,7 @@ export function AccountsTable({
                 />
                 <td className={CELL}>
                   <div className="flex items-center gap-2.5">
-                    <InitialsAvatar name={name || account.email} />
+                    <InitialsAvatar name={name || account.email} neutral />
                     {/* Its click is the row's (bubbles up). */}
                     <button
                       type="button"
@@ -123,17 +102,11 @@ export function AccountsTable({
                     {account.status === "active" ? "Active" : "Inactive"}
                   </span>
                 </td>
-                <td className={CELL}>
-                  <AssignedProjectsCell projects={account.assignedProjects} />
-                </td>
                 <td className={`${CELL} whitespace-nowrap`}>
                   {account.lastSignInAt ? formatDateTime(account.lastSignInAt) : BLANK}
                 </td>
                 <td className={`${CELL} whitespace-nowrap text-zinc-500`}>
                   {formatDateTime(account.createdAt)}
-                </td>
-                <td className={CELL} onClick={(e) => e.stopPropagation()}>
-                  <AccountRowActions account={account} />
                 </td>
               </tr>
             );

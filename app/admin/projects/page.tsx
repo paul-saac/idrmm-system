@@ -15,7 +15,7 @@ export default async function AdminProjectsPage() {
 
   return (
     <>
-      <AdminPageHeader title="Projects" />
+      <AdminPageHeader title="Projects" description="An overview of your projects." />
       <main className="flex-1 overflow-y-auto px-8 py-6">
         <ProjectsBrowser
           projects={projects}

@@ -1,16 +1,21 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { Trash2, Undo2 } from "lucide-react";
+import { ArrowRightLeft, Trash2, Undo2 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { EquipmentAssignmentForm } from "@/components/projects/equipment/equipment-assignment-form";
+import { EquipmentTaskAssignmentForm } from "@/components/projects/equipment/equipment-task-assignment-form";
 import {
   deleteEquipmentAssignment,
   returnEquipment,
   type EquipmentActionState,
 } from "@/lib/equipment/actions";
-import type { EquipmentAssignmentRow } from "@/lib/equipment/data";
+import type {
+  EquipmentAssignmentRow,
+  EquipmentTaskMovementRow,
+  EquipmentTaskOption,
+} from "@/lib/equipment/data";
 
 /** "Oct 16, 2026" — from a timestamp. */
 function formatDay(iso: string) {
@@ -146,19 +151,23 @@ function ReturnAssignmentButton({
 export function AssignedEquipmentTable({
   projectId,
   assignments,
+  tasks,
 }: {
   projectId: number;
   assignments: EquipmentAssignmentRow[];
+  tasks: EquipmentTaskOption[];
 }) {
   const [editTarget, setEditTarget] = useState<EquipmentAssignmentRow | null>(null);
+  const [taskTarget, setTaskTarget] = useState<EquipmentAssignmentRow | null>(null);
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[56rem] text-left text-sm">
+      <table className="w-full min-w-[64rem] text-left text-sm">
         <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
           <tr>
             <th className="px-5 py-3">Equipment</th>
             <th className="px-4 py-3">Purpose</th>
+            <th className="px-4 py-3">Current task</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3">Assigned</th>
             <th className="px-4 py-3">Returned</th>
@@ -185,6 +194,16 @@ export function AssignedEquipmentTable({
                 >
                   {assignment.purpose || <Dash />}
                 </td>
+                <td className="max-w-64 px-4 py-3.5">
+                  {assignment.currentTaskName ? (
+                    <>
+                      <p className="truncate font-medium text-zinc-800" title={assignment.currentTaskName}>{assignment.currentTaskName}</p>
+                      {assignment.taskAssignedAt && <p className="mt-0.5 text-xs text-zinc-400">Since {formatDay(assignment.taskAssignedAt)}</p>}
+                    </>
+                  ) : onSite ? (
+                    <span className="text-xs font-medium text-amber-600">Task required</span>
+                  ) : <Dash />}
+                </td>
                 <td className="px-4 py-3.5">
                   <span
                     className={`rounded-sm px-2 py-0.5 text-xs font-medium whitespace-nowrap ${
@@ -205,6 +224,17 @@ export function AssignedEquipmentTable({
                 </td>
                 <td className="py-3.5 pr-5">
                   <div className="flex items-center justify-end gap-1">
+                    {onSite && (
+                      <button
+                        type="button"
+                        onClick={() => setTaskTarget(assignment)}
+                        aria-label={assignment.currentTaskId ? "Move equipment to another task" : "Assign equipment to task"}
+                        title={assignment.currentTaskId ? "Move to another task" : "Assign to task"}
+                        className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                      >
+                        <ArrowRightLeft className="size-3.5" />
+                      </button>
+                    )}
                     {onSite && (
                       <ReturnAssignmentButton
                         equipmentId={assignment.equipmentId}
@@ -235,6 +265,22 @@ export function AssignedEquipmentTable({
       </table>
 
       <Modal
+        open={taskTarget !== null}
+        onClose={() => setTaskTarget(null)}
+        title={taskTarget?.currentTaskId ? "Move Equipment" : "Assign Equipment to Task"}
+      >
+        {taskTarget && (
+          <EquipmentTaskAssignmentForm
+            key={`${taskTarget.id}-${taskTarget.currentTaskId ?? "none"}`}
+            assignment={taskTarget}
+            projectId={projectId}
+            tasks={tasks}
+            onSuccess={() => setTaskTarget(null)}
+          />
+        )}
+      </Modal>
+
+      <Modal
         open={editTarget !== null}
         onClose={() => setEditTarget(null)}
         title="Edit Assignment"
@@ -248,6 +294,39 @@ export function AssignedEquipmentTable({
           />
         )}
       </Modal>
+    </div>
+  );
+}
+
+export function EquipmentMonitoringTable({ movements }: { movements: EquipmentTaskMovementRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[62rem] text-left text-sm">
+        <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
+          <tr>
+            <th className="px-5 py-3">Equipment</th>
+            <th className="px-4 py-3">Task</th>
+            <th className="px-4 py-3">Assigned</th>
+            <th className="px-4 py-3">Released</th>
+            <th className="px-4 py-3">Movement</th>
+            <th className="px-4 py-3">Assigned by</th>
+            <th className="px-4 py-3">Notes</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100">
+          {movements.map((movement) => (
+            <tr key={movement.id} className="hover:bg-zinc-50">
+              <td className="px-5 py-3.5"><p className="font-semibold text-zinc-900">{movement.equipmentName}</p><p className="text-xs text-zinc-400">{movement.equipmentAssetTag}</p></td>
+              <td className="px-4 py-3.5 font-medium text-zinc-700">{movement.taskName}</td>
+              <td className="px-4 py-3.5 whitespace-nowrap text-zinc-600">{formatDay(movement.assignedAt)}</td>
+              <td className="px-4 py-3.5 whitespace-nowrap text-zinc-600">{movement.releasedAt ? formatDay(movement.releasedAt) : <Dash />}</td>
+              <td className="px-4 py-3.5"><span className={`rounded-sm px-2 py-0.5 text-xs font-medium ${movement.releaseReason === "returned" ? "bg-zinc-100 text-zinc-600" : movement.releaseReason === "moved" ? "bg-amber-50 text-amber-700" : "bg-sky-50 text-sky-700"}`}>{movement.releaseReason === "returned" ? "Returned" : movement.releaseReason === "moved" ? "Moved" : "Current"}</span></td>
+              <td className="px-4 py-3.5 text-zinc-600">{movement.assignedByName ?? <Dash />}</td>
+              <td className="max-w-64 truncate px-4 py-3.5 text-zinc-500" title={movement.notes ?? undefined}>{movement.notes || <Dash />}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

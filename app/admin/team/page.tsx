@@ -32,7 +32,7 @@ export default async function AdminTeamPage() {
   return (
     <>
       <AdminPageHeader title="Team" />
-      <main className="flex-1 overflow-y-auto px-8 py-6">
+      <main className="flex flex-1 flex-col overflow-y-auto">
         <TeamBrowser
           members={members}
           assignments={assignments}

@@ -101,6 +101,28 @@ export type EquipmentAssignmentRow = {
   purpose: string | null;
   assignedAt: string;
   returnedAt: string | null;
+  currentTaskId: number | null;
+  currentTaskName: string | null;
+  taskAssignedAt: string | null;
+};
+
+export type EquipmentTaskMovementRow = {
+  id: number;
+  equipmentAssignmentId: number;
+  equipmentName: string;
+  equipmentAssetTag: string;
+  taskName: string;
+  assignedAt: string;
+  releasedAt: string | null;
+  releaseReason: "moved" | "returned" | null;
+  assignedByName: string | null;
+  notes: string | null;
+};
+
+export type EquipmentTaskOption = {
+  id: number;
+  name: string;
+  phaseName: string;
 };
 
 /**
@@ -136,8 +158,21 @@ export async function listProjectEquipmentAssignments(
 
   const equipmentById = new Map((equipmentRows ?? []).map((e) => [e.id, e]));
 
+  const assignmentIds = data.map((row) => row.id);
+  const { data: activeTaskRows } = assignmentIds.length
+    ? await supabase
+        .from("equipment_task_assignments")
+        .select("equipment_assignment_id, task_id, task_name, assigned_at")
+        .in("equipment_assignment_id", assignmentIds)
+        .is("released_at", null)
+    : { data: [] };
+  const activeTaskByAssignment = new Map(
+    (activeTaskRows ?? []).map((row) => [row.equipment_assignment_id, row])
+  );
+
   return data.map((row) => {
     const equipment = equipmentById.get(row.equipment_id);
+    const taskPlacement = activeTaskByAssignment.get(row.id);
     return {
       id: row.id,
       equipmentId: row.equipment_id,
@@ -146,6 +181,67 @@ export async function listProjectEquipmentAssignments(
       purpose: row.notes,
       assignedAt: row.assigned_at,
       returnedAt: row.returned_at,
+      currentTaskId: taskPlacement?.task_id ?? null,
+      currentTaskName: taskPlacement?.task_name ?? null,
+      taskAssignedAt: taskPlacement?.assigned_at ?? null,
+    };
+  });
+}
+
+/** Every task period for checked-out equipment, newest first. Together the
+ * periods form the equipment movement history inside one project. */
+export async function listProjectEquipmentTaskMovements(
+  projectId: number
+): Promise<EquipmentTaskMovementRow[]> {
+  const supabase = await createClient();
+  const { data: movements, error } = await supabase
+    .from("equipment_task_assignments")
+    .select("id, equipment_assignment_id, task_name, assigned_by, assigned_at, released_at, release_reason, notes")
+    .eq("project_id", projectId)
+    .order("assigned_at", { ascending: false });
+  if (error || !movements) return [];
+
+  const assignmentIds = [...new Set(movements.map((row) => row.equipment_assignment_id))];
+  const { data: assignmentRows } = assignmentIds.length
+    ? await supabase
+        .from("equipment_assignments")
+        .select("id, equipment_id")
+        .in("id", assignmentIds)
+    : { data: [] };
+  const equipmentIdByAssignment = new Map(
+    (assignmentRows ?? []).map((row) => [row.id, row.equipment_id])
+  );
+  const equipmentIds = [...new Set((assignmentRows ?? []).map((row) => row.equipment_id))];
+  const { data: equipmentRows } = equipmentIds.length
+    ? await supabase.from("equipment").select("id, name, asset_tag").in("id", equipmentIds)
+    : { data: [] };
+  const equipmentById = new Map((equipmentRows ?? []).map((row) => [row.id, row]));
+
+  const profileIds = [...new Set(movements.map((row) => row.assigned_by).filter((id): id is string => Boolean(id)))];
+  const { data: profiles } = profileIds.length
+    ? await supabase.from("profiles").select("id, first_name, last_name, email").in("id", profileIds)
+    : { data: [] };
+  const profileName = new Map(
+    (profiles ?? []).map((profile) => [
+      profile.id,
+      `${profile.first_name ?? ""} ${profile.last_name ?? ""}`.trim() || profile.email?.split("@")[0] || null,
+    ])
+  );
+
+  return movements.map((row) => {
+    const equipmentId = equipmentIdByAssignment.get(row.equipment_assignment_id);
+    const equipment = equipmentId == null ? null : equipmentById.get(equipmentId);
+    return {
+      id: row.id,
+      equipmentAssignmentId: row.equipment_assignment_id,
+      equipmentName: equipment?.name ?? "—",
+      equipmentAssetTag: equipment?.asset_tag ?? "—",
+      taskName: row.task_name,
+      assignedAt: row.assigned_at,
+      releasedAt: row.released_at,
+      releaseReason: row.release_reason,
+      assignedByName: row.assigned_by ? (profileName.get(row.assigned_by) ?? null) : null,
+      notes: row.notes,
     };
   });
 }
