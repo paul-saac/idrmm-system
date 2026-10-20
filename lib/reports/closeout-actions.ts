@@ -61,5 +61,6 @@ export async function saveCloseoutReport(projectId: number, _previous: CloseoutS
   if (!result.data) return { error: "This report changed since you opened it. Reload before saving to avoid overwriting another person's work." };
   revalidatePath("/admin/reports");
   revalidatePath("/foreman/reports");
+  revalidatePath("/project-manager/reports");
   return { success: true, version: result.data.version };
 }

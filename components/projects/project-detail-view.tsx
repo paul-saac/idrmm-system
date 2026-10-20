@@ -862,7 +862,9 @@ export function ProjectDetailView({
               )}
             </div>
 
-              <SheetsSection projectId={project.id} />
+              <div className="mt-2">
+                <SheetsSection projectId={project.id} />
+              </div>
             </div>
 
             <GanttChartView

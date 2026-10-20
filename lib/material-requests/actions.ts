@@ -3,6 +3,7 @@
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
+import { isAdminRole } from "@/lib/auth/roles";
 import { deriveMaterialRequestStatus } from "@/lib/material-requests/status";
 import type { MaterialRequestPriority } from "@/lib/material-requests/data";
 
@@ -285,7 +286,7 @@ export async function approveMaterialRequest(
   _formData: FormData
 ): Promise<MaterialRequestActionState> {
   const profile = await requireProjectAccess(projectId);
-  if (!profile) {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to approve material requests." };
   }
 

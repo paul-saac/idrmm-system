@@ -547,20 +547,34 @@ export interface Database {
         // set of other costs is independent of every other task's.
         Row: {
           id: number;
-          task_id: number;
+          task_id: number | null;
+          category_id: number | null;
+          quantity: number;
+          unit: string | null;
+          unit_cost: number | null;
+          amount_override: number | null;
           cost_name: string;
           amount: number | null;
         };
         Insert: {
           // See estimate_categories.Insert's own comment on `id` above.
           id?: number;
-          task_id: number;
+          task_id?: number | null;
+          category_id?: number | null;
+          quantity?: number;
+          unit?: string | null;
+          unit_cost?: number | null;
+          amount_override?: number | null;
           cost_name: string;
           amount?: number;
         };
         Update: {
           cost_name?: string;
           amount?: number;
+          quantity?: number;
+          unit?: string | null;
+          unit_cost?: number | null;
+          amount_override?: number | null;
         };
         Relationships: [];
       };
@@ -1487,6 +1501,10 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      save_other_cost_breakdown: {
+        Args: { p_project_id: number; p_changes: unknown };
+        Returns: undefined;
+      };
       /** See 0066_account_management.sql. */
       account_has_history: {
         Args: { p_profile_id: string };

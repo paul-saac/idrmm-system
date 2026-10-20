@@ -3,6 +3,7 @@
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
+import { isAdminRole } from "@/lib/auth/roles";
 import { deriveEquipmentRequestStatus } from "@/lib/equipment-requests/status";
 import type { EquipmentRequestPriority } from "@/lib/equipment-requests/data";
 
@@ -282,7 +283,7 @@ export async function approveEquipmentRequest(
   _formData: FormData
 ): Promise<EquipmentRequestActionState> {
   const profile = await requireProjectAccess(projectId);
-  if (!profile) {
+  if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to approve equipment requests." };
   }
 

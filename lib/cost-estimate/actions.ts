@@ -4,6 +4,7 @@ import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
+import { validOtherCostChanges, type OtherCostChange } from "./other-cost-lines";
 import { recordGanttCheckpoint } from "@/lib/cost-estimate/undo-redo";
 import type { CostCategory } from "@/lib/cost-estimate/data";
 
@@ -1662,10 +1663,11 @@ export async function updateCategoryCostComponents(
     const [
       { data: currentCategory, error: fetchError },
       { data: materialLines, error: linesError },
+      { count: otherLineCount, error: otherLinesError },
     ] = await Promise.all([
       supabase
         .from("estimate_categories")
-        .select("category_material_estimate, material_direct_quantity, material_unit_cost")
+        .select("category_material_estimate, category_other_estimate, material_direct_quantity, material_unit_cost")
         .eq("id", categoryId)
         .eq("project_id", projectId)
         .single(),
@@ -1673,10 +1675,12 @@ export async function updateCategoryCostComponents(
         .from("estimate_category_material_assignments")
         .select("planned_quantity, unit_cost, amount")
         .eq("category_id", categoryId),
+      supabase.from("estimate_task_other_costs")
+        .select("id", { count: "exact", head: true }).eq("category_id", categoryId),
     ]);
     // No lines table yet (0058 not run) just means no itemized lines.
     const realLinesError = isMissingTable(linesError) ? null : linesError;
-    if (fetchError || realLinesError || !currentCategory) {
+    if (fetchError || realLinesError || otherLinesError || !currentCategory) {
       if (fetchError) {
         logSupabaseError("[updateCategoryCostComponents] Supabase fetch failed", fetchError);
       }
@@ -1716,7 +1720,8 @@ export async function updateCategoryCostComponents(
         }),
         category_labor_estimate: laborEstimate,
         category_equipment_estimate: equipmentEstimate,
-        category_other_estimate: otherCostEstimate,
+        category_other_estimate: (otherLineCount ?? 0) > 0
+          ? currentCategory.category_other_estimate ?? 0 : otherCostEstimate,
       })
       .eq("id", categoryId);
 
@@ -2072,3 +2077,32 @@ export async function updateCategoryMaterialAssignments(
     return { success: true };
   });
 }
+
+/**
+ * Saves the Other Breakdown's edited owners and computed totals together.
+ */
+export async function saveOtherCostBreakdown(
+  projectId: number,
+  changes: OtherCostChange[]
+): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) return { error: "You are not authorized to manage cost estimates." };
+    if (!validOtherCostChanges(changes)) {
+      return { error: "Enter a cost name and valid nonnegative quantities and costs." };
+    }
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("save_other_cost_breakdown", {
+      p_project_id: projectId,
+      p_changes: changes,
+    });
+    if (error) {
+      logSupabaseError("[saveOtherCostBreakdown]", error);
+      return { error: "Could not save Other costs. Make sure migration 0079 is applied, then try again." };
+    }
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+

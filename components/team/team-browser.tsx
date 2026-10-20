@@ -217,9 +217,8 @@ export function TeamBrowser({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Where a member's project opens — the project manager's portal has no
-  // project pages, so there it's just its name.
-  const projectsHref = basePath === "/project-manager" ? null : `${basePath}/projects`;
+  // Where a member's project opens.
+  const projectsHref = `${basePath}/projects`;
 
   const allByWorker = useMemo(() => groupAssignmentsByWorker(assignments), [assignments]);
   const openByWorker = useMemo(

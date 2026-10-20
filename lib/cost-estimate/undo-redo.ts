@@ -58,9 +58,10 @@ export async function captureGanttSnapshot(
     [{ data: otherCosts }, { data: materialAssignments }],
     { data: categoryMaterialAssignments },
   ] = await Promise.all([
-    taskIds.length > 0
+    taskIds.length > 0 || categoryIds.length > 0
       ? Promise.all([
-          supabase.from("estimate_task_other_costs").select("*").in("task_id", taskIds),
+          supabase.from("estimate_task_other_costs").select("*")
+            .or(`task_id.in.(${taskIds.join(",") || -1}),category_id.in.(${categoryIds.join(",") || -1})`),
           supabase
             .from("estimate_task_material_assignments")
             .select("*")

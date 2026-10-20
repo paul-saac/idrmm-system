@@ -17,11 +17,11 @@ const NAV_ITEMS: {
   portals: PortalBasePath[];
 }[] = [
   { path: "", label: "Dashboard", icon: LayoutGrid, portals: ["/admin", "/foreman", "/project-manager"] },
-  { path: "/projects", label: "Projects", icon: Folder, portals: ["/admin", "/foreman"] },
+  { path: "/projects", label: "Projects", icon: Folder, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/team", label: "Team", icon: HardHat, portals: ["/admin", "/project-manager"] },
   { path: "/accounts", label: "Accounts", icon: Users, portals: ["/admin"] },
-  { path: "/reports", label: "Reports", icon: BarChart3, portals: ["/admin", "/foreman"] },
-  { path: "/inventory", label: "Inventory", icon: Wrench, portals: ["/admin", "/foreman"] },
+  { path: "/reports", label: "Reports", icon: BarChart3, portals: ["/admin", "/foreman", "/project-manager"] },
+  { path: "/inventory", label: "Inventory", icon: Wrench, portals: ["/admin", "/foreman", "/project-manager"] },
 ];
 
 export function PortalSidebar({ basePath }: { basePath: PortalBasePath }) {

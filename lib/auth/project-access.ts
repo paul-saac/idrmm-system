@@ -4,7 +4,7 @@ import { isAdminRole } from "@/lib/auth/roles";
 
 /**
  * The signed-in profile if they may work inside this project — any admin,
- * or the foreman assigned to it (projects.foreman_id) — otherwise null.
+ * or its assigned foreman or project manager — otherwise null.
  *
  * Row-level security (0051_foreman_project_access.sql) is the real
  * boundary; this is the server-action-level check that gives a clear
@@ -17,14 +17,14 @@ export async function requireProjectAccess(
   const profile = await getSessionProfile();
   if (!profile) return null;
   if (isAdminRole(profile.role)) return profile;
-  if (profile.role !== "foreman" || !Number.isFinite(projectId)) return null;
+  if (!["foreman", "project_manager"].includes(profile.role) || !Number.isSafeInteger(projectId) || projectId <= 0) return null;
 
   const supabase = await createClient();
   const { data } = await supabase
     .from("projects")
     .select("id")
     .eq("id", projectId)
-    .eq("foreman_id", profile.id)
+    .eq(profile.role === "project_manager" ? "project_manager_id" : "foreman_id", profile.id)
     .maybeSingle();
 
   return data ? profile : null;
@@ -35,5 +35,5 @@ export async function requireProjectAccess(
 export async function requireAdminOrForeman(): Promise<SessionProfile | null> {
   const profile = await getSessionProfile();
   if (!profile) return null;
-  return isAdminRole(profile.role) || profile.role === "foreman" ? profile : null;
+  return isAdminRole(profile.role) || profile.role === "foreman" || profile.role === "project_manager" ? profile : null;
 }

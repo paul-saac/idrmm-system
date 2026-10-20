@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { MaterialBreakdownModalContent } from "@/components/projects/cost-estimate/material-breakdown-modal-content";
 import { LaborBreakdownModalContent } from "@/components/projects/cost-estimate/labor-breakdown-modal-content";
+import { OtherBreakdownModalContent } from "@/components/projects/cost-estimate/other-breakdown-modal-content";
 import {
   WeightBreakdownModal,
   type WeightBreakdownTarget,
@@ -148,12 +149,10 @@ export function CostEstimateView({
   // comments for why a column-header trigger replaced an earlier
   // per-task-row version of this.
   const [laborBreakdownOpen, setLaborBreakdownOpen] = useState(false);
+  const [otherBreakdownOpen, setOtherBreakdownOpen] = useState(false);
   // A Weight cell's own click-through — how that weight was computed.
   const [weightBreakdown, setWeightBreakdown] = useState<WeightBreakdownTarget | null>(
     null
-  );
-  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<number>>(
-    new Set()
   );
   // Every phase starts collapsed — this table is a quick-reference
   // summary now (all editing happens on the Gantt Chart below), so
@@ -171,18 +170,6 @@ export function CostEstimateView({
   const [categoriesWidth, setCategoriesWidth] = useState(
     DEFAULT_CATEGORIES_WIDTH
   );
-
-  function toggleExpanded(taskId: number) {
-    setExpandedTaskIds((current) => {
-      const next = new Set(current);
-      if (next.has(taskId)) {
-        next.delete(taskId);
-      } else {
-        next.add(taskId);
-      }
-      return next;
-    });
-  }
 
   function toggleCategory(categoryId: number) {
     setCollapsedCategoryIds((current) => {
@@ -313,8 +300,16 @@ export function CostEstimateView({
                   <th className="w-28 border-r border-zinc-200 px-4 py-2.5 text-right">
                     Equipment
                   </th>
-                  <th className="w-24 border-r border-zinc-200 px-4 py-2.5 text-right">
-                    Other
+                  <th className="w-24 border-r border-zinc-200 text-right">
+                    <button
+                      type="button"
+                      onClick={() => setOtherBreakdownOpen(true)}
+                      title="View the project's full other cost breakdown"
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white"
+                    >
+                      Other
+                      <ChevronRight className="size-3.5 shrink-0" />
+                    </button>
                   </th>
                   <th className="w-48 border-r border-zinc-200 px-4 py-2.5 text-right whitespace-nowrap">
                     Total Estimated Cost
@@ -455,116 +450,64 @@ export function CostEstimateView({
                       </tr>
 
                       {isOpen &&
-                        tasks.map((task) => {
-                        const hasOtherCosts = task.otherCostItems.length > 0;
-                        const expanded = expandedTaskIds.has(task.id);
-                        return (
-                          <Fragment key={task.id}>
-                            <tr className="border-b border-zinc-200 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-white">
-                              <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8">
-                                {task.name}
-                              </td>
-                              <td className={EDITABLE_TD}>
-                                <EditableCell
-                                  value={String(task.estimatedQuantity)}
-                                  label={`${task.name} estimated quantity`}
-                                  numeric
-                                  onSave={(next) =>
-                                    saveEstimatedQuantity(
-                                      { kind: "task", id: task.id },
-                                      { estimatedQuantity: parseQuantity(next), unit: task.unit }
-                                    )
-                                  }
-                                />
-                              </td>
-                              <td className={EDITABLE_TD}>
-                                <EditableCell
-                                  value={task.unit ?? ""}
-                                  label={`${task.name} unit`}
-                                  onSave={(next) =>
-                                    saveEstimatedQuantity(
-                                      { kind: "task", id: task.id },
-                                      { estimatedQuantity: task.estimatedQuantity, unit: next }
-                                    )
-                                  }
-                                />
-                              </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                                {formatCurrency(task.laborEstimate)}
-                              </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                                {formatCurrency(task.materialEstimate)}
-                              </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                                {formatCurrency(task.equipmentEstimate)}
-                              </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                                {hasOtherCosts ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleExpanded(task.id)}
-                                    aria-expanded={expanded}
-                                    aria-label={
-                                      expanded
-                                        ? "Collapse other cost breakdown"
-                                        : "Expand other cost breakdown"
-                                    }
-                                    className="flex cursor-pointer items-center justify-end gap-1 transition hover:text-white"
-                                  >
-                                    {expanded ? (
-                                      <ChevronDown className="size-3.5" />
-                                    ) : (
-                                      <ChevronRight className="size-3.5" />
-                                    )}
-                                    {formatCurrency(task.otherCostEstimate)}
-                                  </button>
-                                ) : (
-                                  formatCurrency(0)
-                                )}
-                              </td>
-                              <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                                {formatCurrency(task.totalEstimateCost)}
-                              </td>
-                              <td className="px-4 py-2.5 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setWeightBreakdown({ kind: "task", id: task.id })
-                                  }
-                                  className="cursor-pointer underline-offset-2 transition hover:underline"
-                                >
-                                  {formatWeight(task.weight)}
-                                </button>
-                              </td>
-                            </tr>
-                            {expanded && hasOtherCosts && (
-                              <tr className="border-b border-zinc-200 bg-zinc-50/60">
-                                <td
-                                  className="px-4 py-2"
-                                  colSpan={COLUMN_COUNT}
-                                >
-                                  <ul className="ml-8 flex flex-col gap-0.5 text-xs text-zinc-500">
-                                    {task.otherCostItems.map((item) => (
-                                      <li
-                                        key={item.id}
-                                        className="flex items-center gap-2"
-                                      >
-                                        <span>{item.costName}</span>
-                                        <span className="text-zinc-300">
-                                          —
-                                        </span>
-                                        <span className="font-medium text-zinc-700">
-                                          {formatCurrency(item.amount)}
-                                        </span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </td>
-                              </tr>
-                            )}
-                          </Fragment>
-                        );
-                      })}
+                        tasks.map((task) => (
+                          <tr key={task.id} className="border-b border-zinc-200 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-white">
+                            <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8">
+                              {task.name}
+                            </td>
+                            <td className={EDITABLE_TD}>
+                              <EditableCell
+                                value={String(task.estimatedQuantity)}
+                                label={`${task.name} estimated quantity`}
+                                numeric
+                                onSave={(next) =>
+                                  saveEstimatedQuantity(
+                                    { kind: "task", id: task.id },
+                                    { estimatedQuantity: parseQuantity(next), unit: task.unit }
+                                  )
+                                }
+                              />
+                            </td>
+                            <td className={EDITABLE_TD}>
+                              <EditableCell
+                                value={task.unit ?? ""}
+                                label={`${task.name} unit`}
+                                onSave={(next) =>
+                                  saveEstimatedQuantity(
+                                    { kind: "task", id: task.id },
+                                    { estimatedQuantity: task.estimatedQuantity, unit: next }
+                                  )
+                                }
+                              />
+                            </td>
+                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                              {formatCurrency(task.laborEstimate)}
+                            </td>
+                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                              {formatCurrency(task.materialEstimate)}
+                            </td>
+                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                              {formatCurrency(task.equipmentEstimate)}
+                            </td>
+                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                              {formatCurrency(task.otherCostEstimate)}
+                            </td>
+                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                              {formatCurrency(task.totalEstimateCost)}
+                            </td>
+                            <td className="px-4 py-2.5 text-right">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setWeightBreakdown({ kind: "task", id: task.id })
+                                }
+                                className="cursor-pointer underline-offset-2 transition hover:underline"
+                              >
+                                {formatWeight(task.weight)}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
                     </Fragment>
                   );
                 })}
@@ -624,6 +567,19 @@ export function CostEstimateView({
           categories={categories}
           defaultLaborCostPercent={defaultLaborCostPercent}
           onClose={() => setLaborBreakdownOpen(false)}
+        />
+      </Modal>
+
+      <Modal
+        open={otherBreakdownOpen}
+        onClose={() => setOtherBreakdownOpen(false)}
+        title="Other Cost Breakdown"
+        size="large"
+      >
+        <OtherBreakdownModalContent
+          projectId={projectId}
+          categories={categories}
+          onClose={() => setOtherBreakdownOpen(false)}
         />
       </Modal>
 

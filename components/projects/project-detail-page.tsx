@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { roleLabel } from "@/lib/auth/roles";
 import { getSessionProfile } from "@/lib/auth/session";
 import { getProjectById } from "@/lib/projects/data";
 import { listAccountsByRole } from "@/lib/accounts/data";
@@ -156,7 +157,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
   const currentUserName = sessionProfile
     ? `${sessionProfile.firstName} ${sessionProfile.lastName}`.trim() ||
       sessionProfile.email ||
-      (sessionProfile.role === "foreman" ? "Foreman" : "Admin")
+      roleLabel(sessionProfile.role)
     : "Admin";
 
   if (!project) {

@@ -3,6 +3,7 @@
 import { useActionState, useState, type ReactNode } from "react";
 import { PackageCheck } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
+import { usePortal } from "@/components/portal/portal-context";
 import { Modal, ModalFooter } from "@/components/ui/modal";
 import { MaterialRequestEditForm } from "@/components/projects/materials/material-request-edit-form";
 import {
@@ -256,6 +257,7 @@ function CancelButton({ requestId, projectId }: { requestId: number; projectId: 
  * it, recording a delivery against it, canceling or editing it.
  */
 export function MaterialRequestDetails({ request }: { request: MaterialRequestDetail }) {
+  const { isAdmin } = usePortal();
   const [editOpen, setEditOpen] = useState(false);
   // Counted up each time Edit opens, so its form starts from the request
   // as it is now — it reads the items in only once, and saving writes
@@ -283,7 +285,7 @@ export function MaterialRequestDetails({ request }: { request: MaterialRequestDe
           )}
         </dl>
         <div className="flex shrink-0 items-center gap-2">
-          {request.status === "submitted" && (
+          {isAdmin && request.status === "submitted" && (
             <ApproveButton requestId={request.id} projectId={projectId} />
           )}
           {canReceive && (

@@ -14,6 +14,10 @@ export type OtherCostItem = {
   id: number;
   costName: string;
   amount: number;
+  quantity?: number;
+  unit?: string | null;
+  unitCost?: number;
+  amountOverride?: number | null;
 };
 
 export type TaskPriority = "low" | "medium" | "high";
@@ -164,6 +168,7 @@ export type CostCategory = {
    * 0056_category_equipment_other.sql. */
   categoryEquipmentEstimate: number;
   categoryOtherEstimate: number;
+  otherCostItems?: OtherCostItem[];
   /** This category's own tracked quantity/unit — same "only meaningful
    * while it has no tasks yet" rule as categoryLaborEstimate above, one
    * level up from CostTask's own estimatedQuantity/unit. See
@@ -262,11 +267,11 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     progressAnchorsByCategory,
     { data: categoryMaterialRows },
   ] = await Promise.all([
-    taskIds.length > 0
+    taskIds.length > 0 || categoryIds.length > 0
       ? supabase
           .from("estimate_task_other_costs")
-          .select("id, task_id, cost_name, amount")
-          .in("task_id", taskIds)
+          .select("*")
+          .or(`task_id.in.(${taskIds.join(",") || -1}),category_id.in.(${categoryIds.join(",") || -1})`)
           .order("id", { ascending: true })
       : Promise.resolve({ data: [] as never[], error: null }),
     taskIds.length > 0
@@ -320,15 +325,23 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
   }
 
   const otherCostsByTask = new Map<number, OtherCostItem[]>();
+  const otherCostsByCategory = new Map<number, OtherCostItem[]>();
   for (const row of otherCostRows ?? []) {
     const item: OtherCostItem = {
       id: row.id,
       costName: row.cost_name,
       amount: row.amount ?? 0,
+      quantity: row.quantity ?? 1,
+      unit: row.unit,
+      unitCost: row.unit_cost ?? row.amount ?? 0,
+      amountOverride: row.amount_override,
     };
-    const existing = otherCostsByTask.get(row.task_id) ?? [];
+    const ownerId = row.task_id ?? row.category_id;
+    if (ownerId == null) continue;
+    const target = row.task_id == null ? otherCostsByCategory : otherCostsByTask;
+    const existing = target.get(ownerId) ?? [];
     existing.push(item);
-    otherCostsByTask.set(row.task_id, existing);
+    target.set(ownerId, existing);
   }
 
   function toMaterialAssignment(row: {
@@ -497,6 +510,7 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       categoryLaborEstimate: row.category_labor_estimate ?? 0,
       categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
       categoryOtherEstimate: row.category_other_estimate ?? 0,
+      otherCostItems: otherCostsByCategory.get(row.id) ?? [],
       estimatedQuantity: row.estimated_quantity ?? 0,
       unit: row.unit,
       percentComplete: progress.percentComplete,
