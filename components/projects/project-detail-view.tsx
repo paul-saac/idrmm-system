@@ -1,5 +1,6 @@
 "use client";
 import { SheetsSection } from "@/components/projects/sheets/sheets-section";
+import type { listSheets } from "@/lib/sheets/actions";
 
 import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -280,6 +281,7 @@ export function ProjectDetailView({
   categoryProgressToday,
   overrideHistory,
   events,
+  sheetsResult,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
@@ -355,6 +357,8 @@ export function ProjectDetailView({
   overrideHistory: ProjectOverrideHistory;
   /** The project's calendar events — see lib/project-events/data.ts. */
   events: ProjectEvent[];
+  /** Preloaded sheets so opening the Sheets dropdown has no loading state. */
+  sheetsResult?: Awaited<ReturnType<typeof listSheets>>;
 }) {
   // Reading the initial tab/sub-tab from the URL lets a link *into* this
   // page (e.g. a Daily Log detail page's back button) land on the exact
@@ -863,7 +867,12 @@ export function ProjectDetailView({
             </div>
 
               <div className="mt-2">
-                <SheetsSection projectId={project.id} />
+                <SheetsSection
+                  projectId={project.id}
+                  initialSheets={sheetsResult?.sheets}
+                  initialCanReview={sheetsResult?.canReview}
+                  initialError={sheetsResult?.error}
+                />
               </div>
             </div>
 

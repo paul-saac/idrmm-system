@@ -23,3 +23,9 @@ export function revalidateInventory() {
     revalidatePath(`${base}/inventory`);
   }
 }
+
+export function revalidateReports() {
+  for (const base of PORTAL_BASES) {
+    revalidatePath(`${base}/reports`);
+  }
+}

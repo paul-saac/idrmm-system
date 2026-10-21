@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
 import { isAdminRole } from "@/lib/auth/roles";
 import { readSheetMetadata, type Sheet } from "./model";
-import { revalidateProjectPaths } from "@/lib/projects/revalidate";
+import { revalidateProjectPaths, revalidateReports } from "@/lib/projects/revalidate";
 
 async function access(projectId: number) {
   const profile = await getSessionProfile();
@@ -55,7 +55,7 @@ export async function submitSheet(projectId: number, form: FormData) {
       const { error } = await client.from("project_sheets").insert({ ...metadata, project_id: projectId, revision: 1, file_path, file_name: drawing.name.slice(0, 255), evidence_path, status: "submitted", submitted_by: profile.id, submitted_name: `${profile.firstName} ${profile.lastName}` });
       if (error) throw new Error(error.code === "P0001" ? error.message : "Could not save the sheet. Please retry.");
     } catch (e) { if (paths.length) await client.storage.from("project-sheets").remove(paths); throw e; }
-    revalidateProjectPaths(projectId); return { success: true, error: null };
+    revalidateProjectPaths(projectId); revalidateReports(); return { success: true, error: null };
   } catch (e) { return { success: false, error: message(e) }; }
 }
 
@@ -69,7 +69,7 @@ export async function reviewSheet(projectId: number, sheetId: number, status: Sh
     const { data, error } = await query.select("id");
     if (error) throw new Error(error.code === "P0001" ? error.message : "Could not save the review.");
     if (!data?.length) throw new Error("This sheet changed. Close and reopen it before reviewing.");
-    revalidateProjectPaths(projectId); return { error: null };
+    revalidateProjectPaths(projectId); revalidateReports(); return { error: null };
   } catch (e) { return { error: message(e) }; }
 }
 

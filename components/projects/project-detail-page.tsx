@@ -16,6 +16,7 @@ import { listTaskProgressToday } from "@/lib/task-progress/data";
 import { listCategoryProgressToday } from "@/lib/category-progress/data";
 import { listProjectOverrideHistory } from "@/lib/progress-logs/actions";
 import { listProjectEvents } from "@/lib/project-events/data";
+import { listSheets } from "@/lib/sheets/actions";
 import { getProjectProgress } from "@/lib/progress/data";
 import { listDailyLogs, listSurveyQuestions } from "@/lib/daily-logs/data";
 import {
@@ -91,6 +92,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     overrideHistory,
     events,
     memberGroups,
+    sheetsResult,
   ] = await Promise.all([
     getProjectById(projectId),
     listAccountsByRole(["project_manager"]),
@@ -121,6 +123,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listProjectOverrideHistory(projectId),
     listProjectEvents(projectId),
     listMemberGroups(),
+    listSheets(projectId),
   ]);
 
   // Every material the project has, each once: planned, used, in stock.
@@ -230,6 +233,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       categoryProgressToday={categoryProgressToday}
       overrideHistory={overrideHistory}
       events={events}
+      sheetsResult={sheetsResult}
     />
   );
 }

@@ -15,6 +15,7 @@ export type Sheet = {
 };
 export type SheetReview = { id: number; sheet_id: number; status: string; notes: string; reviewer_name: string; created_at: string };
 export const SHEET_STATUS = { submitted: "Submitted for review", accepted: "Accepted for project records", changes_requested: "Changes requested", rejected: "Rejected" };
+export const formatVersion = (revision: number) => (revision <= 1 ? "Original" : `Revision ${revision - 1}`);
 
 export function readSheetMetadata(form: FormData) {
   const value = (key: string) => String(form.get(key) ?? "").trim();

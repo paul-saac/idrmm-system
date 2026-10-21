@@ -1052,123 +1052,35 @@ export function ProgressTrackingModalContent({
     // Equipment records use one scrolling column; editing keeps the
     // form and history side by side on wide screens.
     <div className={`compact-text h-full overflow-y-auto ${readOnly ? "" : "lg:grid lg:grid-cols-[minmax(0,1fr)_28rem] lg:overflow-hidden"}`}>
-      <div className={`flex flex-col gap-6 px-6 py-5 ${readOnly ? "" : "lg:overflow-y-auto"}`}>
-        {/* Live — follows what's typed below, beside the modal's own title. */}
-        {breakdown.scheduleStatus && (
-          <ModalHeaderAddon>
-            <span
-              className={`rounded px-2 py-0.5 text-xs font-semibold ${SCHEDULE_STATUS_STYLE[breakdown.scheduleStatus]}`}
-            >
-              {SCHEDULE_STATUS_LABEL[breakdown.scheduleStatus]}
-            </span>
-          </ModalHeaderAddon>
-        )}
+      {/* Live — follows what's typed below, beside the modal's own title. */}
+      {breakdown.scheduleStatus && (
+        <ModalHeaderAddon>
+          <span
+            className={`rounded px-2 py-0.5 text-xs font-semibold ${SCHEDULE_STATUS_STYLE[breakdown.scheduleStatus]}`}
+          >
+            {SCHEDULE_STATUS_LABEL[breakdown.scheduleStatus]}
+          </span>
+        </ModalHeaderAddon>
+      )}
 
-        {/* The plan so far over where the task actually stands — the same
-            parts in the same columns, to read one against the other. */}
-        <div className="flex flex-col gap-3">
-          {/* The plan so far — each part's planned amount through today,
-              from automatic progress, to compare today's log (and the days
-              before it) against; Expected progress is the same share.
-              Hidden until the task has a Start and End to plan from. */}
-          {breakdown.totalWorkingDays !== null && (
-            <section aria-label="Planned so far" className="rounded-md border border-sky-200 bg-sky-50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                <span className="flex items-center gap-2">
-                  <ClipboardList aria-hidden className="size-4 text-sky-700" />
-                  <span
-                    title="The plan so far, through today — from automatic progress."
-                    className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
-                  >
-                    Planned
-                  </span>
-                </span>
-                <p className="text-xs text-zinc-500 tabular-nums">
-                  Expected progress: {(breakdown.timePercent ?? 0).toFixed(2)}%
-                </p>
-              </div>
-              {plannedShare === 0 ? (
-                <p className="mt-3 text-sm text-zinc-500">No work is planned yet — it hasn&apos;t started.</p>
-              ) : (
-                <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
-                  <div className="min-w-0">
-                    <dt className="truncate text-xs text-zinc-500">Quantity</dt>
-                    <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
-                      {formatQuantity(plannedToDate.quantity)}
-                      {unit ? ` ${unit}` : ""}
-                    </dd>
-                  </div>
-                  {COST_COMPONENTS.map((component) => (
-                    <div key={component} className="min-w-0">
-                      <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
-                      <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
-                        {formatPeso(plannedToDate.costs[component])}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              )}
-            </section>
-          )}
-
-          {/* Where it actually stands, as saved — every saved log, each day
-              without one at its planned share; Actual progress is its
-              percent complete. Still while today's log is typed below. */}
-          <section aria-label="Actual so far" className="rounded-md border border-orange-200 bg-orange-50 p-4">
+      {!readOnly && (
+        <div className="flex flex-col gap-6 px-6 py-5 lg:overflow-y-auto">
+          {/* Today's own record — an override of today. Each field's figure
+              is the total with today over planned, live. */}
+          <section className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <span className="flex items-center gap-2">
-                <ClipboardCheck aria-hidden className="size-4 text-orange-600" />
-                <span
-                  title="Where it stands so far, through today — every saved log, each day without one at its planned share."
-                  className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 ring-1 ring-orange-200"
-                >
-                  Actual
-                </span>
+              <h3 className="text-base font-semibold text-zinc-900">Today&apos;s log</h3>
+              <span className="flex items-center gap-1.5 text-sm text-zinc-700">
+                <CalendarDays aria-hidden className="size-4 text-zinc-400" />
+                {new Date().toLocaleDateString("en-US", {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                })}
               </span>
-              <p className="text-xs text-zinc-500 tabular-nums">
-                Actual progress: {actualToDate.percent.toFixed(2)}%
-              </p>
             </div>
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-5">
-              <div className="min-w-0">
-                <dt className="truncate text-xs text-zinc-500">Quantity</dt>
-                <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
-                  {formatQuantity(actualToDate.quantity)}
-                  {unit ? ` ${unit}` : ""}
-                </dd>
-              </div>
-              {COST_COMPONENTS.map((component) => (
-                <div key={component} className="min-w-0">
-                  <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
-                  <dd className="mt-1 text-lg font-semibold text-zinc-900 tabular-nums">
-                    {formatPeso(actualToDate.costs[component])}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        </div>
 
-        {!readOnly && (
-          <>
-        <EdgeDivider />
-
-        {/* Today's own record — an override of today. Each field's figure
-            is the total with today over planned, live. */}
-        <section className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <h3 className="text-base font-semibold text-zinc-900">Today&apos;s log</h3>
-            <span className="flex items-center gap-1.5 text-sm text-zinc-700">
-              <CalendarDays aria-hidden className="size-4 text-zinc-400" />
-              {new Date().toLocaleDateString("en-US", {
-                weekday: "short",
-                month: "short",
-                day: "numeric",
-              })}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
             <Field
               htmlFor="progress-quantity"
               label="Quantity completed today"
@@ -1230,13 +1142,10 @@ export function ProgressTrackingModalContent({
           </div>
         </section>
 
-          </>
-        )}
-
         {/* Materials used today: each
             line's cost is what's used of it × its unit cost from the
             Material Breakdown, and the day's material cost is their total. */}
-        {!readOnly && hasItemizedMaterials && (
+        {hasItemizedMaterials && (
           <>
             <EdgeDivider />
             <section className="flex flex-col gap-4">
@@ -1445,13 +1354,104 @@ export function ProgressTrackingModalContent({
             </section>
           </>
         )}
-
       </div>
+    )}
 
-      {/* The override history — its own column: every save, newest first
-          (0071) — or, on a database without that yet, just the last
-          override as before. */}
-      <aside className={`history-text flex flex-col gap-4 px-6 ${readOnly ? "pb-5" : "border-t border-zinc-200 py-5 lg:overflow-y-auto lg:border-t-0 lg:border-l"}`}>
+      {/* The right section: Planned and Actual status cards above,
+          followed by the override history below. */}
+      <aside className={`history-text flex flex-col gap-4 px-6 ${readOnly ? "py-5" : "border-t border-zinc-200 py-5 lg:overflow-y-auto lg:border-t-0 lg:border-l"}`}>
+        {/* The plan so far over where the task actually stands — the same
+            parts in the same columns, to read one against the other. */}
+        <div className="flex flex-col gap-3">
+          {/* The plan so far — each part's planned amount through today,
+              from automatic progress, to compare today's log (and the days
+              before it) against; Expected progress is the same share.
+              Hidden until the task has a Start and End to plan from. */}
+          {breakdown.totalWorkingDays !== null && (
+            <section aria-label="Planned so far" className="rounded-md border border-sky-200 bg-sky-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <span className="flex items-center gap-2">
+                  <ClipboardList aria-hidden className="size-4 text-sky-700" />
+                  <span
+                    title="The plan so far, through today — from automatic progress."
+                    className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                  >
+                    Planned
+                  </span>
+                </span>
+                <span
+                  title="Expected progress"
+                  className="text-base font-bold text-sky-700 tabular-nums"
+                >
+                  {(breakdown.timePercent ?? 0).toFixed(2)}%
+                </span>
+              </div>
+              {plannedShare === 0 ? (
+                <p className="mt-3 text-sm text-zinc-500">No work is planned yet — it hasn&apos;t started.</p>
+              ) : (
+                <dl className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-5" : ""}`}>
+                  <div className="min-w-0">
+                    <dt className="truncate text-xs text-zinc-500">Quantity</dt>
+                    <dd className="mt-0.5 text-sm font-semibold text-zinc-900 tabular-nums">
+                      {formatQuantity(plannedToDate.quantity)}
+                      {unit ? ` ${unit}` : ""}
+                    </dd>
+                  </div>
+                  {COST_COMPONENTS.map((component) => (
+                    <div key={component} className="min-w-0">
+                      <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
+                      <dd className="mt-0.5 text-sm font-semibold text-zinc-900 tabular-nums">
+                        {formatPeso(plannedToDate.costs[component])}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </section>
+          )}
+
+          {/* Where it actually stands, as saved — every saved log, each day
+              without one at its planned share; Actual progress is its
+              percent complete. Still while today's log is typed below. */}
+          <section aria-label="Actual so far" className="rounded-md border border-orange-200 bg-orange-50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <span className="flex items-center gap-2">
+                <ClipboardCheck aria-hidden className="size-4 text-orange-600" />
+                <span
+                  title="Where it stands so far, through today — every saved log, each day without one at its planned share."
+                  className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 ring-1 ring-orange-200"
+                >
+                  Actual
+                </span>
+              </span>
+              <span
+                title="Actual progress"
+                className="text-base font-bold text-orange-600 tabular-nums"
+              >
+                {actualToDate.percent.toFixed(2)}%
+              </span>
+            </div>
+            <dl className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-5" : ""}`}>
+              <div className="min-w-0">
+                <dt className="truncate text-xs text-zinc-500">Quantity</dt>
+                <dd className="mt-0.5 text-sm font-semibold text-zinc-900 tabular-nums">
+                  {formatQuantity(actualToDate.quantity)}
+                  {unit ? ` ${unit}` : ""}
+                </dd>
+              </div>
+              {COST_COMPONENTS.map((component) => (
+                <div key={component} className="min-w-0">
+                  <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
+                  <dd className="mt-0.5 text-sm font-semibold text-zinc-900 tabular-nums">
+                    {formatPeso(actualToDate.costs[component])}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        </div>
+
+        <EdgeDivider />
         {history.length > 0 ? (
           <OverrideHistory
             key={`${highlightLatest ? "latest" : "date"}:${highlightEntryDate ?? ""}`}
