@@ -177,6 +177,18 @@ export async function listMemberGroups(): Promise<MemberGroup[]> {
   }));
 }
 
+/** Project leadership is implicit on every task/phase, including new rows. */
+export async function listProjectManagementWorkerIds(projectId: number): Promise<number[]> {
+  const client = await createClient();
+  const { data: project, error } = await client.from("projects")
+    .select("project_manager_id,foreman_id").eq("id", projectId).single();
+  if (error || !project) throw new Error("Could not load project management assignments.");
+  const { data: members, error: memberError } = await client.from("workers")
+    .select("id").in("profile_id", [project.project_manager_id, project.foreman_id]);
+  if (memberError) throw new Error("Could not load project management members.");
+  return (members ?? []).map(member => member.id);
+}
+
 export async function listTaskWorkerAssignments(
   projectId: number
 ): Promise<TaskWorkerAssignments> {
@@ -199,11 +211,12 @@ export async function listTaskWorkerAssignments(
     .select("task_id, worker_id")
     .in("task_id", taskIds);
 
-  const result: TaskWorkerAssignments = {};
+  const defaults = await listProjectManagementWorkerIds(projectId);
+  const result: TaskWorkerAssignments = Object.fromEntries(taskIds.map(id => [id, [...defaults]]));
   for (const row of data ?? []) {
     const existing = result[row.task_id];
     if (existing) {
-      existing.push(row.worker_id);
+      if (!existing.includes(row.worker_id)) existing.push(row.worker_id);
     } else {
       result[row.task_id] = [row.worker_id];
     }
@@ -236,11 +249,12 @@ export async function listCategoryWorkerAssignments(
     .select("category_id, worker_id")
     .in("category_id", categoryIds);
 
-  const result: CategoryWorkerAssignments = {};
+  const defaults = await listProjectManagementWorkerIds(projectId);
+  const result: CategoryWorkerAssignments = Object.fromEntries(categoryIds.map(id => [id, [...defaults]]));
   for (const row of data ?? []) {
     const existing = result[row.category_id];
     if (existing) {
-      existing.push(row.worker_id);
+      if (!existing.includes(row.worker_id)) existing.push(row.worker_id);
     } else {
       result[row.category_id] = [row.worker_id];
     }

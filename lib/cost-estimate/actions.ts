@@ -2081,6 +2081,20 @@ export async function updateCategoryMaterialAssignments(
 /**
  * Saves the Other Breakdown's edited owners and computed totals together.
  */
+export async function saveEquipmentCostBreakdown(projectId: number, changes: OtherCostChange[]): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) return { error: "You are not authorized to manage cost estimates." };
+    if (!validOtherCostChanges(changes)) return { error: "Enter an equipment description and a valid nonnegative amount." };
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("save_equipment_cost_breakdown", { p_project_id: projectId, p_changes: changes });
+    if (error) return { error: "Could not save equipment estimates. Apply migration 0086 and try again." };
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
+
 export async function saveOtherCostBreakdown(
   projectId: number,
   changes: OtherCostChange[]

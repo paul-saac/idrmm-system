@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import type { ProgressExpense } from "@/lib/expenses/progress";
+import { listMaterialPurchases } from "@/lib/materials/purchases";
 
 export type EquipmentStatus = "available" | "assigned" | "maintenance" | "retired";
 
@@ -278,7 +279,7 @@ async function readExpensePages<T>(fetchPage: (from: number, to: number) => Prom
 
 /** Current saved costs in all four categories, shared by Expenses and Equipment.
  * Never sum the append-only audit history: re-saving a day replaces its expense.
- * material_cost already includes the priced material usage on that entry.
+ * Material expenses come only from recorded purchases, never usage valuations.
  */
 export async function listProgressExpenses(
   projectId: number
@@ -311,8 +312,15 @@ export async function listProgressExpenses(
   ]);
 
   const costs: (ProgressExpense & { createdAt: string; recordedBy: string | null })[] = [];
+  for (const purchase of await listMaterialPurchases(projectId)) {
+    costs.push({id:`purchase-${purchase.id}`,entryDate:purchase.purchase_date,
+      itemName:purchase.material_name,itemKey:`purchase-${purchase.id}`,
+      supplier:purchase.supplier,invoiceNumber:purchase.invoice_number,
+      costs:{material:Number(purchase.amount),equipment:0,labor:0,other:0},
+      savedByName:null,createdAt:purchase.created_at,recordedBy:purchase.recorded_by});
+  }
   for (const row of taskEntries ?? []) {
-    const amounts = { material: Number(row.material_cost) || 0, equipment: Number(row.equipment_cost) || 0, labor: Number(row.labor_cost) || 0, other: Number(row.other_cost) || 0 };
+    const amounts = { material: 0, equipment: Number(row.equipment_cost) || 0, labor: Number(row.labor_cost) || 0, other: Number(row.other_cost) || 0 };
     if (!Object.values(amounts).some((amount) => amount > 0)) continue;
     costs.push({
       id: `task-${row.id}`,
@@ -326,7 +334,7 @@ export async function listProgressExpenses(
     });
   }
   for (const row of categoryEntries ?? []) {
-    const amounts = { material: Number(row.material_cost) || 0, equipment: Number(row.equipment_cost) || 0, labor: Number(row.labor_cost) || 0, other: Number(row.other_cost) || 0 };
+    const amounts = { material: 0, equipment: Number(row.equipment_cost) || 0, labor: Number(row.labor_cost) || 0, other: Number(row.other_cost) || 0 };
     if (!Object.values(amounts).some((amount) => amount > 0)) continue;
     costs.push({
       id: `category-${row.id}`,

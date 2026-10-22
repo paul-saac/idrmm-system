@@ -48,6 +48,7 @@ export function CreateProjectForm({
     <form
       ref={formRef}
       action={formAction}
+      autoComplete="off"
       className="grid gap-4 sm:grid-cols-2"
       noValidate
     >

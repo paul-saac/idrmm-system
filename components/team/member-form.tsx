@@ -81,7 +81,7 @@ export function MemberForm({
   }, [state]);
 
   return (
-    <form id={`${formId}-form`} action={formAction} className="grid gap-4 sm:grid-cols-2" noValidate>
+    <form id={`${formId}-form`} action={formAction} autoComplete="off" className="grid gap-4 sm:grid-cols-2" noValidate>
       <input type="hidden" name="category" value={category} />
       <input type="hidden" name="employmentType" value={employmentType} />
       <div className="flex flex-col gap-1.5">

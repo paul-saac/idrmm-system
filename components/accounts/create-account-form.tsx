@@ -1,18 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
-import { Eye, EyeOff, RefreshCw } from "lucide-react";
+import { useActionState, useEffect, useRef } from "react";
 import { createAccount, type AccountActionState } from "@/lib/accounts/actions";
 import { roleLabel, type UserRole } from "@/lib/auth/roles";
 
 const initialState: AccountActionState = {};
-
-function generatePassword() {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/[+/=]/g, "")
-    .slice(0, 12);
-}
 
 export function CreateAccountForm({
   roleOptions,
@@ -22,20 +14,12 @@ export function CreateAccountForm({
   onSuccess?: () => void;
 }) {
   const [state, formAction, pending] = useActionState(createAccount, initialState);
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(true);
   const fixedRole = roleOptions.length === 1 ? roleOptions[0] : null;
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (state.success) {
       formRef.current?.reset();
-      // The password field is controlled (needed for the generate/show
-      // buttons), so form.reset() alone won't clear its displayed value —
-      // this syncs it back. One-shot reaction to the server action
-      // completing, not a render loop.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setPassword("");
       onSuccess?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -85,48 +69,6 @@ export function CreateAccountForm({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor="password" className="text-sm font-medium text-zinc-900">
-          Temporary password
-        </label>
-        <div className="relative">
-          <input
-            id="password"
-            name="password"
-            type={showPassword ? "text" : "password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            minLength={8}
-            required
-            placeholder="At least 8 characters"
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 pr-16 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-          />
-          <div className="absolute inset-y-0 right-0 flex items-center gap-1 pr-2">
-            <button
-              type="button"
-              onClick={() => setPassword(generatePassword())}
-              aria-label="Generate password"
-              title="Generate password"
-              className="text-zinc-400 hover:text-zinc-600"
-            >
-              <RefreshCw className="size-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowPassword((v) => !v)}
-              aria-label={showPassword ? "Hide password" : "Show password"}
-              className="text-zinc-400 hover:text-zinc-600"
-            >
-              {showPassword ? (
-                <EyeOff className="size-4" />
-              ) : (
-                <Eye className="size-4" />
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-
       {fixedRole ? (
         <input type="hidden" name="role" value={fixedRole} />
       ) : (
@@ -155,8 +97,7 @@ export function CreateAccountForm({
 
       <div className="flex flex-col gap-2 sm:col-span-2">
         <p className="text-xs text-zinc-500">
-          Share this password with the new user out of band — they can change
-          it after logging in from the &quot;Forgot password?&quot; link.
+          An invitation email lets this person set their own password. Their role is assigned by you.
         </p>
         <div className="flex items-center gap-3">
           <button
@@ -164,7 +105,7 @@ export function CreateAccountForm({
             disabled={pending}
             className="rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {pending ? "Creating..." : "Create account"}
+            {pending ? "Sending..." : "Send invitation"}
           </button>
           {state?.error && (
             <p role="alert" className="text-sm text-red-600">

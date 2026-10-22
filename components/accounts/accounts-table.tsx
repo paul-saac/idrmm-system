@@ -94,12 +94,12 @@ export function AccountsTable({
                 <td className={CELL}>
                   <span
                     className={`rounded-sm px-2 py-0.5 text-xs font-medium whitespace-nowrap ${
-                      account.status === "active"
+                      account.status === "active" && !account.invitationPending
                         ? "bg-emerald-50 text-emerald-700"
                         : "bg-amber-50 text-amber-700"
                     }`}
                   >
-                    {account.status === "active" ? "Active" : "Inactive"}
+                    {account.status === "inactive" ? "Inactive" : account.invitationPending ? "Invited" : "Active"}
                   </span>
                 </td>
                 <td className={`${CELL} whitespace-nowrap`}>

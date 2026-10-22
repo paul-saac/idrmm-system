@@ -8,6 +8,7 @@ import {
   deactivateWithHandover,
   deleteAccount,
   getAccountDetail,
+  resendInvitation,
   sendPasswordReset,
   setAccountsStatus,
   setTemporaryPassword,
@@ -257,7 +258,25 @@ export function AccountDetail({
 
       {/* Password & sign-in */}
       <section className="flex flex-col gap-3 border-t border-zinc-200 pt-5">
-        <h3 className="text-sm font-semibold text-zinc-900">Password &amp; Sign-in</h3>
+        <h3 className="text-sm font-semibold text-zinc-900">{account.invitationPending ? "Invitation" : "Password & Sign-in"}</h3>
+        {account.invitationPending ? (
+          <div>
+            <button
+              type="button"
+              disabled={busy !== null || account.status !== "active"}
+              onClick={() => run("password", "invite", () => resendInvitation(account.id))}
+              className={PRIMARY}
+            >
+              {busy === "invite" ? "Sending..." : "Resend invitation"}
+            </button>
+            <p className="mt-2 text-xs text-zinc-500">
+              {account.status !== "active"
+                ? "Activate this account before resending its invitation."
+                : "Send a fresh link to finish account setup using the existing email and role."}
+            </p>
+          </div>
+        ) : (
+          <>
         <div className="flex flex-wrap gap-3">
           <button
             type="button"
@@ -308,6 +327,8 @@ export function AccountDetail({
             {busy === "password" ? "Setting..." : "Set Password"}
           </button>
         </div>
+          </>
+        )}
         {note("password")}
       </section>
 

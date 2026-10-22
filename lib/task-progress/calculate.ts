@@ -166,6 +166,68 @@ export function itemizedMaterialCost(
   return Math.round(total * 100) / 100;
 }
 
+/** Key matching a planned Other Cost line to a logged spend row —
+ * case/whitespace-insensitive cost name. */
+export function otherCostKey(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+/** One distinct Other Cost item planned for a task or phase — its Other
+ * Breakdown lines grouped by otherCostKey. */
+export type PlannedOtherCost = {
+  key: string;
+  name: string;
+  plannedAmount: number;
+};
+
+export function groupPlannedOtherCosts(
+  lines: {
+    costName: string;
+    amount: number;
+  }[]
+): PlannedOtherCost[] {
+  const byKey = new Map<string, PlannedOtherCost>();
+  for (const line of lines) {
+    const name = line.costName.trim();
+    if (!name) continue;
+    const key = otherCostKey(name);
+    const amount = Math.max(0, Number(line.amount ?? 0));
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.plannedAmount += amount;
+    } else {
+      byKey.set(key, {
+        key,
+        name,
+        plannedAmount: amount,
+      });
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+/** An other cost item logged that isn't on the planned lines. */
+export type UnplannedOtherCost = {
+  name: string;
+  amount: number;
+};
+
+export function unplannedOtherCostTotal(items: readonly UnplannedOtherCost[]): number {
+  const total = items.reduce((sum, item) => sum + item.amount, 0);
+  return Math.round(total * 100) / 100;
+}
+
+export function itemizedOtherCost(
+  planned: PlannedOtherCost[],
+  spent: Record<string, number>
+): number {
+  let total = 0;
+  for (const item of planned) {
+    total += spent[item.key] ?? 0;
+  }
+  return Math.round(total * 100) / 100;
+}
+
 
 /** A task's four cost components — the same ones its weight comes from
  * (lib/cost-estimate/weights.ts). */
@@ -189,6 +251,12 @@ export type ProgressAnchor = {
   /** Quantity used per material, keyed by materialKey — summed across
    * every saved day. */
   cumulativeMaterialUsage: Record<string, number>;
+  /** Spend per planned equipment cost item, keyed by otherCostKey — summed
+   * across every saved day. */
+  cumulativeEquipmentCostSpend?: Record<string, number>;
+  /** Spend per planned other cost item, keyed by otherCostKey — summed
+   * across every saved day. */
+  cumulativeOtherCostSpend?: Record<string, number>;
   /** Spend per cost component — summed across every saved day. */
   cumulativeCosts: CostAmounts;
   /** Of cumulativeCosts.material, what went on materials not on the
@@ -294,6 +362,8 @@ export type DailyPlan = {
   costs: CostAmounts;
   quantity: number;
   materials: Record<string, number>;
+  equipmentCosts: Record<string, number>;
+  otherCosts: Record<string, number>;
 };
 
 /**
@@ -312,14 +382,24 @@ export function computeDailyPlan({
   plannedCosts,
   estimatedQuantity,
   plannedMaterials,
+  plannedEquipmentCosts = [],
+  plannedOtherCosts = [],
   date,
 }: Schedule & {
   plannedCosts: CostAmounts;
   estimatedQuantity: number;
   plannedMaterials: PlannedMaterial[];
+  plannedEquipmentCosts?: PlannedOtherCost[];
+  plannedOtherCosts?: PlannedOtherCost[];
   date: Date;
 }): DailyPlan {
-  const empty: DailyPlan = { costs: ZERO_COSTS, quantity: 0, materials: {} };
+  const empty: DailyPlan = {
+    costs: ZERO_COSTS,
+    quantity: 0,
+    materials: {},
+    equipmentCosts: {},
+    otherCosts: {},
+  };
   const total = totalScheduledDays({ plannedStartDate, plannedEndDate, workingDays, holidays });
   if (total === null) return empty;
   const day = startOfDay(date);
@@ -334,6 +414,14 @@ export function computeDailyPlan({
   for (const material of plannedMaterials) {
     materials[material.key] = material.plannedQuantity / total;
   }
+  const equipmentCosts: Record<string, number> = {};
+  for (const item of plannedEquipmentCosts) {
+    equipmentCosts[item.key] = item.plannedAmount / total;
+  }
+  const otherCosts: Record<string, number> = {};
+  for (const item of plannedOtherCosts) {
+    otherCosts[item.key] = item.plannedAmount / total;
+  }
   return {
     costs: {
       labor: plannedCosts.labor / total,
@@ -343,6 +431,8 @@ export function computeDailyPlan({
     },
     quantity: estimatedQuantity / total,
     materials,
+    equipmentCosts,
+    otherCosts,
   };
 }
 
@@ -358,6 +448,8 @@ export function computeTodayPlan({
   plannedCosts,
   estimatedQuantity,
   plannedMaterials,
+  plannedEquipmentCosts = [],
+  plannedOtherCosts = [],
   anchor,
   today,
   ...schedule
@@ -365,6 +457,8 @@ export function computeTodayPlan({
   plannedCosts: CostAmounts;
   estimatedQuantity: number;
   plannedMaterials: PlannedMaterial[];
+  plannedEquipmentCosts?: PlannedOtherCost[];
+  plannedOtherCosts?: PlannedOtherCost[];
   anchor: ProgressAnchor;
   today: Date;
 }): DailyPlan {
@@ -373,6 +467,8 @@ export function computeTodayPlan({
     plannedCosts,
     estimatedQuantity,
     plannedMaterials,
+    plannedEquipmentCosts,
+    plannedOtherCosts,
     date: today,
   });
   // Everything so far but today — today counted as saved, with nothing.
@@ -381,6 +477,8 @@ export function computeTodayPlan({
     plannedCosts,
     estimatedQuantity,
     plannedMaterials,
+    plannedEquipmentCosts,
+    plannedOtherCosts,
     anchor: { ...anchor, loggedDates: [...anchor.loggedDates, toIsoDate(today)] },
     today,
   });
@@ -393,6 +491,22 @@ export function computeTodayPlan({
       daily.materials[material.key] ?? 0,
       material.plannedQuantity,
       before.materialUsageToDate[material.key] ?? 0
+    );
+  }
+  const equipmentCosts: Record<string, number> = {};
+  for (const item of plannedEquipmentCosts) {
+    equipmentCosts[item.key] = left(
+      daily.equipmentCosts[item.key] ?? 0,
+      item.plannedAmount,
+      before.equipmentCostSpendToDate[item.key] ?? 0
+    );
+  }
+  const otherCosts: Record<string, number> = {};
+  for (const item of plannedOtherCosts) {
+    otherCosts[item.key] = left(
+      daily.otherCosts[item.key] ?? 0,
+      item.plannedAmount,
+      before.otherCostSpendToDate[item.key] ?? 0
     );
   }
   return {
@@ -408,6 +522,8 @@ export function computeTodayPlan({
     },
     quantity: left(daily.quantity, estimatedQuantity, before.quantityToDate),
     materials,
+    equipmentCosts,
+    otherCosts,
   };
 }
 
@@ -426,6 +542,8 @@ export type PercentCompleteBreakdown = {
    * planned quantity. Null without one. */
   quantityPercent: number | null;
   materialUsageToDate: Record<string, number>;
+  equipmentCostSpendToDate: Record<string, number>;
+  otherCostSpendToDate: Record<string, number>;
   /** How much of the planned materials is used, each capped at 100% and
    * weighted by its planned peso value (so a ₱50,000 line counts for more
    * than a ₱1,000 one; a plain average when no line has a cost). Null
@@ -483,12 +601,16 @@ export function computeProgressBreakdown({
   plannedCosts,
   estimatedQuantity,
   plannedMaterials,
+  plannedEquipmentCosts = [],
+  plannedOtherCosts = [],
   anchor,
   today,
 }: Schedule & {
   plannedCosts: CostAmounts;
   estimatedQuantity: number;
   plannedMaterials: PlannedMaterial[];
+  plannedEquipmentCosts?: PlannedOtherCost[];
+  plannedOtherCosts?: PlannedOtherCost[];
   anchor: ProgressAnchor;
   today: Date;
 }): PercentCompleteBreakdown {
@@ -546,6 +668,20 @@ export function computeProgressBreakdown({
     const used = materialUsageToDate[material.key] ?? 0;
     materialUsageToDate[material.key] = used + automatic(material.plannedQuantity, used);
   }
+  const equipmentCostSpendToDate: Record<string, number> = {
+    ...(anchor.cumulativeEquipmentCostSpend ?? {}),
+  };
+  for (const item of plannedEquipmentCosts) {
+    const spent = equipmentCostSpendToDate[item.key] ?? 0;
+    equipmentCostSpendToDate[item.key] = spent + automatic(item.plannedAmount, spent);
+  }
+  const otherCostSpendToDate: Record<string, number> = {
+    ...(anchor.cumulativeOtherCostSpend ?? {}),
+  };
+  for (const item of plannedOtherCosts) {
+    const spent = otherCostSpendToDate[item.key] ?? 0;
+    otherCostSpendToDate[item.key] = spent + automatic(item.plannedAmount, spent);
+  }
   const measurable = plannedMaterials.filter((m) => m.plannedQuantity > 0);
   let materialsPercent: number | null = null;
   if (measurable.length > 0) {
@@ -585,6 +721,8 @@ export function computeProgressBreakdown({
     quantityToDate,
     quantityPercent,
     materialUsageToDate,
+    equipmentCostSpendToDate,
+    otherCostSpendToDate,
     materialsPercent,
     timePercent,
     elapsedWorkingDays,

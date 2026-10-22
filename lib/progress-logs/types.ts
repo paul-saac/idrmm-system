@@ -28,6 +28,18 @@ export type OverrideLog = {
     quantity: number;
     unitCost?: number | null;
   }[];
+  /** Itemized equipment costs logged that day (0089). */
+  equipmentCosts?: {
+    name: string;
+    amount: number;
+    unplanned?: boolean;
+  }[];
+  /** Itemized other costs logged that day (0084). */
+  otherCosts?: {
+    name: string;
+    amount: number;
+    unplanned?: boolean;
+  }[];
   /** Who worked that day, their hours and hourly rate then. */
   attendance: { name: string; hours: number; rate: number }[];
 };

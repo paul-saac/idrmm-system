@@ -1,4 +1,5 @@
 import type { UserRole } from "@/lib/auth/roles";
+import type { MaterialPurchase } from "@/lib/materials/purchases-model";
 import type { CloseoutRecord } from "@/lib/reports/closeout-model";
 import type { Sheet, SheetReview } from "@/lib/sheets/model";
 
@@ -25,6 +26,18 @@ export type AccountEventAction =
 export interface Database {
   public: {
     Tables: {
+      material_purchases: {
+        Row: MaterialPurchase;
+        Insert: Omit<MaterialPurchase,"id" | "amount" | "created_at">;
+        Update: { received_quantity?: number };
+        Relationships: [];
+      };
+      account_invitations: {
+        Row: { id: string; email: string; role: UserRole; invited_by: string; created_at: string };
+        Insert: { id?: string; email: string; role: UserRole; invited_by: string };
+        Update: never;
+        Relationships: [];
+      };
       project_sheets: {
         Row: Sheet;
         Insert: Omit<Sheet, "id" | "created_at" | "reviewed_by" | "reviewed_name" | "reviewed_at" | "review_notes">;
@@ -51,6 +64,7 @@ export interface Database {
           last_name: string;
           role: UserRole;
           status: "active" | "inactive";
+          invitation_pending: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -64,6 +78,7 @@ export interface Database {
         };
         Update: {
           email?: string;
+          invitation_pending?: boolean;
           first_name?: string;
           last_name?: string;
           role?: UserRole;
@@ -206,6 +221,7 @@ export interface Database {
           /** A category's own Equipment / Other cost — see
            * 0056_category_equipment_other.sql. */
           category_equipment_estimate: number | null;
+          equipment_cost_items: import("@/lib/cost-estimate/data").OtherCostItem[];
           category_other_estimate: number | null;
           /** See 0048_category_progress_tracking.sql's own comment —
            * only used while this category has no tasks yet, same
@@ -272,6 +288,7 @@ export interface Database {
           labor_estimate: number | null;
           material_estimate: number | null;
           equipment_estimate: number | null;
+          equipment_cost_items: import("@/lib/cost-estimate/data").OtherCostItem[];
           other_cost_estimate: number | null;
           total_estimate_cost: number | null;
           planned_start_date: string | null;
@@ -381,10 +398,10 @@ export interface Database {
           recipient_id: string;
           actor_id: string | null;
           actor_name: string | null;
-          kind: "progress_override" | "material_request" | "equipment_request";
+          kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted";
           project_id: number;
           project_name: string;
-          item_kind: "task" | "category" | "material_request" | "equipment_request";
+          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet";
           item_id: number;
           item_name: string;
           entry_date: string;
@@ -395,10 +412,10 @@ export interface Database {
           recipient_id: string;
           actor_id?: string | null;
           actor_name?: string | null;
-          kind?: "progress_override" | "material_request" | "equipment_request";
+          kind?: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted";
           project_id: number;
           project_name: string;
-          item_kind: "task" | "category" | "material_request" | "equipment_request";
+          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet";
           item_id: number;
           item_name: string;
           entry_date: string;
@@ -1039,6 +1056,7 @@ export interface Database {
           quantity: number;
           acquisition_type: "rental" | "purchase";
           amount: number;
+          price_amount: number;
           attachment_paths: string[];
           remarks: string | null;
           created_at: string;
@@ -1501,6 +1519,22 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      save_equipment_task_plans: {
+        Args: { p_project_id: number; p_item_key: string; p_selected: number[]; p_previous: number[] };
+        Returns: undefined;
+      };
+      equipment_tracking_data: {
+        Args: { p_project_id: number };
+        Returns: unknown;
+      };
+      record_equipment_operation: {
+        Args: { p_project_id: number; p_input: unknown };
+        Returns: undefined;
+      };
+      save_equipment_cost_breakdown: {
+        Args: { p_project_id: number; p_changes: unknown };
+        Returns: undefined;
+      };
       save_other_cost_breakdown: {
         Args: { p_project_id: number; p_changes: unknown };
         Returns: undefined;

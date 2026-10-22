@@ -1,11 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
 import {
   materialKey,
+  otherCostKey,
   unplannedMaterialCost,
   ZERO_COSTS,
   type CostAmounts,
   type ProgressAnchor,
   type UnplannedMaterial,
+  type UnplannedOtherCost,
 } from "@/lib/task-progress/calculate";
 
 /** Every task's own saved totals (see ProgressAnchor's own doc comment)
@@ -24,6 +26,14 @@ export type ProgressDayEntry = {
   /** That day's materials used that aren't on the planned lines, each at
    * its own unit cost (0073) — kept apart from materialUsage. */
   unplannedMaterials: UnplannedMaterial[];
+  /** That day's spend per planned equipment cost item, keyed by otherCostKey. */
+  equipmentCostSpend?: Record<string, number>;
+  /** That day's unplanned equipment cost items added on the spot (0089). */
+  unplannedEquipmentCosts?: UnplannedOtherCost[];
+  /** That day's spend per planned other cost item, keyed by otherCostKey. */
+  otherCostSpend?: Record<string, number>;
+  /** That day's unplanned other cost items added on the spot (0084). */
+  unplannedOtherCosts?: UnplannedOtherCost[];
 };
 
 /** The most recently overridden day — what the Gantt chart's orange dot
@@ -155,16 +165,18 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
   const rows = entries ?? [];
   const materialsByEntry = new Map<number, Record<string, number>>();
   const unplannedByEntry = new Map<number, UnplannedMaterial[]>();
+  const equipmentCostsByEntry = new Map<number, Record<string, number>>();
+  const unplannedEquipmentByEntry = new Map<number, UnplannedOtherCost[]>();
+  const otherCostsByEntry = new Map<number, Record<string, number>>();
+  const unplannedOtherByEntry = new Map<number, UnplannedOtherCost[]>();
 
   if (rows.length > 0) {
+    const entryIds = rows.map((row) => row.id);
     // "*" so a DB without 0073's unit_cost yet still loads.
     const { data: materialRows, error: materialsError } = await supabase
       .from("task_progress_material_entries")
       .select("*")
-      .in(
-        "progress_entry_id",
-        rows.map((row) => row.id)
-      );
+      .in("progress_entry_id", entryIds);
 
     if (materialsError) {
       console.error(
@@ -191,6 +203,108 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
       usage[key] = (usage[key] ?? 0) + (row.quantity_used ?? 0);
       materialsByEntry.set(row.progress_entry_id, usage);
     }
+
+    const { data: otherRows, error: otherError } = await (
+      supabase as unknown as {
+        from: (table: string) => {
+          select: (cols: string) => {
+            in: (
+              col: string,
+              vals: number[]
+            ) => Promise<{
+              data:
+                | {
+                    progress_entry_id: number;
+                    cost_name: string;
+                    amount: number;
+                    unplanned?: boolean | null;
+                  }[]
+                | null;
+              error: { code?: string; message: string } | null;
+            }>;
+          };
+        };
+      }
+    )
+      .from("task_progress_other_cost_entries")
+      .select("*")
+      .in("progress_entry_id", entryIds);
+
+    if (
+      otherError &&
+      otherError.code !== "PGRST205" &&
+      otherError.code !== "42P01"
+    ) {
+      console.error(
+        "[task-progress] other cost entries query failed:",
+        otherError.message
+      );
+    }
+
+    for (const row of otherRows ?? []) {
+      const amount = Number(row.amount) || 0;
+      if (row.unplanned) {
+        const list = unplannedOtherByEntry.get(row.progress_entry_id) ?? [];
+        list.push({ name: row.cost_name, amount });
+        unplannedOtherByEntry.set(row.progress_entry_id, list);
+        continue;
+      }
+      const spend = otherCostsByEntry.get(row.progress_entry_id) ?? {};
+      const key = otherCostKey(row.cost_name);
+      spend[key] = (spend[key] ?? 0) + amount;
+      otherCostsByEntry.set(row.progress_entry_id, spend);
+    }
+
+    const { data: equipmentRows, error: equipmentError } = await (
+      supabase as unknown as {
+        from: (table: string) => {
+          select: (cols: string) => {
+            in: (
+              col: string,
+              vals: number[]
+            ) => Promise<{
+              data:
+                | {
+                    progress_entry_id: number;
+                    cost_name: string;
+                    amount: number;
+                    unplanned?: boolean | null;
+                  }[]
+                | null;
+              error: { code?: string; message: string } | null;
+            }>;
+          };
+        };
+      }
+    )
+      .from("task_progress_equipment_cost_entries")
+      .select("*")
+      .in("progress_entry_id", entryIds);
+
+    if (
+      equipmentError &&
+      equipmentError.code !== "PGRST205" &&
+      equipmentError.code !== "42P01"
+    ) {
+      console.error(
+        "[task-progress] equipment cost entries query failed:",
+        equipmentError.message
+      );
+    }
+
+    for (const row of equipmentRows ?? []) {
+      const amount = Number(row.amount) || 0;
+      if (row.unplanned) {
+        const list = unplannedEquipmentByEntry.get(row.progress_entry_id) ?? [];
+        list.push({ name: row.cost_name, amount });
+        unplannedEquipmentByEntry.set(row.progress_entry_id, list);
+        continue;
+      }
+      const spend = equipmentCostsByEntry.get(row.progress_entry_id) ?? {};
+      const key = otherCostKey(row.cost_name);
+      spend[key] = (spend[key] ?? 0) + amount;
+      equipmentCostsByEntry.set(row.progress_entry_id, spend);
+    }
   }
 
   return rows.map((row) => ({
@@ -201,6 +315,10 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
     costs: entryCosts(row),
     materialUsage: materialsByEntry.get(row.id) ?? {},
     unplannedMaterials: unplannedByEntry.get(row.id) ?? [],
+    equipmentCostSpend: equipmentCostsByEntry.get(row.id) ?? {},
+    unplannedEquipmentCosts: unplannedEquipmentByEntry.get(row.id) ?? [],
+    otherCostSpend: otherCostsByEntry.get(row.id) ?? {},
+    unplannedOtherCosts: unplannedOtherByEntry.get(row.id) ?? [],
     recordedBy: row.recorded_by ?? null,
   }));
 }
@@ -208,10 +326,14 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
 function emptyAnchor(): ProgressAnchor & {
   loggedDates: string[];
   cumulativeUnplannedMaterialCost: number;
+  cumulativeEquipmentCostSpend: Record<string, number>;
+  cumulativeOtherCostSpend: Record<string, number>;
 } {
   return {
     cumulativeQuantityCompleted: 0,
     cumulativeMaterialUsage: {},
+    cumulativeEquipmentCostSpend: {},
+    cumulativeOtherCostSpend: {},
     cumulativeCosts: { ...ZERO_COSTS },
     cumulativeUnplannedMaterialCost: 0,
     loggedDates: [],
@@ -223,6 +345,14 @@ function addEntry(anchor: ReturnType<typeof emptyAnchor>, entry: Entry) {
   for (const [key, quantity] of Object.entries(entry.materialUsage)) {
     anchor.cumulativeMaterialUsage[key] =
       (anchor.cumulativeMaterialUsage[key] ?? 0) + quantity;
+  }
+  for (const [key, amount] of Object.entries(entry.equipmentCostSpend ?? {})) {
+    anchor.cumulativeEquipmentCostSpend[key] =
+      (anchor.cumulativeEquipmentCostSpend[key] ?? 0) + amount;
+  }
+  for (const [key, amount] of Object.entries(entry.otherCostSpend ?? {})) {
+    anchor.cumulativeOtherCostSpend[key] =
+      (anchor.cumulativeOtherCostSpend[key] ?? 0) + amount;
   }
   anchor.cumulativeCosts.labor += entry.costs.labor;
   anchor.cumulativeCosts.material += entry.costs.material;
@@ -301,6 +431,10 @@ export async function listTaskProgressToday(
         costs: entry.costs,
         materialUsage: entry.materialUsage,
         unplannedMaterials: entry.unplannedMaterials,
+        equipmentCostSpend: entry.equipmentCostSpend,
+        unplannedEquipmentCosts: entry.unplannedEquipmentCosts,
+        otherCostSpend: entry.otherCostSpend,
+        unplannedOtherCosts: entry.unplannedOtherCosts,
       };
       todayEntryTask.set(entry.id, entry.taskId);
     }
@@ -324,6 +458,10 @@ export async function listTaskProgressToday(
       costs: entry.costs,
       materialUsage: entry.materialUsage,
       unplannedMaterials: entry.unplannedMaterials,
+      equipmentCostSpend: entry.equipmentCostSpend,
+      unplannedEquipmentCosts: entry.unplannedEquipmentCosts,
+      otherCostSpend: entry.otherCostSpend,
+      unplannedOtherCosts: entry.unplannedOtherCosts,
       entryDate: entry.entryDate,
       savedByName: (entry.recordedBy && names.get(entry.recordedBy)) || null,
     };

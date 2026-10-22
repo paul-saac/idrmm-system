@@ -32,6 +32,7 @@ type Target = {
   id: string;
   role: UserRole;
   status: "active" | "inactive";
+  invitationPending: boolean;
   firstName: string;
   lastName: string;
   email: string;
@@ -81,13 +82,13 @@ async function requireManager(): Promise<Manager> {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, first_name, last_name, email")
+    .select("role, first_name, last_name, email, status, invitation_pending")
     .eq("id", user.id)
     .single();
 
   const role = profile?.role;
 
-  if (!profile || !role || MANAGED_ROLES[role].length === 0) {
+  if (!profile || !role || profile.status !== "active" || profile.invitation_pending || MANAGED_ROLES[role].length === 0) {
     throw new AuthorizationError("You are not authorized to manage accounts.");
   }
 
@@ -107,7 +108,7 @@ async function loadManagedTarget(targetId: string, manager: Manager): Promise<Ta
   const supabase = await createClient();
   const { data } = await supabase
     .from("profiles")
-    .select("id, role, status, first_name, last_name, email")
+    .select("id, role, status, first_name, last_name, email, invitation_pending")
     .eq("id", targetId)
     .single();
 
@@ -118,6 +119,7 @@ async function loadManagedTarget(targetId: string, manager: Manager): Promise<Ta
     id: data.id,
     role: data.role,
     status: data.status,
+    invitationPending: data.invitation_pending,
     firstName: data.first_name,
     lastName: data.last_name,
     email: data.email,
@@ -178,16 +180,15 @@ export async function createAccount(
 
   const firstName = String(formData.get("firstName") ?? "").trim();
   const lastName = String(formData.get("lastName") ?? "").trim();
-  const email = String(formData.get("email") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
   const role = String(formData.get("role") ?? "") as UserRole;
 
-  if (!firstName || !lastName || !email || !password || !role) {
+  if (!firstName || !lastName || !email || !role) {
     return { error: "Please fill in all fields." };
   }
 
-  if (password.length < 8) {
-    return { error: "Password must be at least 8 characters." };
+  if (!EMAIL_PATTERN.test(email)) {
+    return { error: "Enter a valid email address." };
   }
 
   if (!manager.managedRoles.includes(role)) {
@@ -206,19 +207,30 @@ export async function createAccount(
     };
   }
 
-  const { data, error } = await admin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { first_name: firstName, last_name: lastName, role },
+  const { data: existing, error: lookupError } = await admin.from("profiles").select("id").ilike("email", email).maybeSingle();
+  if (lookupError) return { error: "Could not check this email. Please try again." };
+  if (existing) return { error: "An account already uses this email. Open that account to send a password setup/reset link." };
+  await admin.from("account_invitations").delete().eq("email", email)
+    .lt("created_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
+  const { data: invitation, error: invitationError } = await admin.from("account_invitations").insert({
+    email, role, invited_by: manager.userId,
+  }).select("id").single();
+  if (invitationError || !invitation) {
+    return { error: "Could not prepare the invitation. Check migration 0081, or retry after an existing invitation finishes." };
+  }
+  const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
+    redirectTo: `${siteURL()}/accept-invite`,
+    data: { first_name: firstName, last_name: lastName, invitation_id: invitation.id },
   });
+  // The profile trigger consumes this row on success; remove it on a failed send.
+  await admin.from("account_invitations").delete().eq("id", invitation.id);
 
   if (error) {
     console.error("[createAccount] Supabase Admin API failed:", error);
     return {
       error: error.message.toLowerCase().includes("already")
         ? "An account with that email already exists."
-        : "Could not create account. Please try again.",
+        : "Could not send the invitation. Check the email delivery configuration and try again.",
     };
   }
 
@@ -228,12 +240,12 @@ export async function createAccount(
       manager,
       { id: data.user.id, name: displayName(firstName, lastName, email) },
       "created",
-      roleLabel(role)
+      `Invitation sent — ${roleLabel(role)}`
     );
   }
 
   revalidateAccounts();
-  return { success: `Account created for ${email}.` };
+  return { success: `Invitation sent to ${email}. They will set their own password.` };
 }
 
 export async function setAccountStatus(
@@ -486,6 +498,51 @@ export async function changeAccountRole(
   return { success: `Now ${roleLabel(role)}.` };
 }
 
+/** Reissues setup access without deleting or recreating the invited account. */
+export async function resendInvitation(targetId: string): Promise<AccountActionState> {
+  try {
+    const manager = await requireManager();
+    const target = await loadManagedTarget(targetId, manager);
+    if (!target.invitationPending) return { error: "This account has already completed setup. Use Send Reset Email instead." };
+    if (target.status !== "active") return { error: "Activate this account before resending its invitation." };
+
+    const admin = createAdminClient();
+    const { data, error: lookupError } = await admin.auth.admin.getUserById(target.id);
+    if (lookupError || !data.user?.email || data.user.email.toLowerCase() !== target.email.toLowerCase()) {
+      return { error: "Could not verify the account email. Refresh and try again." };
+    }
+    const user = data.user;
+    const lastSent = Math.max(
+      Date.parse(user.invited_at ?? "") || 0,
+      Date.parse(user.recovery_sent_at ?? "") || 0,
+    );
+    if (Date.now() - lastSent < 60_000) {
+      return { error: "Please wait one minute before sending another setup email." };
+    }
+
+    // Supabase rejects invitations for confirmed emails. Recovery lets someone
+    // who verified their email but abandoned setup finish with their same ID.
+    const confirmed = Boolean(user.email_confirmed_at);
+    const { error } = confirmed
+      ? await admin.auth.resetPasswordForEmail(target.email, {
+          redirectTo: `${siteURL()}/accept-invite`,
+        })
+      : await admin.auth.admin.inviteUserByEmail(target.email, {
+          redirectTo: `${siteURL()}/accept-invite`,
+        });
+    if (error) {
+      return { error: error.status === 429
+        ? "Email sending is temporarily rate limited. Please wait before retrying."
+        : "Could not send the setup email. Check SMTP settings and try again." };
+    }
+    await logEvent(await createClient(), manager, target, "password_reset_sent",
+      confirmed ? "Invitation setup recovery email sent" : "Invitation resent");
+    return { success: `Setup email sent to ${target.email}. Ask them to open the newest email.` };
+  } catch (e) {
+    return failure(e);
+  }
+}
+
 /** Emails them a link to choose a new password. */
 export async function sendPasswordReset(targetId: string): Promise<AccountActionState> {
   let manager;
@@ -523,6 +580,10 @@ export async function setTemporaryPassword(
     target = await loadManagedTarget(targetId, manager);
   } catch (e) {
     return failure(e);
+  }
+
+  if (target.invitationPending) {
+    return { error: "Invited users must set their own password. Send a password setup/reset email instead." };
   }
 
   if (typeof password !== "string" || password.length < 8) {

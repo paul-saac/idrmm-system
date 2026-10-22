@@ -62,6 +62,7 @@ export async function updateSession(request: NextRequest) {
     pathname === "/" ||
     pathname.startsWith("/forgot-password") ||
     pathname.startsWith("/reset-password") ||
+    pathname.startsWith("/accept-invite") ||
     pathname.startsWith("/auth");
 
   if (!user) {
@@ -76,7 +77,7 @@ export async function updateSession(request: NextRequest) {
   // User is authenticated - look up their role/status once per request.
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, status")
+    .select("role, status, invitation_pending")
     .eq("id", user.id)
     .single();
 
@@ -94,6 +95,13 @@ export async function updateSession(request: NextRequest) {
       !isActive ? "account_disabled" : "no_profile"
     );
     return NextResponse.redirect(url);
+  }
+
+  if (profile.invitation_pending && !["/accept-invite", "/reset-password", "/forgot-password"].includes(pathname) && !pathname.startsWith("/auth/")) {
+    const url = new URL("/accept-invite", request.url);
+    const redirect = NextResponse.redirect(url);
+    response.cookies.getAll().forEach(cookie => redirect.cookies.set(cookie));
+    return redirect;
   }
 
   const home = ROLE_HOME[role];

@@ -12,7 +12,7 @@ import { setAccountsStatus } from "@/lib/accounts/actions";
 import { roleLabel, type UserRole } from "@/lib/auth/roles";
 import type { AccountRow } from "@/lib/accounts/data";
 
-// The toolbar's own buttons — Add User, and the checked rows' Activate /
+// The toolbar's own buttons — Invite User, and the checked rows' Activate /
 // Deactivate beside it (the Team page's toolbar style).
 const TOOLBAR_BUTTON =
   "flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
@@ -113,6 +113,7 @@ export function AccountsBrowser({
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
           <input
             type="text"
+            autoComplete="off"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name or email"
@@ -130,7 +131,7 @@ export function AccountsBrowser({
           />
         )}
 
-        <button type="button" onClick={() => setAddOpen(true)} className="flex items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"><Plus className="size-4" />Add User</button>
+        <button type="button" onClick={() => setAddOpen(true)} className="flex items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"><Plus className="size-4" />Invite User</button>
         </div>
         <div className="flex flex-wrap items-center gap-3 empty:hidden">
           {selectedAccounts.length > 0 && (
@@ -215,7 +216,7 @@ export function AccountsBrowser({
         )}
       </Modal>
 
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Add User">
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Invite User">
         <CreateAccountForm roleOptions={roleOptions} onSuccess={() => setAddOpen(false)} />
       </Modal>
     </div>

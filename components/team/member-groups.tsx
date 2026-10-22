@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, X } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import {
   Checkbox,
@@ -337,15 +337,29 @@ function GroupForm({
         ) : (
           <>
             <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+              <Search
+                aria-hidden
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400"
+              />
               <input
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search name or role"
                 aria-label="Search the team"
-                className="w-full rounded-md border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+                className="w-full rounded-md border border-zinc-200 bg-white py-2 pl-9 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
               />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  title="Clear search"
+                  aria-label="Clear search"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
             </div>
             {/* Labeled by the Team's own sections. */}
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">

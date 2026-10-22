@@ -1,13 +1,24 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
-import { MaterialBreakdownModalContent } from "@/components/projects/cost-estimate/material-breakdown-modal-content";
-import { LaborBreakdownModalContent } from "@/components/projects/cost-estimate/labor-breakdown-modal-content";
-import { OtherBreakdownModalContent } from "@/components/projects/cost-estimate/other-breakdown-modal-content";
+import {
+  MaterialBreakdownModalContent,
+  type MaterialBreakdownHighlightTarget,
+} from "@/components/projects/cost-estimate/material-breakdown-modal-content";
+import {
+  LaborBreakdownModalContent,
+  type LaborBreakdownHighlightTarget,
+} from "@/components/projects/cost-estimate/labor-breakdown-modal-content";
+import {
+  OtherBreakdownModalContent,
+  type OtherBreakdownHighlightTarget,
+} from "@/components/projects/cost-estimate/other-breakdown-modal-content";
 import {
   WeightBreakdownModal,
+  type CostEstimateHighlightField,
+  type CostNavigateDestination,
   type WeightBreakdownTarget,
 } from "@/components/projects/cost-estimate/weight-breakdown-modal-content";
 import type { CostEstimate } from "@/lib/cost-estimate/data";
@@ -92,7 +103,7 @@ const DEFAULT_CATEGORIES_WIDTH = 280;
 // them. A plain constant rather than something computed: this table has
 // no manage-mode/Action column anymore (see CostEstimateView's own doc
 // comment on why), so the count never varies.
-const COLUMN_COUNT = 9;
+const _COLUMN_COUNT = 9;
 
 /**
  * A read-only view of the project's own cost estimate *structure* —
@@ -121,6 +132,8 @@ export function CostEstimateView({
   materialBreakdownHighlightTaskId,
   onOpenMaterialBreakdown,
   onCloseMaterialBreakdown,
+  onNavigateToCostEstimate,
+  costEstimateHighlight,
 }: {
   projectId: number;
   estimate: CostEstimate;
@@ -144,16 +157,61 @@ export function CostEstimateView({
   materialBreakdownHighlightTaskId: number | null;
   onOpenMaterialBreakdown: (taskId?: number) => void;
   onCloseMaterialBreakdown: () => void;
+  onNavigateToCostEstimate?: (target: CostNavigateDestination) => void;
+  costEstimateHighlight?: (CostNavigateDestination & { timestamp: number }) | null;
 }) {
   // Project-wide, not per-task — see the two modal components' own doc
   // comments for why a column-header trigger replaced an earlier
   // per-task-row version of this.
   const [laborBreakdownOpen, setLaborBreakdownOpen] = useState(false);
   const [otherBreakdownOpen, setOtherBreakdownOpen] = useState(false);
+  const [equipmentBreakdownOpen, setEquipmentBreakdownOpen] = useState(false);
+  const [equipmentHighlight, setEquipmentHighlight] = useState<OtherBreakdownHighlightTarget>(null);
+  const [materialBreakdownHighlight, setMaterialBreakdownHighlight] =
+    useState<MaterialBreakdownHighlightTarget>(null);
+  const [laborBreakdownHighlight, setLaborBreakdownHighlight] =
+    useState<LaborBreakdownHighlightTarget>(null);
+  const [otherBreakdownHighlight, setOtherBreakdownHighlight] =
+    useState<OtherBreakdownHighlightTarget>(null);
   // A Weight cell's own click-through — how that weight was computed.
   const [weightBreakdown, setWeightBreakdown] = useState<WeightBreakdownTarget | null>(
     null
   );
+  // Active highlight target triggered by navigation from the Weight Breakdown modal.
+  const [highlightedTarget, setHighlightedTarget] = useState<{
+    kind: "task" | "category";
+    id: number;
+    field?: CostEstimateHighlightField;
+  } | null>(null);
+
+  function handleCostNavigate(dest: CostNavigateDestination) {
+    setWeightBreakdown(null);
+    if (dest.field === "material") {
+      setMaterialBreakdownHighlight({
+        kind: dest.kind,
+        id: dest.id,
+        lineId: dest.materialId,
+        materialName: dest.materialName,
+      });
+      onOpenMaterialBreakdown(dest.kind === "task" ? dest.id : undefined);
+    } else if (dest.field === "labor") {
+      setLaborBreakdownHighlight({
+        kind: dest.kind,
+        id: dest.id,
+      });
+      setLaborBreakdownOpen(true);
+    } else if (dest.field === "other") {
+      setOtherBreakdownHighlight({
+        kind: dest.kind,
+        id: dest.id,
+        costName: dest.otherCostName,
+      });
+      setOtherBreakdownOpen(true);
+    } else {
+      onNavigateToCostEstimate?.(dest);
+    }
+  }
+
   // Every phase starts collapsed — this table is a quick-reference
   // summary now (all editing happens on the Gantt Chart below), so
   // landing on just the category rows/subtotals first, with the detail
@@ -163,6 +221,75 @@ export function CostEstimateView({
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<
     Set<number>
   >(() => new Set(estimate.categories.map((c) => c.id)));
+
+  // When navigated to a task, expand its parent category during render if collapsed.
+  const [prevHighlightTimestamp, setPrevHighlightTimestamp] = useState<number | null>(null);
+  if (costEstimateHighlight && costEstimateHighlight.timestamp !== prevHighlightTimestamp) {
+    setPrevHighlightTimestamp(costEstimateHighlight.timestamp);
+    if (costEstimateHighlight.field === "material") {
+      setMaterialBreakdownHighlight({
+        kind: costEstimateHighlight.kind,
+        id: costEstimateHighlight.id,
+        lineId: costEstimateHighlight.materialId,
+        materialName: costEstimateHighlight.materialName,
+      });
+    } else if (costEstimateHighlight.field === "labor") {
+      setLaborBreakdownHighlight({
+        kind: costEstimateHighlight.kind,
+        id: costEstimateHighlight.id,
+      });
+      setLaborBreakdownOpen(true);
+    } else if (costEstimateHighlight.field === "other") {
+      setOtherBreakdownHighlight({
+        kind: costEstimateHighlight.kind,
+        id: costEstimateHighlight.id,
+        costName: costEstimateHighlight.otherCostName,
+      });
+      setOtherBreakdownOpen(true);
+    } else if (costEstimateHighlight.kind === "task") {
+      const parent = estimate.categories.find((c) =>
+        c.tasks.some((t) => t.id === costEstimateHighlight.id)
+      );
+      if (parent && collapsedCategoryIds.has(parent.id)) {
+        const next = new Set(collapsedCategoryIds);
+        next.delete(parent.id);
+        setCollapsedCategoryIds(next);
+      }
+    }
+  }
+
+  // Scroll to the row and flash the highlight when navigated here from the Weight Breakdown modal.
+  useEffect(() => {
+    if (!costEstimateHighlight) return;
+    const { kind, id, field } = costEstimateHighlight;
+
+    if (field === "material") {
+      onOpenMaterialBreakdown(kind === "task" ? id : undefined);
+      return;
+    }
+
+    if (field === "labor" || field === "other") {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const selector =
+        kind === "task"
+          ? `[data-cost-task-row="${id}"]`
+          : `[data-cost-category-row="${id}"]`;
+      const el = document.querySelector(selector);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        setHighlightedTarget({ kind, id, field });
+        const clearTimer = setTimeout(() => {
+          setHighlightedTarget(null);
+        }, 3000);
+        return () => clearTimeout(clearTimer);
+      }
+    }, 70);
+
+    return () => clearTimeout(timer);
+  }, [costEstimateHighlight, onOpenMaterialBreakdown]);
   // The only resizable column — a task name can run much longer than
   // any of the fixed numeric columns need, so this one's width is
   // user-controlled instead of guessing a single width that fits every
@@ -297,8 +424,11 @@ export function CostEstimateView({
                       <ChevronRight className="size-3.5 shrink-0" />
                     </button>
                   </th>
-                  <th className="w-28 border-r border-zinc-200 px-4 py-2.5 text-right">
-                    Equipment
+                  <th className="w-28 border-r border-zinc-200 text-right">
+                    <button type="button" onClick={() => { setEquipmentHighlight(null); setEquipmentBreakdownOpen(true); }}
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white">
+                      Tools &amp; Equipment <ChevronRight className="size-3.5 shrink-0" />
+                    </button>
                   </th>
                   <th className="w-24 border-r border-zinc-200 text-right">
                     <button
@@ -361,7 +491,15 @@ export function CostEstimateView({
                     category.tasks.reduce((sum, t) => sum + t.totalEstimateCost, 0);
                   return (
                     <Fragment key={category.id}>
-                      <tr className="border-y border-zinc-200 bg-white text-xs font-medium text-zinc-500">
+                      <tr
+                        data-cost-category-row={category.id}
+                        className={`border-y border-zinc-200 text-xs font-medium transition-colors duration-500 ${
+                          highlightedTarget?.kind === "category" &&
+                          highlightedTarget.id === category.id
+                            ? "bg-amber-50 text-zinc-900 ring-1 ring-amber-300 ring-inset"
+                            : "bg-white text-zinc-500"
+                        }`}
+                      >
                         <td className="border-r border-zinc-200 px-4 py-2.5">
                           <button
                             type="button"
@@ -421,19 +559,59 @@ export function CostEstimateView({
                             "—"
                           )}
                         </td>
-                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                        <td
+                          className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                            highlightedTarget?.kind === "category" &&
+                            highlightedTarget.id === category.id &&
+                            highlightedTarget.field === "labor"
+                              ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                              : ""
+                          }`}
+                        >
                           {formatCurrency(categoryLaborTotal)}
                         </td>
-                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                        <td
+                          className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                            highlightedTarget?.kind === "category" &&
+                            highlightedTarget.id === category.id &&
+                            highlightedTarget.field === "material"
+                              ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                              : ""
+                          }`}
+                        >
                           {formatCurrency(categoryMaterialTotal)}
                         </td>
-                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                          {formatCurrency(categoryEquipmentTotal)}
+                        <td
+                          className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                            highlightedTarget?.kind === "category" &&
+                            highlightedTarget.id === category.id &&
+                            highlightedTarget.field === "equipment"
+                              ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                              : ""
+                          }`}
+                        >
+                          <button type="button" className="cursor-pointer hover:underline" onClick={() => { setEquipmentHighlight({kind:"category",id:category.id}); setEquipmentBreakdownOpen(true); }}>{formatCurrency(categoryEquipmentTotal)}</button>
                         </td>
-                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                        <td
+                          className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                            highlightedTarget?.kind === "category" &&
+                            highlightedTarget.id === category.id &&
+                            highlightedTarget.field === "other"
+                              ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                              : ""
+                          }`}
+                        >
                           {formatCurrency(categoryOtherTotal)}
                         </td>
-                        <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                        <td
+                          className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                            highlightedTarget?.kind === "category" &&
+                            highlightedTarget.id === category.id &&
+                            highlightedTarget.field === "total"
+                              ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                              : ""
+                          }`}
+                        >
                           {formatCurrency(categoryTotalCost)}
                         </td>
                         <td className="px-4 py-2.5 text-right">
@@ -451,7 +629,16 @@ export function CostEstimateView({
 
                       {isOpen &&
                         tasks.map((task) => (
-                          <tr key={task.id} className="border-b border-zinc-200 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-900 hover:text-white">
+                          <tr
+                            key={task.id}
+                            data-cost-task-row={task.id}
+                            className={`border-b border-zinc-200 text-xs font-medium transition-colors duration-500 ${
+                              highlightedTarget?.kind === "task" &&
+                              highlightedTarget.id === task.id
+                                ? "bg-amber-50 text-zinc-900 ring-1 ring-amber-300 ring-inset"
+                                : "text-zinc-500 hover:bg-zinc-900 hover:text-white"
+                            }`}
+                          >
                             <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8">
                               {task.name}
                             </td>
@@ -480,19 +667,59 @@ export function CostEstimateView({
                                 }
                               />
                             </td>
-                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                            <td
+                              className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                                highlightedTarget?.kind === "task" &&
+                                highlightedTarget.id === task.id &&
+                                highlightedTarget.field === "labor"
+                                  ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                                  : ""
+                              }`}
+                            >
                               {formatCurrency(task.laborEstimate)}
                             </td>
-                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                            <td
+                              className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                                highlightedTarget?.kind === "task" &&
+                                highlightedTarget.id === task.id &&
+                                highlightedTarget.field === "material"
+                                  ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                                  : ""
+                              }`}
+                            >
                               {formatCurrency(task.materialEstimate)}
                             </td>
-                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
-                              {formatCurrency(task.equipmentEstimate)}
+                            <td
+                              className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                                highlightedTarget?.kind === "task" &&
+                                highlightedTarget.id === task.id &&
+                                highlightedTarget.field === "equipment"
+                                  ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                                  : ""
+                              }`}
+                            >
+                              <button type="button" className="cursor-pointer hover:underline" onClick={() => { setEquipmentHighlight({kind:"task",id:task.id}); setEquipmentBreakdownOpen(true); }}>{formatCurrency(task.equipmentEstimate)}</button>
                             </td>
-                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                            <td
+                              className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                                highlightedTarget?.kind === "task" &&
+                                highlightedTarget.id === task.id &&
+                                highlightedTarget.field === "other"
+                                  ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                                  : ""
+                              }`}
+                            >
                               {formatCurrency(task.otherCostEstimate)}
                             </td>
-                            <td className="border-r border-zinc-200 px-4 py-2.5 text-right">
+                            <td
+                              className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
+                                highlightedTarget?.kind === "task" &&
+                                highlightedTarget.id === task.id &&
+                                highlightedTarget.field === "total"
+                                  ? "bg-amber-100/80 font-bold text-zinc-900 ring-1 ring-amber-400 ring-inset"
+                                  : ""
+                              }`}
+                            >
                               {formatCurrency(task.totalEstimateCost)}
                             </td>
                             <td className="px-4 py-2.5 text-right">
@@ -543,22 +770,32 @@ export function CostEstimateView({
 
       <Modal
         open={materialBreakdownOpen}
-        onClose={onCloseMaterialBreakdown}
+        onClose={() => {
+          setMaterialBreakdownHighlight(null);
+          onCloseMaterialBreakdown();
+        }}
         title="Material Breakdown"
         size="large"
       >
         <MaterialBreakdownModalContent
           projectId={projectId}
           categories={categories}
-          onClose={onCloseMaterialBreakdown}
+          onClose={() => {
+            setMaterialBreakdownHighlight(null);
+            onCloseMaterialBreakdown();
+          }}
           onImportBom={onImportBom}
           highlightTaskId={materialBreakdownHighlightTaskId}
+          highlightTarget={materialBreakdownHighlight}
         />
       </Modal>
 
       <Modal
         open={laborBreakdownOpen}
-        onClose={() => setLaborBreakdownOpen(false)}
+        onClose={() => {
+          setLaborBreakdownHighlight(null);
+          setLaborBreakdownOpen(false);
+        }}
         title="Labor Breakdown"
         size="medium"
       >
@@ -566,21 +803,37 @@ export function CostEstimateView({
           projectId={projectId}
           categories={categories}
           defaultLaborCostPercent={defaultLaborCostPercent}
-          onClose={() => setLaborBreakdownOpen(false)}
+          onClose={() => {
+            setLaborBreakdownHighlight(null);
+            setLaborBreakdownOpen(false);
+          }}
+          highlightTarget={laborBreakdownHighlight}
         />
       </Modal>
 
       <Modal
         open={otherBreakdownOpen}
-        onClose={() => setOtherBreakdownOpen(false)}
+        onClose={() => {
+          setOtherBreakdownHighlight(null);
+          setOtherBreakdownOpen(false);
+        }}
         title="Other Cost Breakdown"
         size="large"
       >
         <OtherBreakdownModalContent
           projectId={projectId}
           categories={categories}
-          onClose={() => setOtherBreakdownOpen(false)}
+          onClose={() => {
+            setOtherBreakdownHighlight(null);
+            setOtherBreakdownOpen(false);
+          }}
+          highlightTarget={otherBreakdownHighlight}
         />
+      </Modal>
+
+      <Modal open={equipmentBreakdownOpen} onClose={() => setEquipmentBreakdownOpen(false)} title="Tools & Equipment Cost Breakdown" size="large">
+        <OtherBreakdownModalContent projectId={projectId} categories={categories} costType="equipment"
+          highlightTarget={equipmentHighlight} onClose={() => setEquipmentBreakdownOpen(false)} />
       </Modal>
 
       <WeightBreakdownModal
@@ -588,6 +841,7 @@ export function CostEstimateView({
         categories={categories}
         target={weightBreakdown}
         onTargetChange={setWeightBreakdown}
+        onNavigateToCostEstimate={handleCostNavigate}
       />
     </div>
   );

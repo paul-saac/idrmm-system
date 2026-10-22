@@ -99,6 +99,7 @@ export function InventoryBrowser({
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
           <input
             type="text"
+            autoComplete="off"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search name, asset tag, category or serial"

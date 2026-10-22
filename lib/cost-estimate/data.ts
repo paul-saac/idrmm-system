@@ -73,6 +73,7 @@ export type CostTask = {
   equipmentEstimate: number;
   otherCostEstimate: number;
   otherCostItems: OtherCostItem[];
+  equipmentCostItems?: OtherCostItem[];
   totalEstimateCost: number;
   /** This task's share of the project, in percent — its share of the
    * total estimated cost. See lib/cost-estimate/weights.ts. */
@@ -169,6 +170,7 @@ export type CostCategory = {
   categoryEquipmentEstimate: number;
   categoryOtherEstimate: number;
   otherCostItems?: OtherCostItem[];
+  equipmentCostItems?: OtherCostItem[];
   /** This category's own tracked quantity/unit — same "only meaningful
    * while it has no tasks yet" rule as categoryLaborEstimate above, one
    * level up from CostTask's own estimatedQuantity/unit. See
@@ -438,6 +440,7 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       equipmentEstimate: row.equipment_estimate ?? 0,
       otherCostEstimate: row.other_cost_estimate ?? 0,
       otherCostItems: otherCostsByTask.get(row.id) ?? [],
+      equipmentCostItems: row.equipment_cost_items ?? [],
       totalEstimateCost: row.total_estimate_cost ?? 0,
       // Filled in below by computeWeights, once every cost is known.
       weight: 0,
@@ -511,6 +514,7 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
       categoryOtherEstimate: row.category_other_estimate ?? 0,
       otherCostItems: otherCostsByCategory.get(row.id) ?? [],
+      equipmentCostItems: row.equipment_cost_items ?? [],
       estimatedQuantity: row.estimated_quantity ?? 0,
       unit: row.unit,
       percentComplete: progress.percentComplete,

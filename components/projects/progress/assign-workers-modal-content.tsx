@@ -1,15 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { Plus, Search } from "lucide-react";
-import {
-  AvailabilityBadge,
-  describeAssignment,
-  groupAssignmentsByWorker,
-} from "@/components/team/availability";
+import { Plus, Search, X } from "lucide-react";
 import { usePortal } from "@/components/portal/portal-context";
-import { Checkbox, SectionLabel } from "@/components/ui/list-table";
+import { SectionLabel } from "@/components/ui/list-table";
 import { ModalFooter } from "@/components/ui/modal";
 import { memberSections } from "@/lib/workers/sections";
 import type { MemberGroup, Worker, WorkerAssignment } from "@/lib/workers/data";
@@ -25,9 +20,8 @@ function formatDateRange(start: Date, end: Date) {
  * Opened from a row's own "Assigned" cell in the Gantt task list (see
  * gantt-chart-view.tsx) — a checkbox picker over the whole company Team
  * (the admin's Team page; there's no per-project roster any more), each
- * member shown with their title and availability: Assigned when they're
- * already on another task or phase that hasn't ended yet (any project —
- * hover the badge for which), Available otherwise. Scoped to whichever
+ * member shown with their title. Project management stays checked;
+ * other members may be selected on multiple tasks. Scoped to whichever
  * one row opened it — a task or, one level up, a category with no tasks
  * yet (see CategoryWorkerAssignments's own doc comment) — via `onSave`, so
  * this component itself doesn't need to know which kind of row it's
@@ -42,16 +36,16 @@ export function AssignWorkersModalContent({
   startDate,
   endDate,
   workers,
-  assignments,
-  current,
   assignedWorkerIds,
   groups = [],
+  defaultWorkerIds = [],
   onSave,
   onClose,
 }: {
   /** The Team's groups (crews): one click adds everyone in one (or, when
    * they're all already picked, takes them off). */
   groups?: MemberGroup[];
+  defaultWorkerIds?: number[];
   /** The task or category name shown in this modal's own intro line —
    * "Assign workers to <rowName>." */
   rowName: string;
@@ -69,21 +63,13 @@ export function AssignWorkersModalContent({
 }) {
   const { isAdmin } = usePortal();
   const [selected, setSelected] = useState<Set<number>>(
-    () => new Set(assignedWorkerIds)
+    () => new Set([...assignedWorkerIds, ...defaultWorkerIds])
   );
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const otherAssignments = useMemo(
-    () =>
-      groupAssignmentsByWorker(
-        assignments.filter(
-          (a) => a.open && !(a.kind === current.kind && a.itemId === current.id)
-        )
-      ),
-    [assignments, current.kind, current.id]
-  );
+  const defaults = new Set(defaultWorkerIds);
 
   const q = query.trim().toLowerCase();
   const sections = memberSections(
@@ -97,6 +83,7 @@ export function AssignWorkersModalContent({
   );
 
   function toggle(workerId: number) {
+    if (defaults.has(workerId) || pending) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(workerId)) {
@@ -119,10 +106,12 @@ export function AssignWorkersModalContent({
     .filter((group) => group.ids.length > 0);
 
   function toggleGroup(ids: number[]) {
+    if (pending) return;
     setSelected((prev) => {
       const next = new Set(prev);
       const all = ids.every((id) => next.has(id));
       for (const id of ids) {
+        if (defaults.has(id)) continue;
         if (all) next.delete(id);
         else next.add(id);
       }
@@ -133,13 +122,18 @@ export function AssignWorkersModalContent({
   async function handleSave() {
     setError(null);
     setPending(true);
-    const result = await onSave(Array.from(selected));
-    setPending(false);
-    if (result.error) {
-      setError(result.error);
-      return;
+    try {
+      const result = await onSave(Array.from(new Set([...selected, ...defaultWorkerIds])));
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      onClose();
+    } catch {
+      setError("Could not save assignments. Please try again.");
+    } finally {
+      setPending(false);
     }
-    onClose();
   }
 
   return (
@@ -159,15 +153,29 @@ export function AssignWorkersModalContent({
       ) : (
         <>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
+            <Search
+              aria-hidden
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400"
+            />
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search"
               aria-label="Search the team"
-              className="w-full rounded-md border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+              className="w-full rounded-md border border-zinc-200 bg-white py-2 pl-9 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery("")}
+                title="Clear search"
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
           </div>
 
           {crews.length > 0 && (
@@ -209,29 +217,23 @@ export function AssignWorkersModalContent({
               <div key={section.key} className="flex flex-col gap-0.5">
                 <SectionLabel label={section.label} />
                 {section.members.map((worker) => {
-                  const others = otherAssignments.get(worker.id) ?? [];
                   return (
                     <label
                       key={worker.id}
                       className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-50"
                     >
-                      <Checkbox
-                        checked={selected.has(worker.id)}
-                        onChange={() => toggle(worker.id)}
-                        label={`Select ${worker.fullName}`}
-                      />
+                      <span className="relative inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center">
+                        <input type="checkbox" checked={defaults.has(worker.id) || selected.has(worker.id)}
+                          disabled={pending || defaults.has(worker.id)}
+                          onChange={() => toggle(worker.id)} aria-label={`Select ${worker.fullName}`}
+                          title={defaults.has(worker.id) ? "Assigned project management" : undefined}
+                          className="peer m-0 block h-[14px] w-[14px] shrink-0 cursor-pointer appearance-none rounded-[2px] border border-zinc-300 bg-white p-0 transition-colors checked:border-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:outline-none disabled:cursor-default" />
+                        <span className="pointer-events-none absolute left-[4px] top-[4px] block h-[6px] w-[6px] rounded-[1px] bg-zinc-900 opacity-0 peer-checked:opacity-100" />
+                      </span>
                       <span className="truncate">{worker.fullName}</span>
                       {worker.title && (
                         <span className="shrink-0 text-xs text-zinc-400">{worker.title}</span>
                       )}
-                      <span
-                        className="ml-auto shrink-0"
-                        title={
-                          others.length > 0 ? others.map(describeAssignment).join("\n") : undefined
-                        }
-                      >
-                        <AvailabilityBadge assigned={others.length > 0} />
-                      </span>
                     </label>
                   );
                 })}

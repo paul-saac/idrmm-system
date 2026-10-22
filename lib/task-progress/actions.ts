@@ -10,9 +10,9 @@ import { entryCosts } from "@/lib/task-progress/data";
 import { priceMaterialsUsed, readUnplannedMaterials } from "@/lib/task-progress/material-cost";
 import {
   COST_COMPONENTS,
-  unplannedMaterialCost,
   type CostAmounts,
   type UnplannedMaterial,
+  type UnplannedOtherCost,
 } from "@/lib/task-progress/calculate";
 import {
   replaceAttendance,
@@ -67,7 +67,8 @@ function todayIso() {
  * The day's spend per cost component (0057_progress_entry_costs.sql) is
  * what the task's % complete is measured from — saving a day overrides
  * its automatic planned share (see computeProgressBreakdown). Its labor
- * is typed, like equipment and other cost.
+ * is priced from who worked (hours × each one's Default Rate) when anyone's
+ * listed, else typed like equipment and other cost.
  */
 export async function recordTaskProgress(
   taskId: number,
@@ -81,8 +82,16 @@ export async function recordTaskProgress(
     /** Materials used that aren't on the task's own lines (0073), each at
      * the unit cost typed for it — priced here as quantity × unit cost. */
     unplannedMaterials?: UnplannedMaterial[];
-    /** Who worked — the progress window no longer sends it (labor's
-     * typed); any given is still kept with the day. */
+    /** Spend against planned Equipment Cost items today (0089). */
+    equipmentCostsUsed?: { name: string; amount: number }[];
+    /** Additional Equipment Cost items added on the spot today (0089). */
+    unplannedEquipmentCosts?: UnplannedOtherCost[];
+    /** Spend against planned Other Cost items today (0084). */
+    otherCostsUsed?: { name: string; amount: number }[];
+    /** Additional Other Cost items added on the spot today (0084). */
+    unplannedOtherCosts?: UnplannedOtherCost[];
+    /** Who worked and their hours — when anyone's listed, the day's labor
+     * is priced from it (hours × Default Rate) instead of costs.labor. */
     attendance?: AttendanceInput;
   }
 ): Promise<TaskProgressActionState> {
@@ -106,6 +115,42 @@ export async function recordTaskProgress(
     if ("error" in unplanned) {
       return { error: unplanned.error };
     }
+    const equipmentCostsUsed = input.equipmentCostsUsed ?? [];
+    for (const item of equipmentCostsUsed) {
+      if (!Number.isFinite(item.amount) || item.amount < 0) {
+        return { error: "Equipment cost amount can't be negative." };
+      }
+    }
+    const unplannedEquipment: UnplannedOtherCost[] = [];
+    for (const item of input.unplannedEquipmentCosts ?? []) {
+      const name = item.name.trim();
+      if (!Number.isFinite(item.amount) || item.amount < 0) {
+        return { error: "Equipment cost amount can't be negative." };
+      }
+      if (!name && item.amount === 0) continue;
+      if (!name) {
+        return { error: "Enter a description for each added equipment cost." };
+      }
+      unplannedEquipment.push({ name, amount: item.amount });
+    }
+    const otherCostsUsed = input.otherCostsUsed ?? [];
+    for (const item of otherCostsUsed) {
+      if (!Number.isFinite(item.amount) || item.amount < 0) {
+        return { error: "Other cost amount can't be negative." };
+      }
+    }
+    const unplannedOther: UnplannedOtherCost[] = [];
+    for (const item of input.unplannedOtherCosts ?? []) {
+      const name = item.name.trim();
+      if (!Number.isFinite(item.amount) || item.amount < 0) {
+        return { error: "Other cost amount can't be negative." };
+      }
+      if (!name && item.amount === 0) continue;
+      if (!name) {
+        return { error: "Enter a name for each added other cost." };
+      }
+      unplannedOther.push({ name, amount: item.amount });
+    }
     if (
       COST_COMPONENTS.some(
         (component) =>
@@ -122,6 +167,10 @@ export async function recordTaskProgress(
     if ("error" in crew) {
       return { error: crew.error };
     }
+    // Labor: with anyone's hours logged, each person's hours × their own
+    // Default Rate, priced here (never the browser's figure); otherwise
+    // typed.
+    const laborCost = crew.rows.length > 0 ? crew.laborCost : input.costs.labor;
 
     // Material cost: what was used, priced from the task's own Material
     // Breakdown — or, without any lines, typed — plus any materials not
@@ -130,10 +179,18 @@ export async function recordTaskProgress(
     if ("error" in priced) {
       return { error: priced.error };
     }
-    const materialCost =
-      Math.round(
-        (priced.cost + input.costs.material + unplannedMaterialCost(unplanned.materials)) * 100
-      ) / 100;
+    // Material usage affects stock only. Purchases are recorded separately.
+    const materialCost = 0;
+
+    const itemizedEquipment =
+      equipmentCostsUsed.reduce((sum, item) => sum + item.amount, 0) +
+      unplannedEquipment.reduce((sum, item) => sum + item.amount, 0);
+    const equipmentCost = Math.round((itemizedEquipment + input.costs.equipment) * 100) / 100;
+
+    const itemizedOther =
+      otherCostsUsed.reduce((sum, item) => sum + item.amount, 0) +
+      unplannedOther.reduce((sum, item) => sum + item.amount, 0);
+    const otherCost = Math.round((itemizedOther + input.costs.other) * 100) / 100;
 
     const { data: savedEntry, error: upsertError } = await supabase
       .from("task_progress_entries")
@@ -142,10 +199,10 @@ export async function recordTaskProgress(
           task_id: taskId,
           entry_date: entryDate,
           quantity_completed: input.quantityCompletedToday,
-          labor_cost: input.costs.labor,
+          labor_cost: laborCost,
           material_cost: materialCost,
-          equipment_cost: input.costs.equipment,
-          other_cost: input.costs.other,
+          equipment_cost: equipmentCost,
+          other_cost: otherCost,
           recorded_by: profile.id,
         },
         { onConflict: "task_id,entry_date" }
@@ -214,6 +271,126 @@ export async function recordTaskProgress(
       }
     }
 
+    const plannedOtherRows = otherCostsUsed
+      .filter((item) => item.amount > 0 && item.name.trim())
+      .map((item) => ({
+        progress_entry_id: savedEntry.id,
+        cost_name: item.name.trim(),
+        amount: item.amount,
+        unplanned: false,
+      }));
+    const unplannedOtherRows = unplannedOther
+      .filter((item) => item.amount > 0)
+      .map((item) => ({
+        progress_entry_id: savedEntry.id,
+        cost_name: item.name,
+        amount: item.amount,
+        unplanned: true,
+      }));
+    const otherCostRows = [...plannedOtherRows, ...unplannedOtherRows];
+
+    const otherCostTable = (
+      supabase as unknown as {
+        from: (table: string) => {
+          delete: () => {
+            eq: (col: string, val: number) => Promise<{ error: PostgrestError | null }>;
+          };
+          insert: (rows: unknown[]) => Promise<{ error: PostgrestError | null }>;
+        };
+      }
+    ).from("task_progress_other_cost_entries");
+
+    const { error: deleteOtherError } = await otherCostTable
+      .delete()
+      .eq("progress_entry_id", savedEntry.id);
+
+    if (
+      deleteOtherError &&
+      deleteOtherError.code !== "PGRST205" &&
+      deleteOtherError.code !== "42P01"
+    ) {
+      logSupabaseError(
+        "[recordTaskProgress] Supabase old other cost entries delete failed",
+        deleteOtherError
+      );
+      return { error: "Could not save other costs. Please try again." };
+    }
+
+    if (!deleteOtherError && otherCostRows.length > 0) {
+      const { error: insertOtherError } = await otherCostTable.insert(otherCostRows);
+      if (
+        insertOtherError &&
+        insertOtherError.code !== "PGRST205" &&
+        insertOtherError.code !== "42P01"
+      ) {
+        logSupabaseError(
+          "[recordTaskProgress] Supabase other cost entries insert failed",
+          insertOtherError
+        );
+        return { error: "Could not save other costs. Please try again." };
+      }
+    }
+
+    const plannedEquipmentRows = equipmentCostsUsed
+      .filter((item) => item.amount > 0 && item.name.trim())
+      .map((item) => ({
+        progress_entry_id: savedEntry.id,
+        cost_name: item.name.trim(),
+        amount: item.amount,
+        unplanned: false,
+      }));
+    const unplannedEquipmentRows = unplannedEquipment
+      .filter((item) => item.amount > 0)
+      .map((item) => ({
+        progress_entry_id: savedEntry.id,
+        cost_name: item.name,
+        amount: item.amount,
+        unplanned: true,
+      }));
+    const equipmentCostRows = [...plannedEquipmentRows, ...unplannedEquipmentRows];
+
+    const equipmentCostTable = (
+      supabase as unknown as {
+        from: (table: string) => {
+          delete: () => {
+            eq: (col: string, val: number) => Promise<{ error: PostgrestError | null }>;
+          };
+          insert: (rows: unknown[]) => Promise<{ error: PostgrestError | null }>;
+        };
+      }
+    ).from("task_progress_equipment_cost_entries");
+
+    const { error: deleteEquipmentError } = await equipmentCostTable
+      .delete()
+      .eq("progress_entry_id", savedEntry.id);
+
+    if (
+      deleteEquipmentError &&
+      deleteEquipmentError.code !== "PGRST205" &&
+      deleteEquipmentError.code !== "42P01"
+    ) {
+      logSupabaseError(
+        "[recordTaskProgress] Supabase old equipment cost entries delete failed",
+        deleteEquipmentError
+      );
+      return { error: "Could not save equipment costs. Please try again." };
+    }
+
+    if (!deleteEquipmentError && equipmentCostRows.length > 0) {
+      const { error: insertEquipmentError } = await equipmentCostTable.insert(equipmentCostRows);
+      if (
+        insertEquipmentError &&
+        insertEquipmentError.code !== "PGRST205" &&
+        insertEquipmentError.code !== "42P01"
+      ) {
+        logSupabaseError(
+          "[recordTaskProgress] Supabase equipment cost entries insert failed",
+          insertEquipmentError
+        );
+        return { error: "Could not save equipment costs. Please try again." };
+      }
+    }
+
     // Kept in the override history too — every save, not just the day's
     // latest (0071).
     await logOverride(supabase, profile, projectId, { kind: "task", id: taskId }, {
@@ -221,10 +398,10 @@ export async function recordTaskProgress(
       entryDate,
       quantityCompleted: input.quantityCompletedToday,
       costs: {
-        labor: input.costs.labor,
+        labor: laborCost,
         material: materialCost,
-        equipment: input.costs.equipment,
-        other: input.costs.other,
+        equipment: equipmentCost,
+        other: otherCost,
       },
       materialsUsed: [
         ...plannedRows.map((row) => ({
@@ -234,6 +411,16 @@ export async function recordTaskProgress(
         })),
         ...unplanned.materials,
       ],
+      equipmentCosts: equipmentCostRows.map((row) => ({
+        name: row.cost_name,
+        amount: row.amount,
+        unplanned: row.unplanned,
+      })),
+      otherCosts: otherCostRows.map((row) => ({
+        name: row.cost_name,
+        amount: row.amount,
+        unplanned: row.unplanned,
+      })),
       attendance: crew.rows.map((row) => ({
         name: row.worker_name,
         hours: row.hours,

@@ -34,6 +34,7 @@ import {
   listProjectEquipmentTaskMovements,
 } from "@/lib/equipment/data";
 import { buildEquipmentCostRecords } from "@/lib/equipment/records";
+import { loadEquipmentTracking } from "@/lib/equipment/tracking-actions";
 import {
   listLaborExpenses,
   listMaterialExpenses,
@@ -93,6 +94,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     events,
     memberGroups,
     sheetsResult,
+    equipmentTrackingResult,
   ] = await Promise.all([
     getProjectById(projectId),
     listAccountsByRole(["project_manager"]),
@@ -124,6 +126,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listProjectEvents(projectId),
     listMemberGroups(),
     listSheets(projectId),
+    loadEquipmentTracking(projectId),
   ]);
 
   // Every material the project has, each once: planned, used, in stock.
@@ -210,7 +213,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
         totalMaterials: materialRecords.length,
       }}
       materialRecords={materialRecords}
-      recentMaterialUsage={progressMaterialUsage.slice(0, 10)}
+      recentMaterialUsage={progressMaterialUsage}
       materialRequests={materialRequests}
       fulfillableMaterialRequests={fulfillableMaterialRequests}
       equipmentRequests={equipmentRequests}
@@ -234,6 +237,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       overrideHistory={overrideHistory}
       events={events}
       sheetsResult={sheetsResult}
+      equipmentTracking={equipmentTrackingResult.data ?? null}
     />
   );
 }

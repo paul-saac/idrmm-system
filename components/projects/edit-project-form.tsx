@@ -70,6 +70,7 @@ export function EditProjectForm({
       <form
         id={formId}
         action={formAction}
+        autoComplete="off"
         className="grid gap-4 sm:grid-cols-2"
         noValidate
       >
@@ -252,7 +253,7 @@ export function EditProjectForm({
                   the box's border. A native checkbox's own mark can't be
                   changed, only recolored via accent-color —
                   @tailwindcss/forms isn't installed here. */}
-              <span className="relative flex size-4 shrink-0 items-center justify-center">
+              <span className="relative inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center">
                 <input
                   type="checkbox"
                   name="workingDays"
@@ -265,9 +266,9 @@ export function EditProjectForm({
                         : [...prev, day.value]
                     )
                   }
-                  className="peer size-4 cursor-pointer appearance-none rounded border border-zinc-300 bg-white transition checked:border-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:outline-none"
+                  className="peer m-0 block h-[14px] w-[14px] shrink-0 cursor-pointer appearance-none rounded-[2px] border border-zinc-300 bg-white p-0 transition-colors checked:border-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:outline-none"
                 />
-                <span className="pointer-events-none absolute size-2 rounded-[1px] bg-zinc-900 opacity-0 transition peer-checked:opacity-100" />
+                <span className="pointer-events-none absolute left-[4px] top-[4px] block h-[6px] w-[6px] rounded-[1px] bg-zinc-900 opacity-0 peer-checked:opacity-100" />
               </span>
               {day.label}
             </label>

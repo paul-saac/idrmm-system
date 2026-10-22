@@ -17,6 +17,7 @@ export type AccountRow = {
   lastName: string;
   role: UserRole;
   status: "active" | "inactive";
+  invitationPending?: boolean;
   createdAt: string;
   assignedProjects: AssignedProject[];
   /** Null before their first sign-in (or before 0066 has run). */
@@ -110,7 +111,7 @@ export async function listAccountsByRole(
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, email, first_name, last_name, role, status, created_at")
+    .select("id, email, first_name, last_name, role, status, created_at, invitation_pending")
     .in("role", roles)
     .order("created_at", { ascending: false });
 
@@ -128,6 +129,7 @@ export async function listAccountsByRole(
     lastName: row.last_name,
     role: row.role,
     status: row.status,
+    invitationPending: row.invitation_pending,
     createdAt: row.created_at,
     assignedProjects: assignedByAccount.get(row.id) ?? [],
     lastSignInAt: signIns.get(row.id) ?? null,

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { DisableBrowserAutocomplete } from "@/components/ui/disable-browser-autocomplete";
 
 // The whole system's body font — matches the Figma design file's own
 // typeface, replacing Next.js's default Geist Sans.
@@ -37,7 +38,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           resolved to the browser's plain sans-serif fallback (Geist
           Sans was already silently unused before this), not either
           variable, without this class. */}
-      <body className="min-h-full flex flex-col font-sans">{children}</body>
+      <body className="min-h-full flex flex-col font-sans">
+        <DisableBrowserAutocomplete />
+        {children}
+      </body>
     </html>
   );
 }

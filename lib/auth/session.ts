@@ -31,11 +31,11 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("first_name, last_name, role, status")
+    .select("first_name, last_name, role, status, invitation_pending")
     .eq("id", user.id)
     .single();
 
-  if (!profile || !profile.role || profile.status === "inactive") {
+  if (!profile || !profile.role || profile.status === "inactive" || profile.invitation_pending) {
     return null;
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Calculator } from "lucide-react";
 import { updateProjectDefaultLaborCostPercent } from "@/lib/projects/actions";
@@ -88,6 +88,7 @@ function PercentCell({
       <input
         type="text"
         inputMode="decimal"
+        autoComplete="off"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label={label}
@@ -141,11 +142,17 @@ function PercentCell({
  * accountability) — this is the cost-estimation planning side, a lump
  * labor cost per task, not who specifically is doing the work.
  */
+export type LaborBreakdownHighlightTarget = {
+  kind: "task" | "category";
+  id: number;
+} | null;
+
 export function LaborBreakdownModalContent({
   projectId,
   categories,
   defaultLaborCostPercent,
   onClose,
+  highlightTarget,
 }: {
   projectId: number;
   categories: CostCategory[];
@@ -155,8 +162,22 @@ export function LaborBreakdownModalContent({
    * own doc comment on why applying it is a reset, not a suggestion). */
   defaultLaborCostPercent: number | null;
   onClose: () => void;
+  highlightTarget?: LaborBreakdownHighlightTarget;
 }) {
   const router = useRouter();
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const [flashingKey, setFlashingKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!highlightTarget) return;
+    const key = `${highlightTarget.kind}-${highlightTarget.id}`;
+    const el = rowRefs.current.get(key);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setFlashingKey(key);
+    const timer = window.setTimeout(() => setFlashingKey(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [highlightTarget]);
 
   const [ratePercentInput, setRatePercentInput] = useState(
     defaultLaborCostPercent != null ? String(defaultLaborCostPercent) : ""
@@ -326,6 +347,7 @@ export function LaborBreakdownModalContent({
               min={0}
               max={100}
               step="0.01"
+              autoComplete="off"
               value={ratePercentInput}
               onChange={(e) => {
                 setRatePercentInput(e.target.value);
@@ -364,7 +386,17 @@ export function LaborBreakdownModalContent({
                 : liveCategoryAmount(category);
               return (
                 <Fragment key={category.id}>
-                  <tr className={MAIN_TASK_ROW}>
+                  <tr
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(`category-${category.id}`, el);
+                      else rowRefs.current.delete(`category-${category.id}`);
+                    }}
+                    className={`${MAIN_TASK_ROW} duration-500 ${
+                      flashingKey === `category-${category.id}`
+                        ? "bg-amber-50 ring-1 ring-amber-300 ring-inset"
+                        : ""
+                    }`}
+                  >
                     {/* With subtasks, its name spans Labor Percentage too —
                         its Amount is just their subtotal. */}
                     <td colSpan={hasTasks ? 3 : 2} className={`${DIVIDER} px-4`}>
@@ -385,7 +417,18 @@ export function LaborBreakdownModalContent({
                     <td className={AMOUNT_CELL}>{formatCurrency(categoryTotal)}</td>
                   </tr>
                   {tasks.map((task, taskIndex) => (
-                    <tr key={task.id} className={`${GROUP_ROW} bg-white`}>
+                    <tr
+                      key={task.id}
+                      ref={(el) => {
+                        if (el) rowRefs.current.set(`task-${task.id}`, el);
+                        else rowRefs.current.delete(`task-${task.id}`);
+                      }}
+                      className={`${GROUP_ROW} duration-500 ${
+                        flashingKey === `task-${task.id}`
+                          ? "bg-amber-50 ring-1 ring-amber-300 ring-inset"
+                          : "bg-white"
+                      }`}
+                    >
                       <td className={TREE_CELL}>
                         <TreeLine branch end={taskIndex === tasks.length - 1} />
                       </td>

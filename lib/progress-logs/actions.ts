@@ -100,6 +100,22 @@ function toOverrideLog(row: OverrideLogRow, accounts: SavedByAccounts): Override
           ? null
           : toNumber(material.unitCost),
     })),
+    equipmentCosts: readList(
+      (row as OverrideLogRow & { equipment_costs?: unknown }).equipment_costs,
+      (item) => ({
+        name: String(item.name ?? ""),
+        amount: toNumber(item.amount),
+        unplanned: Boolean(item.unplanned),
+      })
+    ),
+    otherCosts: readList(
+      (row as OverrideLogRow & { other_costs?: unknown }).other_costs,
+      (item) => ({
+        name: String(item.name ?? ""),
+        amount: toNumber(item.amount),
+        unplanned: Boolean(item.unplanned),
+      })
+    ),
     attendance: readList(row.attendance, (worker) => ({
       name: String(worker.name ?? ""),
       hours: toNumber(worker.hours),

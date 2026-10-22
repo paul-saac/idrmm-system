@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
@@ -24,6 +24,9 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
 import { AssignWorkersModalContent } from "@/components/projects/progress/assign-workers-modal-content";
+import { EquipmentTrackingPanel } from "@/components/projects/equipment/equipment-tracking-panel";
+import { loadEquipmentTracking } from "@/lib/equipment/tracking-actions";
+import type { EquipmentTracking } from "@/lib/equipment/tracking-types";
 import { ProgressTrackingModal, type ProgressModalTarget } from "@/components/projects/progress/progress-tracking-modal";
 import {
   ProjectCalendarView,
@@ -34,6 +37,7 @@ import { usePortal } from "@/components/portal/portal-context";
 import type { ProjectEvent } from "@/lib/project-events/types";
 import {
   WeightBreakdownModal,
+  type CostNavigateDestination,
   type WeightBreakdownTarget,
 } from "@/components/projects/cost-estimate/weight-breakdown-modal-content";
 import {
@@ -67,8 +71,11 @@ import type {
 } from "@/lib/workers/data";
 import type { TaskProgressToday } from "@/lib/task-progress/data";
 import {
+  computeAutoPercentComplete,
   computeExpectedProgress,
   countWorkingDays,
+  EMPTY_PROGRESS_ANCHOR,
+  groupPlannedMaterials,
   scheduleStatusFor,
   ZERO_COSTS,
   type ScheduleStatus,
@@ -357,6 +364,7 @@ const RESIZABLE_COLUMN_IDS = [
   "priority",
   "weight",
   "assigned",
+  "equipment",
   "percentComplete",
   "expected",
 ] as const;
@@ -387,6 +395,7 @@ const DEFAULT_COLUMN_WIDTHS: Record<ResizableColumnId, number> = {
   priority: 80,
   weight: 70,
   assigned: 78,
+  equipment: 78,
   percentComplete: 122,
   expected: 84,
 };
@@ -399,6 +408,7 @@ const MIN_COLUMN_WIDTH: Record<ResizableColumnId, number> = {
   priority: 68,
   weight: 56,
   assigned: 58,
+  equipment: 58,
   percentComplete: 90,
   expected: 70,
 };
@@ -419,6 +429,7 @@ const COLUMN_LABEL: Record<ResizableColumnId, string> = {
   priority: "Priority",
   weight: "Weight",
   assigned: "Assigned",
+  equipment: "Assigned Equipment",
   percentComplete: "Percent Complete",
   expected: "Expected",
 };
@@ -632,13 +643,16 @@ export function GanttChartView({
   workers,
   workerAssignments,
   memberGroups,
+  defaultWorkerIds = [],
   taskWorkerAssignments,
   categoryWorkerAssignments,
   taskProgressToday,
   categoryProgressToday,
   overrideHistory,
+  initialEquipmentTracking = null,
   onOpenMaterialBreakdown,
   onImportBom,
+  onNavigateToCostEstimate,
 }: {
   projectId: number;
   /** Each task's own percentComplete (see CostTask's own doc comment)
@@ -683,6 +697,7 @@ export function GanttChartView({
   /** The Team's groups (crews) — the Assign picker adds a whole one at
    * once. */
   memberGroups: MemberGroup[];
+  defaultWorkerIds?: number[];
   taskWorkerAssignments: TaskWorkerAssignments;
   /** Same idea, one level up — see CategoryWorkerAssignments's own doc
    * comment. */
@@ -700,6 +715,8 @@ export function GanttChartView({
   /** Preloaded per-task/phase override history, keyed by `task-<id>` or
    * `category-<id>`, so the Progress Tracking modal renders it immediately. */
   overrideHistory: ProjectOverrideHistory;
+  /** Preloaded equipment tracking so the Assign Equipment and Progress modals render immediately. */
+  initialEquipmentTracking?: EquipmentTracking | null;
   /** Opens the shared Material Breakdown modal — owned by
    * project-detail-view.tsx, the nearest common ancestor with
    * CostEstimateView (which owns that modal's own trigger too) —
@@ -713,6 +730,7 @@ export function GanttChartView({
    * own onImportBom). The schedule header's button is a second, more visible
    * entry point into the identical flow, not a separate one. */
   onImportBom: () => void;
+  onNavigateToCostEstimate?: (target: CostNavigateDestination) => void;
 }) {
   const router = useRouter();
   // Month is the default — unlike Week, its column labels are plain
@@ -907,6 +925,22 @@ export function GanttChartView({
   // highlightLatest: opened from a notification — its Last override (the
   // change it was about) is highlighted.
   const [progressModal, setProgressModal] = useState<ProgressModalTarget | null>(null);
+  const [equipmentTarget, setEquipmentTarget] = useState<{ key: string; name: string } | null>(null);
+  const [equipmentSaving, setEquipmentSaving] = useState(false);
+  const [equipmentTracking, setEquipmentTracking] = useState<EquipmentTracking | null>(initialEquipmentTracking);
+  const [prevInitialEquipmentTracking, setPrevInitialEquipmentTracking] = useState(initialEquipmentTracking);
+  if (initialEquipmentTracking !== prevInitialEquipmentTracking) {
+    setPrevInitialEquipmentTracking(initialEquipmentTracking);
+    if (initialEquipmentTracking) setEquipmentTracking(initialEquipmentTracking);
+  }
+  useEffect(() => {
+    if (initialEquipmentTracking) return;
+    let active = true;
+    loadEquipmentTracking(projectId).then((result) => {
+      if (active && result.data) setEquipmentTracking(result.data);
+    }).catch(() => { /* The assignment panel shows a retryable load error. */ });
+    return () => { active = false; };
+  }, [projectId, initialEquipmentTracking]);
 
   // A notification's View Progress (?progress=task-12 or category-5)
   // opens that row's Daily Progress Update straight away. Compared with
@@ -1563,6 +1597,63 @@ export function GanttChartView({
     return map;
   }, [workers]);
 
+  const defaultWorkerSet = useMemo(
+    () => new Set(defaultWorkerIds),
+    [defaultWorkerIds]
+  );
+
+  /**
+   * Resolves the label and tooltip for the Gantt chart "Assigned" cell:
+   * Prioritizes skilled workers first, then other non-management crew,
+   * followed by management members at the end.
+   * If only default management is attached (no active crew assigned yet),
+   * the cell displays "Assign" to invite assignment rather than showing
+   * the project manager's name across every row.
+   */
+  const getAssignedCellDisplay = useCallback(
+    (assignedIds: number[]) => {
+      const assignedWorkers = assignedIds
+        .map((id) => workerById.get(id))
+        .filter((w): w is Worker => Boolean(w));
+
+      if (assignedWorkers.length === 0) {
+        return { label: "Assign", title: "Assign workers", hasAssigned: false };
+      }
+
+      const isSubcontractor = (w: Worker) => w.employmentType === "subcontractor";
+      const isManagement = (w: Worker) =>
+        !isSubcontractor(w) && (w.category === "management" || defaultWorkerSet.has(w.id));
+      const isSkilled = (w: Worker) =>
+        !isManagement(w) && (w.category === "skilled" || isSubcontractor(w));
+
+      const skilledWorkers: Worker[] = [];
+      const otherWorkers: Worker[] = [];
+      const managementWorkers: Worker[] = [];
+
+      for (const w of assignedWorkers) {
+        if (isSkilled(w)) {
+          skilledWorkers.push(w);
+        } else if (isManagement(w)) {
+          managementWorkers.push(w);
+        } else {
+          otherWorkers.push(w);
+        }
+      }
+
+      const activeCrew = [...skilledWorkers, ...otherWorkers];
+      const displayWorkers =
+        activeCrew.length > 0 ? [...activeCrew, ...managementWorkers] : [];
+
+      const names = displayWorkers.map((w) => w.fullName);
+      const hasAssigned = names.length > 0;
+      const label = hasAssigned ? names.join(", ") : "Assign";
+      const title = hasAssigned ? names.join(", ") : "Assign workers";
+
+      return { label, title, hasAssigned };
+    },
+    [workerById, defaultWorkerSet]
+  );
+
   const tasks: GanttTask[] = useMemo(() => {
     const result: GanttTask[] = [];
     // A fresh local date, deliberately not fallbackStart (see
@@ -1700,6 +1791,7 @@ export function GanttChartView({
     ) {
       return tasks;
     }
+    const today = new Date();
     const rows = tasks.map((row) => {
       if (row.type === "project") return row;
       const category = categoryById.get(row.id);
@@ -1707,6 +1799,54 @@ export function GanttChartView({
         ? pendingCategoryScheduleOverrides.get(category.id)
         : pendingScheduleOverrides.get(Number(row.id));
       if (!override) return row;
+      const startDate = toDate(override.start);
+      const endDate = toDate(override.end);
+      const task = category ? undefined : taskById.get(row.id);
+      const fullCategory = category
+        ? categoriesForDisplay.find((c) => c.id === category.id)
+        : undefined;
+      const progress =
+        row.type === "milestone"
+          ? row.progress
+          : task
+            ? computeAutoPercentComplete({
+                plannedStartDate: override.start,
+                plannedEndDate: override.end,
+                estimatedQuantity: task.estimatedQuantity,
+                plannedMaterials: groupPlannedMaterials(task.materialAssignments),
+                plannedCosts: {
+                  labor: task.laborEstimate,
+                  material: task.materialEstimate,
+                  equipment: task.equipmentEstimate,
+                  other: task.otherCostEstimate,
+                },
+                workingDays,
+                holidays,
+                anchor: taskProgressToday[task.id] ?? EMPTY_PROGRESS_ANCHOR,
+                today,
+              })
+            : fullCategory
+              ? computeAutoPercentComplete({
+                  plannedStartDate: override.start,
+                  plannedEndDate: override.end,
+                  estimatedQuantity: fullCategory.estimatedQuantity,
+                  plannedMaterials: groupPlannedMaterials(
+                    fullCategory.materialAssignments
+                  ),
+                  plannedCosts: {
+                    labor: fullCategory.categoryLaborEstimate,
+                    material: fullCategory.categoryMaterialEstimate,
+                    equipment: fullCategory.categoryEquipmentEstimate,
+                    other: fullCategory.categoryOtherEstimate,
+                  },
+                  workingDays,
+                  holidays,
+                  anchor:
+                    categoryProgressToday[fullCategory.id] ??
+                    EMPTY_PROGRESS_ANCHOR,
+                  today,
+                })
+              : row.progress;
       // override.start/end are always the true, unshifted ISO dates
       // (see persistTaskDates/persistCategoryDates) — +1 day for the
       // bar's own rendering here too, same as `tasks` above, so an
@@ -1715,18 +1855,20 @@ export function GanttChartView({
       // lands.
       return {
         ...row,
-        start: toDate(override.start),
-        end:
+        name:
           row.type === "milestone"
-            ? toDate(override.end)
-            : nextDay(toDate(override.end)),
+            ? milestoneLabel(category?.name ?? task?.name ?? row.name, endDate)
+            : row.name,
+        start: startDate,
+        end: row.type === "milestone" ? endDate : nextDay(endDate),
+        progress,
       };
     });
 
     // Every phase with a task just moved, re-spanned from its tasks'
     // dates as they now stand — the same rollup `tasks` above makes
     // from the persisted ones (earliest start, latest true end, +1 day
-    // for the bar).
+    // for the bar), plus its duration-weighted progress rollup.
     const movedPhases = new Set<string>();
     rows.forEach((row, index) => {
       if (row !== tasks[index] && row.project) movedPhases.add(row.project);
@@ -1736,15 +1878,40 @@ export function GanttChartView({
       if (row.type !== "project" || !movedPhases.has(row.id)) return row;
       const children = rows.filter((child) => child.project === row.id);
       if (children.length === 0) return row;
+      let weightedSum = 0;
+      let totalDuration = 0;
+      for (const child of children) {
+        const duration = countWorkingDays(
+          child.start,
+          trueEndDate(child),
+          workingDays,
+          holidaySet
+        );
+        weightedSum += duration * child.progress;
+        totalDuration += duration;
+      }
       return {
         ...row,
         start: new Date(Math.min(...children.map((child) => child.start.getTime()))),
         end: nextDay(
           new Date(Math.max(...children.map((child) => trueEndDate(child).getTime())))
         ),
+        progress: totalDuration > 0 ? weightedSum / totalDuration : 0,
       };
     });
-  }, [tasks, pendingScheduleOverrides, pendingCategoryScheduleOverrides, categoryById]);
+  }, [
+    tasks,
+    pendingScheduleOverrides,
+    pendingCategoryScheduleOverrides,
+    categoryById,
+    taskById,
+    categoriesForDisplay,
+    workingDays,
+    holidays,
+    holidaySet,
+    taskProgressToday,
+    categoryProgressToday,
+  ]);
 
   const totalColumnsWidth = RESIZABLE_COLUMN_IDS.reduce(
     (sum, id) => sum + columnWidths[id],
@@ -1980,7 +2147,18 @@ export function GanttChartView({
     // (negative id) — recording progress against a not-yet-real task
     // doesn't make sense.
     if (task && task.id > 0) {
-      setProgressModal({ kind: "task", task });
+      const override = pendingScheduleOverrides.get(task.id);
+      setProgressModal({
+        kind: "task",
+        task: override
+          ? {
+              ...task,
+              plannedStartDate: override.start,
+              plannedEndDate: override.end,
+              percentComplete: row.progress,
+            }
+          : task,
+      });
       return;
     }
     const categoryEntry = categoryById.get(row.id);
@@ -1988,7 +2166,20 @@ export function GanttChartView({
       const category = categoriesForDisplay.find(
         (c) => c.id === categoryEntry.id
       );
-      if (category) setProgressModal({ kind: "category", category });
+      if (category) {
+        const override = pendingCategoryScheduleOverrides.get(category.id);
+        setProgressModal({
+          kind: "category",
+          category: override
+            ? {
+                ...category,
+                plannedStartDate: override.start,
+                plannedEndDate: override.end,
+                percentComplete: row.progress,
+              }
+            : category,
+        });
+      }
     }
   }
 
@@ -3449,9 +3640,7 @@ export function GanttChartView({
                   (() => {
                     const assignedIds =
                       categoryWorkerAssignments[category.id] ?? [];
-                    const names = assignedIds
-                      .map((id) => workerById.get(id)?.fullName)
-                      .filter((name): name is string => Boolean(name));
+                    const assignedInfo = getAssignedCellDisplay(assignedIds);
                     return (
                       <button
                         type="button"
@@ -3464,12 +3653,12 @@ export function GanttChartView({
                             end: trueEndDate(row),
                           })
                         }
-                        title="Assign workers"
+                        title={assignedInfo.title}
                         className={`h-full w-full cursor-pointer truncate px-2 text-left transition hover:bg-zinc-900 hover:text-white ${
-                          names.length > 0 ? "text-zinc-700" : "text-zinc-400"
+                          assignedInfo.hasAssigned ? "text-zinc-700" : "text-zinc-400"
                         }`}
                       >
-                        {names.length > 0 ? names.join(", ") : "Assign"}
+                        {assignedInfo.label}
                       </button>
                     );
                   })()}
@@ -3477,9 +3666,7 @@ export function GanttChartView({
                   task.id > 0 &&
                   (() => {
                     const assignedIds = taskWorkerAssignments[task.id] ?? [];
-                    const names = assignedIds
-                      .map((id) => workerById.get(id)?.fullName)
-                      .filter((name): name is string => Boolean(name));
+                    const assignedInfo = getAssignedCellDisplay(assignedIds);
                     return (
                       <button
                         type="button"
@@ -3492,15 +3679,30 @@ export function GanttChartView({
                             end: trueEndDate(row),
                           })
                         }
-                        title="Assign workers"
+                        title={assignedInfo.title}
                         className={`h-full w-full cursor-pointer truncate px-2 text-left transition hover:bg-zinc-900 hover:text-white ${
-                          names.length > 0 ? "text-zinc-700" : "text-zinc-400"
+                          assignedInfo.hasAssigned ? "text-zinc-700" : "text-zinc-400"
                         }`}
                       >
-                        {names.length > 0 ? names.join(", ") : "Assign"}
+                        {assignedInfo.label}
                       </button>
                     );
                   })()}
+              </div>
+              <div
+                className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
+                style={{ width: columnWidths.equipment }}
+              >
+                {((task && task.id > 0) || (isProject && category && !category.hasTasks)) && (() => {
+                  const key = task && task.id > 0 ? `task-${task.id}` : `category-${category!.id}`;
+                  const name = task && task.id > 0 ? task.name : category!.name;
+                  const planned = equipmentTracking?.plans.filter((p) => p.itemKey === key) ?? [];
+                  return <button type="button" onClick={() => setEquipmentTarget({ key, name })}
+                    title={planned.map((p) => `${p.name} (${p.assetTag})`).join(", ") || "Assign tools & equipment"}
+                    className="h-full w-full cursor-pointer truncate px-2 text-left text-zinc-600 hover:bg-zinc-900 hover:text-white">
+                    {planned.length ? `${planned[0].name}${planned.length > 1 ? ` +${planned.length - 1}` : ""}` : "Assign"}
+                  </button>;
+                })()}
               </div>
               <div
                 className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
@@ -3541,9 +3743,19 @@ export function GanttChartView({
                               (c) => c.id === category.id
                             );
                             if (foundCategory) {
+                              const override = pendingCategoryScheduleOverrides.get(
+                                foundCategory.id
+                              );
                               setProgressModal({
                                 kind: "category",
-                                category: foundCategory,
+                                category: override
+                                  ? {
+                                      ...foundCategory,
+                                      plannedStartDate: override.start,
+                                      plannedEndDate: override.end,
+                                      percentComplete: row.progress,
+                                    }
+                                  : foundCategory,
                               });
                             }
                           }
@@ -3559,8 +3771,20 @@ export function GanttChartView({
                           // to track progress against, same reasoning as
                           // handleBarClick's own milestone exclusion.
                           () => {
-                            if (task && task.id > 0 && !task.isMilestone)
-                              setProgressModal({ kind: "task", task });
+                            if (task && task.id > 0 && !task.isMilestone) {
+                              const override = pendingScheduleOverrides.get(task.id);
+                              setProgressModal({
+                                kind: "task",
+                                task: override
+                                  ? {
+                                      ...task,
+                                      plannedStartDate: override.start,
+                                      plannedEndDate: override.end,
+                                      percentComplete: row.progress,
+                                    }
+                                  : task,
+                              });
+                            }
                           }
                 }
               >
@@ -3644,11 +3868,82 @@ export function GanttChartView({
                 {!isFiller &&
                   !isMilestoneRow &&
                   (() => {
-                    const expected = isProject && category
-                      ? expectedByCategoryId.get(category.id)
-                      : task
-                        ? expectedByTaskId.get(task.id)
-                        : null;
+                    let expected: number | null | undefined;
+                    if (isProject && category) {
+                      if (!category.hasTasks) {
+                        const override = pendingCategoryScheduleOverrides.get(
+                          category.id
+                        );
+                        expected = override
+                          ? computeExpectedProgress({
+                              plannedStartDate: override.start,
+                              plannedEndDate: override.end,
+                              workingDays,
+                              holidays,
+                              today: new Date(),
+                            }).timePercent
+                          : expectedByCategoryId.get(category.id);
+                      } else if (pendingScheduleOverrides.size > 0) {
+                        const fullCategory = categoriesForDisplay.find(
+                          (c) => c.id === category.id
+                        );
+                        if (
+                          fullCategory &&
+                          fullCategory.tasks.some((t) =>
+                            pendingScheduleOverrides.has(t.id)
+                          )
+                        ) {
+                          const today = new Date();
+                          let weightedSum = 0;
+                          let totalDuration = 0;
+                          for (const childTask of fullCategory.tasks) {
+                            const childOverride = pendingScheduleOverrides.get(
+                              childTask.id
+                            );
+                            const childExpected = childOverride
+                              ? computeExpectedProgress({
+                                  plannedStartDate: childOverride.start,
+                                  plannedEndDate: childOverride.end,
+                                  workingDays,
+                                  holidays,
+                                  today,
+                                }).timePercent
+                              : expectedByTaskId.get(childTask.id);
+                            if (childExpected == null) continue;
+                            const { start, end } = childOverride
+                              ? {
+                                  start: toDate(childOverride.start),
+                                  end: toDate(childOverride.end),
+                                }
+                              : resolvedDates(childTask);
+                            const duration = workingDaysBetween(start, end);
+                            weightedSum += duration * childExpected;
+                            totalDuration += duration;
+                          }
+                          expected =
+                            totalDuration > 0
+                              ? weightedSum / totalDuration
+                              : null;
+                        } else {
+                          expected = expectedByCategoryId.get(category.id);
+                        }
+                      } else {
+                        expected = expectedByCategoryId.get(category.id);
+                      }
+                    } else if (task) {
+                      const override = pendingScheduleOverrides.get(task.id);
+                      expected = override
+                        ? computeExpectedProgress({
+                            plannedStartDate: override.start,
+                            plannedEndDate: override.end,
+                            workingDays,
+                            holidays,
+                            today: new Date(),
+                          }).timePercent
+                        : expectedByTaskId.get(task.id);
+                    } else {
+                      expected = null;
+                    }
                     if (expected == null) {
                       return <span className="px-2 text-xs text-zinc-300">—</span>;
                     }
@@ -3992,6 +4287,7 @@ export function GanttChartView({
         categories={categoriesForDisplay}
         target={weightBreakdown}
         onTargetChange={setWeightBreakdown}
+        onNavigateToCostEstimate={onNavigateToCostEstimate}
       />
 
       <ConfirmDialog
@@ -4105,6 +4401,7 @@ export function GanttChartView({
             workers={workers}
             assignments={workerAssignments}
             groups={memberGroups}
+            defaultWorkerIds={defaultWorkerIds}
             current={{ kind: "task", id: assignWorkersModal.taskId }}
             assignedWorkerIds={
               taskWorkerAssignments[assignWorkersModal.taskId] ?? []
@@ -4123,6 +4420,7 @@ export function GanttChartView({
             workers={workers}
             assignments={workerAssignments}
             groups={memberGroups}
+            defaultWorkerIds={defaultWorkerIds}
             current={{ kind: "category", id: assignWorkersModal.categoryId }}
             assignedWorkerIds={
               categoryWorkerAssignments[assignWorkersModal.categoryId] ?? []
@@ -4139,6 +4437,9 @@ export function GanttChartView({
         )}
       </Modal>
 
+      <Modal open={equipmentTarget !== null} onClose={() => { if (!equipmentSaving) setEquipmentTarget(null); }} title={equipmentTarget ? `Assign Equipment — ${equipmentTarget.name}` : "Assign Equipment"}>
+        {equipmentTarget && <EquipmentTrackingPanel key={equipmentTarget.key} projectId={projectId} itemKey={equipmentTarget.key} mode="plan" initialData={equipmentTracking} onChange={setEquipmentTracking} onClose={() => setEquipmentTarget(null)} onPendingChange={setEquipmentSaving} />}
+      </Modal>
       <ProgressTrackingModal
         target={progressModal}
         projectId={projectId}
@@ -4148,6 +4449,9 @@ export function GanttChartView({
         taskProgressToday={taskProgressToday}
         categoryProgressToday={categoryProgressToday}
         overrideHistory={overrideHistory}
+        workers={workers}
+        taskWorkerAssignments={taskWorkerAssignments}
+        categoryWorkerAssignments={categoryWorkerAssignments}
         onClose={() => setProgressModal(null)}
       />
     </div>

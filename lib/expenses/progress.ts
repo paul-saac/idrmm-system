@@ -6,6 +6,8 @@ export type ProgressExpense = {
   itemName: string;
   itemKey: string;
   savedByName: string | null;
+  supplier?: string;
+  invoiceNumber?: string;
   costs: CostAmounts;
 };
 

@@ -16,6 +16,7 @@ import {
 import { Modal } from "@/components/ui/modal";
 import { ViewMenu, type ViewOption } from "@/components/ui/view-menu";
 import { MaterialForm } from "@/components/projects/materials/material-form";
+import { MaterialUsageRecordView } from "@/components/projects/materials/material-usage-record-view";
 import { MaterialRequestEditForm } from "@/components/projects/materials/material-request-edit-form";
 import {
   MaterialRequestsTable,
@@ -25,7 +26,7 @@ import {
   deleteProjectMaterial,
   type MaterialActionState,
 } from "@/lib/materials/actions";
-import type { MaterialStatus, ProjectMaterial } from "@/lib/materials/data";
+import type { MaterialStatus, ProgressMaterialUsage, ProjectMaterial } from "@/lib/materials/data";
 import type { MaterialRecord, MaterialRecordStatus } from "@/lib/materials/records";
 import type {
   MaterialRequestDetail,
@@ -198,6 +199,8 @@ export function MaterialsMonitoringView({
   openRequestIds,
   onToggleRequest,
   currentUserName,
+  usage,
+  onOpenProgressLog,
 }: {
   projectId: number;
   records: MaterialRecord[];
@@ -212,6 +215,8 @@ export function MaterialsMonitoringView({
   onToggleRequest: (requestId: number) => void;
   /** Shown as Requested By on a new request. */
   currentUserName: string;
+  usage: ProgressMaterialUsage[];
+  onOpenProgressLog: (itemKey: string, entryDate: string) => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<MaterialRecordStatus | "all">("all");
   const [query, setQuery] = useState("");
@@ -281,6 +286,11 @@ export function MaterialsMonitoringView({
     });
   }
 
+  const usageRecord = view === "materials"
+    ? <MaterialUsageRecordView entries={usage} records={records} onViewChange={switchView} onOpenProgressLog={onOpenProgressLog} />
+    : null;
+  if (usageRecord) return usageRecord;
+
   return (
     <div
       ref={rootRef}
@@ -292,7 +302,7 @@ export function MaterialsMonitoringView({
           Add Material, or Request Material. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-baseline gap-3">
-          <h2 className="text-base font-semibold text-zinc-900">Material record</h2>
+          <h2 className="text-base font-semibold text-zinc-900">Material requests</h2>
           {view === "materials" ? (
             <span className="text-xs text-zinc-400">
               {records.length} {records.length === 1 ? "material" : "materials"}
@@ -465,8 +475,8 @@ export function MaterialsMonitoringView({
                   </th>
                   <th className="px-4 py-3 text-center">Planned</th>
                   <th className="px-4 py-3 text-center">Used</th>
-                  <th className="px-4 py-3 text-center">Remaining</th>
-                  <th className="px-4 py-3 text-center">Spent / Planned</th>
+                  <th className="px-4 py-3 text-center">Remaining planned</th>
+                  <th className="px-4 py-3 text-center">Usage value / Planned</th>
                   <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">Last used</th>
                   <th className="w-14 py-3 pr-5">

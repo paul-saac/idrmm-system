@@ -55,7 +55,7 @@ export function MaterialForm({
   }, [state]);
 
   return (
-    <form action={formAction} className="grid gap-4 sm:grid-cols-2" noValidate>
+    <form action={formAction} autoComplete="off" className="grid gap-4 sm:grid-cols-2" noValidate>
       {material && (
         // Material ID is system-assigned (see nextMaterialCode in
         // lib/materials/actions.ts) — shown read-only once it exists,

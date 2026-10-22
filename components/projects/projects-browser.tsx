@@ -60,6 +60,7 @@ export function ProjectsBrowser({
         <div className="relative ml-auto w-72 max-w-full">
           <input
             type="text"
+            autoComplete="off"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search Project"

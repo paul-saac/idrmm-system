@@ -42,6 +42,7 @@ function NotificationCard({
 }) {
   const text = TEXT[textSize];
   const request = notification.kind !== "progress_override";
+  const sheet = notification.kind === "sheet_submitted";
   const Icon = notification.kind === "material_request" ? Package : notification.kind === "equipment_request" ? Wrench : TrendingUp;
   return (
     <li
@@ -61,7 +62,7 @@ function NotificationCard({
         <div className="min-w-0 flex-1">
           <p className={`${text.title} text-zinc-900`}>
             <span className="font-semibold">{notification.actorName ?? "Someone"}</span>{" "}
-            {request ? `submitted ${notification.kind === "material_request" ? "material" : "equipment"} request ` : "overrode the progress of "}
+            {sheet ? "uploaded a document for admin review: " : request ? `submitted ${notification.kind === "material_request" ? "material" : "equipment"} request ` : "overrode the progress of "}
             <span className="font-semibold">{notification.itemName}</span>
           </p>
           <p className={`mt-0.5 ${text.detail} text-zinc-500`}>
@@ -77,7 +78,7 @@ function NotificationCard({
           className={`flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 ${text.button} font-medium text-white transition hover:bg-zinc-800`}
         >
           <ArrowUpRight className="size-3.5" />
-          {request ? "View Requests" : "View Progress"}
+          {sheet ? "Review Document" : request ? "View Requests" : "View Progress"}
         </button>
         <button
           type="button"

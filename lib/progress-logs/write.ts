@@ -17,7 +17,7 @@ export async function logOverride(
   item: OverrideLogItem,
   log: Omit<OverrideLog, "id" | "createdAt" | "savedByName" | "savedByRole">
 ) {
-  const { error } = await supabase.from("progress_override_logs").insert({
+  const basePayload = {
     project_id: projectId,
     task_id: item.kind === "task" ? item.id : null,
     category_id: item.kind === "category" ? item.id : null,
@@ -32,7 +32,24 @@ export async function logOverride(
     attendance: log.attendance,
     saved_by: profile.id,
     saved_by_name: `${profile.firstName} ${profile.lastName}`.trim() || null,
-  });
+  };
+
+  let { error } = await supabase.from("progress_override_logs").insert({
+    ...basePayload,
+    ...(log.equipmentCosts ? { equipment_costs: log.equipmentCosts } : {}),
+    ...(log.otherCosts ? { other_costs: log.otherCosts } : {}),
+  } as typeof basePayload);
+
+  if (error && (error.code === "PGRST204" || error.code === "42703")) {
+    ({ error } = await supabase.from("progress_override_logs").insert({
+      ...basePayload,
+      ...(log.otherCosts ? { other_costs: log.otherCosts } : {}),
+    } as typeof basePayload));
+  }
+
+  if (error && (error.code === "PGRST204" || error.code === "42703")) {
+    ({ error } = await supabase.from("progress_override_logs").insert(basePayload));
+  }
 
   if (error) {
     console.error("[progress-logs] Could not add to the override history:", error.message);

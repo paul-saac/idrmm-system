@@ -14,6 +14,7 @@ import { usePortal } from "@/components/portal/portal-context";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { ProjectHeader } from "@/components/projects/project-header";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
+import type { CostNavigateDestination } from "@/components/projects/cost-estimate/weight-breakdown-modal-content";
 import {
   ImportBomModalContent,
   type ImportBomStep,
@@ -38,6 +39,7 @@ const GanttChartView = dynamic(
 );
 import { DailyLogsView } from "@/components/projects/daily-logs/daily-logs-view";
 import { MaterialsOverviewView } from "@/components/projects/materials/materials-overview-view";
+import { MaterialPurchasesView } from "@/components/projects/materials/material-purchases-view";
 import {
   MaterialsMonitoringView,
   type MaterialsRecordView,
@@ -59,6 +61,7 @@ import type { MaterialRequestDetail } from "@/lib/material-requests/data";
 import type { EquipmentRequestDetail } from "@/lib/equipment-requests/data";
 import type { EquipmentAssignmentRow, EquipmentTaskMovementRow, ProgressEquipmentCost } from "@/lib/equipment/data";
 import type { EquipmentCostRecord } from "@/lib/equipment/records";
+import type { EquipmentTracking } from "@/lib/equipment/tracking-types";
 import { deleteProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
@@ -282,6 +285,7 @@ export function ProjectDetailView({
   overrideHistory,
   events,
   sheetsResult,
+  equipmentTracking = null,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
@@ -359,6 +363,8 @@ export function ProjectDetailView({
   events: ProjectEvent[];
   /** Preloaded sheets so opening the Sheets dropdown has no loading state. */
   sheetsResult?: Awaited<ReturnType<typeof listSheets>>;
+  /** Preloaded equipment tracking so the Assign Equipment and Progress modals render immediately. */
+  equipmentTracking?: EquipmentTracking | null;
 }) {
   // Reading the initial tab/sub-tab from the URL lets a link *into* this
   // page (e.g. a Daily Log detail page's back button) land on the exact
@@ -473,7 +479,7 @@ export function ProjectDetailView({
   // two (?tab=equipment&subtab=assigned|requests) opens that list, scrolled
   // to — and a request in it (&request=7, the dashboard's), opened.
   const landOnEquipmentList: EquipmentRecordList | null =
-    initialTab === "equipment" && (subtabParam === "assigned" || subtabParam === "monitoring" || subtabParam === "requests")
+    initialTab === "equipment" && subtabParam === "requests"
       ? subtabParam
       : null;
   const landOnEquipmentRequestId =
@@ -587,6 +593,18 @@ export function ProjectDetailView({
   function openMaterialBreakdown(taskId?: number) {
     setMaterialBreakdownHighlightTaskId(taskId ?? null);
     setMaterialBreakdownOpen(true);
+  }
+
+  // Active target row/field to scroll to and highlight in CostEstimateView
+  // when navigated from the Weight Breakdown modal.
+  const [costEstimateHighlight, setCostEstimateHighlight] = useState<
+    (CostNavigateDestination & { timestamp: number }) | null
+  >(null);
+
+  function handleNavigateToCostEstimate(target: CostNavigateDestination) {
+    setActiveTab("overview");
+    setCostOverviewOpen(true);
+    setCostEstimateHighlight({ ...target, timestamp: Date.now() });
   }
 
   // The breadcrumb tracks only the main tab (Overview/Progress/
@@ -717,7 +735,7 @@ export function ProjectDetailView({
             <MaterialsOverviewView
               counts={materialsCounts}
               requests={materialRequests}
-              recentUsage={recentMaterialUsage}
+              recentUsage={recentMaterialUsage.slice(0, 10)}
               onOpenRequest={openRequestInRecord}
               onSeeAllRequests={() => {
                 setMaterialsRecordView("requests");
@@ -726,6 +744,7 @@ export function ProjectDetailView({
                 }
               }}
             />
+            <MaterialPurchasesView projectId={project.id} usage={recentMaterialUsage} />
             {/* scroll-mt clears the sticky tabs bar when See all scrolls here. */}
             <div ref={materialsRecordRef} className="scroll-mt-16">
               <MaterialsMonitoringView
@@ -737,6 +756,8 @@ export function ProjectDetailView({
                 openRequestIds={openRequestIds}
                 onToggleRequest={toggleRequest}
                 currentUserName={currentUserName}
+                usage={recentMaterialUsage}
+                onOpenProgressLog={openEquipmentProgressLog}
               />
             </div>
           </div>
@@ -861,6 +882,8 @@ export function ProjectDetailView({
                     materialBreakdownHighlightTaskId={materialBreakdownHighlightTaskId}
                     onOpenMaterialBreakdown={openMaterialBreakdown}
                     onCloseMaterialBreakdown={() => setMaterialBreakdownOpen(false)}
+                    onNavigateToCostEstimate={handleNavigateToCostEstimate}
+                    costEstimateHighlight={costEstimateHighlight}
                   />
                 </div>
               )}
@@ -887,17 +910,20 @@ export function ProjectDetailView({
               workers={workers}
               workerAssignments={workerAssignments}
               memberGroups={memberGroups}
+              defaultWorkerIds={workers.filter(worker => worker.profileId === project.projectManagerId || worker.profileId === project.foremanId).map(worker => worker.id)}
               taskWorkerAssignments={taskWorkerAssignments}
               categoryWorkerAssignments={categoryWorkerAssignments}
               taskProgressToday={taskProgressToday}
               categoryProgressToday={categoryProgressToday}
               overrideHistory={overrideHistory}
+              initialEquipmentTracking={equipmentTracking}
               events={events}
               onOpenMaterialBreakdown={openMaterialBreakdown}
               onImportBom={() => {
                 setImportBomStep("upload");
                 setImportBomModalOpen(true);
               }}
+              onNavigateToCostEstimate={handleNavigateToCostEstimate}
             />
           </div>
         )}

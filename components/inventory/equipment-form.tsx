@@ -43,7 +43,7 @@ export function EquipmentForm({
   }, [state]);
 
   return (
-    <form action={formAction} className="grid gap-4 sm:grid-cols-2" noValidate>
+    <form action={formAction} autoComplete="off" className="grid gap-4 sm:grid-cols-2" noValidate>
       {equipment && (
         // Asset Tag is system-assigned (see nextAssetTag in
         // lib/equipment/actions.ts) — shown read-only once it exists,

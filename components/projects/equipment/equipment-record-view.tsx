@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Search, X } from "lucide-react";
 import { ViewMenu, type ViewOption } from "@/components/ui/view-menu";
 import { EquipmentRequestEditForm } from "@/components/projects/equipment/equipment-request-edit-form";
 import {
@@ -21,8 +21,6 @@ export type EquipmentRecordList = "cost" | "assigned" | "monitoring" | "requests
 
 const RECORD_VIEWS: ViewOption<EquipmentRecordList>[] = [
   { value: "cost", label: "Equipment cost" },
-  { value: "assigned", label: "Assigned equipment" },
-  { value: "monitoring", label: "Equipment monitoring" },
   { value: "requests", label: "Equipment requests" },
 ];
 
@@ -111,8 +109,19 @@ function SearchBox({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={label}
-        className="w-full rounded-md border border-zinc-200 bg-white py-2 pr-3 pl-9 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+        className="w-full rounded-md border border-zinc-200 bg-white py-2 pr-8 pl-9 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
       />
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          title="Clear search"
+          aria-label="Clear search"
+          className="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
+        >
+          <X className="size-3.5" />
+        </button>
+      )}
     </div>
   );
 }

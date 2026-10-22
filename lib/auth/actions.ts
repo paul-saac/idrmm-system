@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { roleHome, type UserRole } from "@/lib/auth/roles";
+import { saveSetupPassword } from "./save-setup-password";
 
 export type AuthActionState = {
   error?: string;
@@ -42,7 +43,7 @@ export async function login(
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, status")
+    .select("role, status, invitation_pending")
     .eq("id", data.user.id)
     .single();
 
@@ -58,6 +59,7 @@ export async function login(
     return { error: "This account has been deactivated. Contact your administrator." };
   }
 
+  if (profile.invitation_pending) redirect("/accept-invite");
   redirect(roleHome(profile.role as UserRole));
 }
 
@@ -116,19 +118,9 @@ export async function updatePassword(
     return { error: "Your reset link has expired. Please request a new one." };
   }
 
-  const { error } = await supabase.auth.updateUser({ password });
-
-  if (error) {
-    return { error: "Could not update password. Please try again." };
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  redirect(roleHome(profile?.role as UserRole | undefined));
+  const result = await saveSetupPassword(password);
+  if (result.error) return { error: result.error };
+  redirect(roleHome(result.role));
 }
 
 /**

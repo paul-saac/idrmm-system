@@ -8,6 +8,7 @@ import { requireProjectAccess } from "@/lib/auth/project-access";
 import { getSessionProfile } from "@/lib/auth/session";
 import { isMemberCategory } from "@/lib/workers/presets";
 import { isAdminRole } from "@/lib/auth/roles";
+import { listProjectManagementWorkerIds } from "@/lib/workers/data";
 
 export type WorkerActionState = {
   error?: string;
@@ -400,6 +401,12 @@ export async function setTaskWorkers(
 
     const supabase = await createClient();
 
+    const { data: task } = await supabase.from("estimate_tasks").select("id").eq("id", taskId).eq("project_id", projectId).single();
+    if (!task) return { error: "Task not found in this project." };
+    const managementIds = new Set(await listProjectManagementWorkerIds(projectId));
+    // Leadership is derived from the project, never copied into each task.
+    workerIds = [...new Set(workerIds)].filter(id => !managementIds.has(id));
+
     const { error: deleteError } = await supabase
       .from("task_worker_assignments")
       .delete()
@@ -449,6 +456,11 @@ export async function setCategoryWorkers(
     }
 
     const supabase = await createClient();
+
+    const { data: category } = await supabase.from("estimate_categories").select("id").eq("id", categoryId).eq("project_id", projectId).single();
+    if (!category) return { error: "Phase not found in this project." };
+    const managementIds = new Set(await listProjectManagementWorkerIds(projectId));
+    workerIds = [...new Set(workerIds)].filter(id => !managementIds.has(id));
 
     const { error: deleteError } = await supabase
       .from("category_worker_assignments")

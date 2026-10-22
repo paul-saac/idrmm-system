@@ -45,12 +45,20 @@ function nextKey() {
   return `line-${keySeq}`;
 }
 
+export type MaterialBreakdownHighlightTarget = {
+  kind?: "task" | "category";
+  id?: number;
+  lineId?: number;
+  materialName?: string;
+} | null;
+
 type DraftLine = {
   // Local-only React key, never persisted — updateTaskMaterialAssignments
   // (and updateCategoryMaterialAssignments) deletes and reinserts a whole
   // list on save, so there's no real id to track client-side between
   // loads.
   key: string;
+  id?: number;
   materialName: string;
   specification: string;
   quantity: string;
@@ -89,6 +97,7 @@ type LineOwner = { kind: "task" | "category"; id: number };
 function toDraftLine(m: TaskMaterialAssignment): DraftLine {
   return {
     key: nextKey(),
+    id: m.id,
     materialName: m.materialName,
     specification: m.specification ?? "",
     quantity: String(m.plannedQuantity),
@@ -262,6 +271,7 @@ function AmountCell({
     <input
       type="text"
       inputMode="decimal"
+      autoComplete="off"
       value={displayValue}
       onFocus={() => setFocusedAmountKey(focusKey)}
       onBlur={() => {
@@ -279,6 +289,7 @@ export function MaterialBreakdownModalContent({
   onClose,
   onImportBom,
   highlightTaskId,
+  highlightTarget,
 }: {
   projectId: number;
   categories: CostCategory[];
@@ -296,29 +307,54 @@ export function MaterialBreakdownModalContent({
    * trigger. Nothing folds away (see this component's own doc comment),
    * so the row is always there to scroll to. */
   highlightTaskId: number | null;
+  /** Optional target row/material to highlight inside the breakdown modal */
+  highlightTarget?: MaterialBreakdownHighlightTarget;
 }) {
   const router = useRouter();
   // One ref per task row, keyed by task id — set via each row's own
   // ref callback below, read only by the scroll-to-highlight effect.
   const taskRowRefs = useRef(new Map<number, HTMLTableRowElement>());
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const [flashTaskId, setFlashTaskId] = useState<number | null>(null);
-  // Runs once per modal open (Modal only mounts children once `open` is
-  // true — see its own doc comment — so this component's own mount IS
-  // "the modal just opened"), not on every highlightTaskId identity
-  // change, since it's the same primitive number/null across renders
-  // anyway. Scrolls the target row to the middle of the scroll
-  // container and flashes it briefly so it's unmistakable in a table
-  // that can run to hundreds of rows.
+  const [flashingKey, setFlashingKey] = useState<string | null>(null);
+
+  // Scrolls to target and flashes highlight
   useEffect(() => {
-    if (highlightTaskId == null) return;
-    const row = taskRowRefs.current.get(highlightTaskId);
+    const target = highlightTarget;
+    if (!target && highlightTaskId == null) return;
+
+    let targetKey: string | null = null;
+    if (target?.lineId != null && rowRefs.current.has(`line-id-${target.lineId}`)) {
+      targetKey = `line-id-${target.lineId}`;
+    } else if (
+      target?.materialName &&
+      rowRefs.current.has(`line-name-${target.materialName.trim().toLowerCase()}`)
+    ) {
+      targetKey = `line-name-${target.materialName.trim().toLowerCase()}`;
+    } else if (target?.kind === "task" && rowRefs.current.has(`task-${target.id}`)) {
+      targetKey = `task-${target.id}`;
+    } else if (target?.kind === "category" && rowRefs.current.has(`category-${target.id}`)) {
+      targetKey = `category-${target.id}`;
+    } else if (highlightTaskId != null && taskRowRefs.current.has(highlightTaskId)) {
+      targetKey = `task-${highlightTaskId}`;
+    }
+
+    if (!targetKey) return;
+    const row =
+      rowRefs.current.get(targetKey) ??
+      (highlightTaskId != null ? taskRowRefs.current.get(highlightTaskId) : null);
     if (!row) return;
+
     row.scrollIntoView({ block: "center", behavior: "smooth" });
-    setFlashTaskId(highlightTaskId);
-    const timer = window.setTimeout(() => setFlashTaskId(null), 2000);
+    setFlashingKey(targetKey);
+    if (highlightTaskId != null) setFlashTaskId(highlightTaskId);
+
+    const timer = window.setTimeout(() => {
+      setFlashingKey(null);
+      setFlashTaskId(null);
+    }, 2500);
     return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [highlightTarget, highlightTaskId]);
   const [draftByTask, setDraftByTask] = useState<Record<number, DraftLine[]>>(
     () => {
       const initial: Record<number, DraftLine[]> = {};
@@ -581,11 +617,36 @@ export function MaterialBreakdownModalContent({
     line: DraftLine,
     { tree, flashing }: { tree: boolean; flashing: boolean }
   ) {
+    const isFlashing =
+      flashing ||
+      (line.id != null && flashingKey === `line-id-${line.id}`) ||
+      (line.materialName.trim() !== "" &&
+        flashingKey === `line-name-${line.materialName.trim().toLowerCase()}`);
     return (
       <tr
         key={line.key}
-        className={`${ITEM_ROW} duration-1000 ${
-          flashing ? "bg-amber-100" : MATERIAL_ROW_BG
+        ref={(el) => {
+          if (el) {
+            if (line.id != null) rowRefs.current.set(`line-id-${line.id}`, el);
+            if (line.materialName.trim() !== "") {
+              rowRefs.current.set(
+                `line-name-${line.materialName.trim().toLowerCase()}`,
+                el
+              );
+            }
+          } else {
+            if (line.id != null) rowRefs.current.delete(`line-id-${line.id}`);
+            if (line.materialName.trim() !== "") {
+              rowRefs.current.delete(
+                `line-name-${line.materialName.trim().toLowerCase()}`
+              );
+            }
+          }
+        }}
+        className={`${ITEM_ROW} duration-500 ${
+          isFlashing
+            ? "bg-amber-100/70 ring-1 ring-amber-300 ring-inset"
+            : MATERIAL_ROW_BG
         }`}
       >
         <td className={TREE_CELL}>{tree && <TreeLine />}</td>
@@ -593,6 +654,7 @@ export function MaterialBreakdownModalContent({
           <div className="flex items-center gap-1.5">
             <input
               type="text"
+              autoComplete="off"
               value={line.materialName}
               onChange={(e) =>
                 updateLine(owner, line.key, {
@@ -616,6 +678,7 @@ export function MaterialBreakdownModalContent({
           <input
             type="number"
             min={0}
+            autoComplete="off"
             value={line.quantity}
             onChange={(e) =>
               updateLine(owner, line.key, {
@@ -628,6 +691,7 @@ export function MaterialBreakdownModalContent({
         <td className={DIVIDER}>
           <input
             type="text"
+            autoComplete="off"
             value={line.unit}
             onChange={(e) =>
               updateLine(owner, line.key, {
@@ -642,6 +706,7 @@ export function MaterialBreakdownModalContent({
           <input
             type="number"
             min={0}
+            autoComplete="off"
             value={line.unitCost}
             onChange={(e) =>
               updateLine(owner, line.key, {
@@ -715,7 +780,17 @@ export function MaterialBreakdownModalContent({
               const categoryDirect = directByCategory[category.id] ?? EMPTY_DIRECT;
               return (
                 <Fragment key={category.id}>
-                  <tr className={MAIN_TASK_ROW}>
+                  <tr
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(`category-${category.id}`, el);
+                      else rowRefs.current.delete(`category-${category.id}`);
+                    }}
+                    className={`${MAIN_TASK_ROW} duration-500 ${
+                      flashingKey === `category-${category.id}`
+                        ? "bg-amber-50 ring-1 ring-amber-300 ring-inset"
+                        : ""
+                    }`}
+                  >
                     {/* With subtasks, its name spans Quantity/Unit/Unit
                         Cost too — its Amount is just their subtotal. */}
                     <td
@@ -741,6 +816,7 @@ export function MaterialBreakdownModalContent({
                           <input
                             type="number"
                             min={0}
+                            autoComplete="off"
                             value={categoryDirect.quantity}
                             onChange={(e) =>
                               updateCategoryDirect(category.id, {
@@ -754,6 +830,7 @@ export function MaterialBreakdownModalContent({
                         <td className={DIVIDER}>
                           <input
                             type="text"
+                            autoComplete="off"
                             value={categoryDirect.unit}
                             onChange={(e) =>
                               updateCategoryDirect(category.id, {
@@ -768,6 +845,7 @@ export function MaterialBreakdownModalContent({
                           <input
                             type="number"
                             min={0}
+                            autoComplete="off"
                             value={categoryDirect.unitCost}
                             onChange={(e) =>
                               updateCategoryDirect(category.id, {
@@ -824,11 +902,18 @@ export function MaterialBreakdownModalContent({
                       <Fragment key={task.id}>
                         <tr
                           ref={(el) => {
-                            if (el) taskRowRefs.current.set(task.id, el);
-                            else taskRowRefs.current.delete(task.id);
+                            if (el) {
+                              taskRowRefs.current.set(task.id, el);
+                              rowRefs.current.set(`task-${task.id}`, el);
+                            } else {
+                              taskRowRefs.current.delete(task.id);
+                              rowRefs.current.delete(`task-${task.id}`);
+                            }
                           }}
-                          className={`${GROUP_ROW} duration-1000 ${
-                            flashing ? "bg-amber-100" : "bg-white"
+                          className={`${GROUP_ROW} duration-500 ${
+                            flashingKey === `task-${task.id}` || flashing
+                              ? "bg-amber-50 ring-1 ring-amber-300 ring-inset"
+                              : "bg-white"
                           }`}
                         >
                           <td className={TREE_CELL}>
@@ -850,6 +935,7 @@ export function MaterialBreakdownModalContent({
                             <input
                               type="number"
                               min={0}
+                              autoComplete="off"
                               value={direct.quantity}
                               onChange={(e) =>
                                 updateDirect(task.id, { quantity: e.target.value })
@@ -861,6 +947,7 @@ export function MaterialBreakdownModalContent({
                           <td className={DIVIDER}>
                             <input
                               type="text"
+                              autoComplete="off"
                               value={direct.unit}
                               onChange={(e) =>
                                 updateDirect(task.id, { unit: e.target.value })
@@ -873,6 +960,7 @@ export function MaterialBreakdownModalContent({
                             <input
                               type="number"
                               min={0}
+                              autoComplete="off"
                               value={direct.unitCost}
                               onChange={(e) =>
                                 updateDirect(task.id, { unitCost: e.target.value })

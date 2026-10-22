@@ -127,7 +127,7 @@ export function SubtaskForm({
 
   return (
     <div className="flex h-full min-h-full flex-col gap-4">
-      <form id={formId} action={formAction} className="flex flex-col gap-4" noValidate>
+      <form id={formId} action={formAction} className="flex flex-col gap-4" noValidate autoComplete="off">
         <input type="hidden" name="categoryId" value={categoryId} />
 
         {/* Create mode only — an existing task is renamed from the Gantt
@@ -145,6 +145,7 @@ export function SubtaskForm({
               id={`${formId}-taskName`}
               name="taskName"
               required
+              autoComplete="off"
               placeholder="e.g., Concrete Footings"
               className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             />

@@ -2,9 +2,11 @@ import { createClient } from "@/lib/supabase/server";
 import {
   ZERO_COSTS,
   materialKey,
+  otherCostKey,
   unplannedMaterialCost,
   type ProgressAnchor,
   type UnplannedMaterial,
+  type UnplannedOtherCost,
 } from "@/lib/task-progress/calculate";
 import {
   attendanceByEntry,
@@ -44,15 +46,17 @@ async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
 
   const materialsByEntry = new Map<number, Record<string, number>>();
   const unplannedByEntry = new Map<number, UnplannedMaterial[]>();
+  const equipmentCostsByEntry = new Map<number, Record<string, number>>();
+  const unplannedEquipmentByEntry = new Map<number, UnplannedOtherCost[]>();
+  const otherCostsByEntry = new Map<number, Record<string, number>>();
+  const unplannedOtherByEntry = new Map<number, UnplannedOtherCost[]>();
   if (rows.length > 0) {
+    const entryIds = rows.map((row) => row.id);
     // "*" so a DB without 0073's unit_cost yet still loads.
     const { data: materialRows, error: materialsError } = await supabase
       .from("category_progress_material_entries")
       .select("*")
-      .in(
-        "progress_entry_id",
-        rows.map((row) => row.id)
-      );
+      .in("progress_entry_id", entryIds);
 
     if (materialsError) {
       console.error(
@@ -79,22 +83,132 @@ async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
       usage[key] = (usage[key] ?? 0) + (row.quantity_used ?? 0);
       materialsByEntry.set(row.progress_entry_id, usage);
     }
+
+    const { data: otherRows, error: otherError } = await (
+      supabase as unknown as {
+        from: (table: string) => {
+          select: (cols: string) => {
+            in: (
+              col: string,
+              vals: number[]
+            ) => Promise<{
+              data:
+                | {
+                    progress_entry_id: number;
+                    cost_name: string;
+                    amount: number;
+                    unplanned?: boolean | null;
+                  }[]
+                | null;
+              error: { code?: string; message: string } | null;
+            }>;
+          };
+        };
+      }
+    )
+      .from("category_progress_other_cost_entries")
+      .select("*")
+      .in("progress_entry_id", entryIds);
+
+    if (
+      otherError &&
+      otherError.code !== "PGRST205" &&
+      otherError.code !== "42P01"
+    ) {
+      console.error(
+        "[category-progress] other cost entries query failed:",
+        otherError.message
+      );
+    }
+
+    for (const row of otherRows ?? []) {
+      const amount = Number(row.amount) || 0;
+      if (row.unplanned) {
+        const list = unplannedOtherByEntry.get(row.progress_entry_id) ?? [];
+        list.push({ name: row.cost_name, amount });
+        unplannedOtherByEntry.set(row.progress_entry_id, list);
+        continue;
+      }
+      const spend = otherCostsByEntry.get(row.progress_entry_id) ?? {};
+      const key = otherCostKey(row.cost_name);
+      spend[key] = (spend[key] ?? 0) + amount;
+      otherCostsByEntry.set(row.progress_entry_id, spend);
+    }
+
+    const { data: equipmentRows, error: equipmentError } = await (
+      supabase as unknown as {
+        from: (table: string) => {
+          select: (cols: string) => {
+            in: (
+              col: string,
+              vals: number[]
+            ) => Promise<{
+              data:
+                | {
+                    progress_entry_id: number;
+                    cost_name: string;
+                    amount: number;
+                    unplanned?: boolean | null;
+                  }[]
+                | null;
+              error: { code?: string; message: string } | null;
+            }>;
+          };
+        };
+      }
+    )
+      .from("category_progress_equipment_cost_entries")
+      .select("*")
+      .in("progress_entry_id", entryIds);
+
+    if (
+      equipmentError &&
+      equipmentError.code !== "PGRST205" &&
+      equipmentError.code !== "42P01"
+    ) {
+      console.error(
+        "[category-progress] equipment cost entries query failed:",
+        equipmentError.message
+      );
+    }
+
+    for (const row of equipmentRows ?? []) {
+      const amount = Number(row.amount) || 0;
+      if (row.unplanned) {
+        const list = unplannedEquipmentByEntry.get(row.progress_entry_id) ?? [];
+        list.push({ name: row.cost_name, amount });
+        unplannedEquipmentByEntry.set(row.progress_entry_id, list);
+        continue;
+      }
+      const spend = equipmentCostsByEntry.get(row.progress_entry_id) ?? {};
+      const key = otherCostKey(row.cost_name);
+      spend[key] = (spend[key] ?? 0) + amount;
+      equipmentCostsByEntry.set(row.progress_entry_id, spend);
+    }
   }
 
   return rows.map((row) => ({
     ...row,
     materialUsage: materialsByEntry.get(row.id) ?? {},
     unplannedMaterials: unplannedByEntry.get(row.id) ?? [],
+    equipmentCostSpend: equipmentCostsByEntry.get(row.id) ?? {},
+    unplannedEquipmentCosts: unplannedEquipmentByEntry.get(row.id) ?? [],
+    otherCostSpend: otherCostsByEntry.get(row.id) ?? {},
+    unplannedOtherCosts: unplannedOtherByEntry.get(row.id) ?? [],
   }));
 }
 
 function emptyAnchor(): ProgressAnchor & {
   loggedDates: string[];
   cumulativeUnplannedMaterialCost: number;
+  cumulativeEquipmentCostSpend: Record<string, number>;
+  cumulativeOtherCostSpend: Record<string, number>;
 } {
   return {
     cumulativeQuantityCompleted: 0,
     cumulativeMaterialUsage: {},
+    cumulativeEquipmentCostSpend: {},
+    cumulativeOtherCostSpend: {},
     cumulativeCosts: { ...ZERO_COSTS },
     cumulativeUnplannedMaterialCost: 0,
     loggedDates: [],
@@ -109,6 +223,14 @@ function addRow(
   anchor.cumulativeQuantityCompleted += row.quantity_completed ?? 0;
   for (const [key, quantity] of Object.entries(row.materialUsage)) {
     anchor.cumulativeMaterialUsage[key] = (anchor.cumulativeMaterialUsage[key] ?? 0) + quantity;
+  }
+  for (const [key, amount] of Object.entries(row.equipmentCostSpend ?? {})) {
+    anchor.cumulativeEquipmentCostSpend[key] =
+      (anchor.cumulativeEquipmentCostSpend[key] ?? 0) + amount;
+  }
+  for (const [key, amount] of Object.entries(row.otherCostSpend ?? {})) {
+    anchor.cumulativeOtherCostSpend[key] =
+      (anchor.cumulativeOtherCostSpend[key] ?? 0) + amount;
   }
   anchor.cumulativeCosts.labor += costs.labor;
   anchor.cumulativeCosts.material += costs.material;
@@ -184,6 +306,10 @@ export async function listCategoryProgressToday(
         costs: entryCosts(row),
         materialUsage: row.materialUsage,
         unplannedMaterials: row.unplannedMaterials,
+        equipmentCostSpend: row.equipmentCostSpend,
+        unplannedEquipmentCosts: row.unplannedEquipmentCosts,
+        otherCostSpend: row.otherCostSpend,
+        unplannedOtherCosts: row.unplannedOtherCosts,
       };
       todayEntryCategory.set(row.id, row.category_id);
     }
@@ -207,6 +333,10 @@ export async function listCategoryProgressToday(
       costs: entryCosts(row),
       materialUsage: row.materialUsage,
       unplannedMaterials: row.unplannedMaterials,
+      equipmentCostSpend: row.equipmentCostSpend,
+      unplannedEquipmentCosts: row.unplannedEquipmentCosts,
+      otherCostSpend: row.otherCostSpend,
+      unplannedOtherCosts: row.unplannedOtherCosts,
       entryDate: row.entry_date,
       savedByName: (row.recorded_by && names.get(row.recorded_by)) || null,
     };
