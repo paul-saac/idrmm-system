@@ -247,6 +247,12 @@ export async function listProjectEquipmentTaskMovements(
   });
 }
 
+export type ProgressEquipmentCostItem = {
+  name: string;
+  amount: number;
+  unplanned: boolean;
+};
+
 /** One day's equipment cost as typed in a Daily Progress Update. */
 export type ProgressEquipmentCost = {
   id: string;
@@ -260,6 +266,12 @@ export type ProgressEquipmentCost = {
   /** Who saved it — their name, else their email's name part; null when
    * unknown. */
   savedByName: string | null;
+  /** Itemized equipment lines saved in the update (0089). */
+  equipmentItems?: ProgressEquipmentCostItem[];
+  /** Whether this is a standalone "not on the list" (unplanned) record. */
+  isUnplanned?: boolean;
+  /** Specific equipment name if this is a standalone record. */
+  equipmentName?: string;
 };
 
 /** Load all pages so long projects do not silently lose expenses at the API row limit. */
@@ -275,6 +287,42 @@ async function readExpensePages<T>(fetchPage: (from: number, to: number) => Prom
     rows.push(...(data ?? []));
     if (!data || data.length < pageSize) return rows;
   }
+}
+
+async function fetchEquipmentEntries(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tableName: "task_progress_equipment_cost_entries" | "category_progress_equipment_cost_entries",
+  entryIds: number[]
+) {
+  if (entryIds.length === 0) return [];
+  const chunkSize = 200;
+  const allRows: { progress_entry_id: number; cost_name: string; amount: number; unplanned?: boolean }[] = [];
+  for (let i = 0; i < entryIds.length; i += chunkSize) {
+    const chunk = entryIds.slice(i, i + chunkSize);
+    const { data, error } = await (
+      supabase as unknown as {
+        from: (table: string) => {
+          select: (cols: string) => {
+            in: (col: string, vals: number[]) => PromiseLike<{
+              data: { progress_entry_id: number; cost_name: string; amount: number; unplanned?: boolean }[] | null;
+              error: { code?: string; message: string } | null;
+            }>;
+          };
+        };
+      }
+    )
+      .from(tableName)
+      .select("progress_entry_id, cost_name, amount, unplanned")
+      .in("progress_entry_id", chunk);
+
+    if (error && error.code !== "PGRST205" && error.code !== "42P01") {
+      console.error(`[listProgressExpenses] ${tableName} query failed:`, error.message);
+    }
+    if (data) {
+      allRows.push(...data);
+    }
+  }
+  return allRows;
 }
 
 /** Current saved costs in all four categories, shared by Expenses and Equipment.
@@ -311,6 +359,36 @@ export async function listProgressExpenses(
       : Promise.resolve([]),
   ]);
 
+  const taskEntryIds = (taskEntries ?? []).map((row) => row.id);
+  const categoryEntryIds = (categoryEntries ?? []).map((row) => row.id);
+
+  const [taskEquipmentRows, categoryEquipmentRows] = await Promise.all([
+    fetchEquipmentEntries(supabase, "task_progress_equipment_cost_entries", taskEntryIds),
+    fetchEquipmentEntries(supabase, "category_progress_equipment_cost_entries", categoryEntryIds),
+  ]);
+
+  const taskEquipmentMap = new Map<number, ProgressEquipmentCostItem[]>();
+  for (const row of taskEquipmentRows) {
+    const list = taskEquipmentMap.get(row.progress_entry_id) ?? [];
+    list.push({
+      name: row.cost_name,
+      amount: Number(row.amount) || 0,
+      unplanned: Boolean(row.unplanned),
+    });
+    taskEquipmentMap.set(row.progress_entry_id, list);
+  }
+
+  const categoryEquipmentMap = new Map<number, ProgressEquipmentCostItem[]>();
+  for (const row of categoryEquipmentRows) {
+    const list = categoryEquipmentMap.get(row.progress_entry_id) ?? [];
+    list.push({
+      name: row.cost_name,
+      amount: Number(row.amount) || 0,
+      unplanned: Boolean(row.unplanned),
+    });
+    categoryEquipmentMap.set(row.progress_entry_id, list);
+  }
+
   const costs: (ProgressExpense & { createdAt: string; recordedBy: string | null })[] = [];
   for (const purchase of await listMaterialPurchases(projectId)) {
     costs.push({id:`purchase-${purchase.id}`,entryDate:purchase.purchase_date,
@@ -329,6 +407,7 @@ export async function listProgressExpenses(
       itemKey: `task-${row.task_id}`,
       costs: amounts,
       savedByName: null,
+      equipmentItems: taskEquipmentMap.get(row.id),
       createdAt: row.created_at,
       recordedBy: row.recorded_by ?? null,
     });
@@ -343,6 +422,7 @@ export async function listProgressExpenses(
       itemKey: `category-${row.category_id}`,
       costs: amounts,
       savedByName: null,
+      equipmentItems: categoryEquipmentMap.get(row.id),
       createdAt: row.created_at,
       recordedBy: row.recorded_by ?? null,
     });

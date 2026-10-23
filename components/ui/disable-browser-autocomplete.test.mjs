@@ -30,6 +30,7 @@ test("autocomplete observer settles after dynamic inputs and repeated focus", ()
     removeEventListener: (event) => listeners.delete(event),
   };
   class MutationObserver {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
     constructor(callback) { this.callback = callback; observer = this; }
     observe() { this.active = true; }
     disconnect() { this.active = false; }

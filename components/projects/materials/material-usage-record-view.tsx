@@ -77,27 +77,93 @@ export function MaterialUsageRecordView({ entries, records, onViewChange, onOpen
           <ChevronDown className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-zinc-500" />
         </div>
       </div>
-      {shown.length === 0 ? <p className="py-10 text-center text-sm text-zinc-400">{entries.length ? "No usage entries match your filters." : "No materials have been recorded in Today's Log yet."}</p> :
-      <div className="overflow-x-auto"><table className="w-full min-w-[64rem] text-left text-sm">
-        <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500"><tr>
-          <th className="px-5 py-3">Date</th>
-          <th className="px-4 py-3">Material</th><th className="px-4 py-3">Task</th>
-          <th className="px-4 py-3 text-right">Quantity used</th><th className="px-4 py-3 text-right">Planned quantity</th>
-          <th className="px-4 py-3 text-right">Reference unit rate</th><th className="px-5 py-3 text-right">Reference value</th>
-        </tr></thead>
-        <tbody className="divide-y divide-zinc-100">{shown.map((entry) => <tr key={entry.id} tabIndex={0} role="link"
-          onClick={() => onOpenProgressLog(entry.itemKey, entry.entryDate)} onKeyDown={(event) => { if (event.key === "Enter") onOpenProgressLog(entry.itemKey, entry.entryDate); }}
-          className="cursor-pointer transition hover:bg-zinc-50">
-          <td className="whitespace-nowrap px-5 py-3.5 text-zinc-600">{day(entry.entryDate)}</td>
-          <td className="px-4 py-3.5 font-semibold text-zinc-900">{entry.materialName}</td>
-          <td className="px-4 py-3.5 text-zinc-600">{entry.itemName}</td>
-          <td className="whitespace-nowrap px-4 py-3.5 text-right font-semibold tabular-nums">{number(entry.quantity)}{entry.unit ? <span className="font-normal text-zinc-400"> {entry.unit}</span> : null}</td>
-          <td className="whitespace-nowrap px-4 py-3.5 text-right tabular-nums">{entry.plannedQuantity > 0 ? <>{number(entry.plannedQuantity)}{entry.unit ? <span className="text-zinc-400"> {entry.unit}</span> : null}</> : "—"}</td>
-          <td className="px-4 py-3.5 text-right tabular-nums">{entry.rate > 0 ? peso(entry.rate) : "—"}</td>
-          <td className="px-5 py-3.5 text-right font-semibold tabular-nums">{entry.value > 0 ? peso(entry.value) : "—"}</td>
-        </tr>)}</tbody>
-        <tfoot className="border-t border-zinc-200 bg-zinc-50 text-sm"><tr><td colSpan={6} className="px-5 py-3 font-medium text-zinc-600">Showing {shown.length} of {entries.length} entries · Reference values are not purchase expenses</td><td className="px-5 py-3 text-right font-semibold tabular-nums">{peso(totalValue)}</td></tr></tfoot>
-      </table></div>}
+      {shown.length === 0 ? (
+        <p className="py-10 text-center text-sm text-zinc-400">
+          {entries.length
+            ? "No usage entries match your filters."
+            : "No materials have been recorded in Today's Log yet."}
+        </p>
+      ) : (
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[64rem] text-left text-sm">
+              <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
+                <tr>
+                  <th className="px-5 py-3">Date</th>
+                  <th className="px-4 py-3">Material</th>
+                  <th className="px-4 py-3">Task</th>
+                  <th className="px-4 py-3 text-right">Quantity used</th>
+                  <th className="px-4 py-3 text-right">Planned quantity</th>
+                  <th className="px-4 py-3 text-right">Reference unit rate</th>
+                  <th className="px-5 py-3 text-right">Reference value</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {shown.map((entry) => (
+                  <tr
+                    key={entry.id}
+                    tabIndex={0}
+                    role="link"
+                    onClick={() => onOpenProgressLog(entry.itemKey, entry.entryDate)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") onOpenProgressLog(entry.itemKey, entry.entryDate);
+                    }}
+                    className="cursor-pointer transition hover:bg-zinc-50"
+                  >
+                    <td className="whitespace-nowrap px-5 py-3.5 text-zinc-600">
+                      {day(entry.entryDate)}
+                    </td>
+                    <td className="px-4 py-3.5 font-semibold text-zinc-900">
+                      {entry.materialName}
+                    </td>
+                    <td className="px-4 py-3.5 text-zinc-600">{entry.itemName}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-right font-semibold tabular-nums">
+                      {number(entry.quantity)}
+                      {entry.unit ? (
+                        <span className="font-normal text-zinc-400"> {entry.unit}</span>
+                      ) : null}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-right tabular-nums">
+                      {entry.plannedQuantity > 0 ? (
+                        <>
+                          {number(entry.plannedQuantity)}
+                          {entry.unit ? (
+                            <span className="text-zinc-400"> {entry.unit}</span>
+                          ) : null}
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="px-4 py-3.5 text-right tabular-nums">
+                      {entry.rate > 0 ? peso(entry.rate) : "—"}
+                    </td>
+                    <td className="px-5 py-3.5 text-right font-semibold tabular-nums">
+                      {entry.value > 0 ? peso(entry.value) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-5 py-3 text-xs text-zinc-500">
+            <div>
+              Showing <span className="font-semibold text-zinc-700">{shown.length}</span> of{" "}
+              <span className="font-semibold text-zinc-700">{entries.length}</span>{" "}
+              {entries.length === 1 ? "entry" : "entries"}
+              <span className="text-zinc-400"> · Reference values are not purchase expenses</span>
+            </div>
+            {totalValue > 0 && (
+              <div>
+                Total:{" "}
+                <span className="font-semibold text-zinc-900 tabular-nums">
+                  {peso(totalValue)}
+                </span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   </div>;
 }

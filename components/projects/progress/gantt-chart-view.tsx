@@ -28,6 +28,7 @@ import { EquipmentTrackingPanel } from "@/components/projects/equipment/equipmen
 import { loadEquipmentTracking } from "@/lib/equipment/tracking-actions";
 import type { EquipmentTracking } from "@/lib/equipment/tracking-types";
 import { ProgressTrackingModal, type ProgressModalTarget } from "@/components/projects/progress/progress-tracking-modal";
+import type { MaterialStockItem } from "@/lib/materials/purchases-model";
 import {
   ProjectCalendarView,
   type CalendarItem,
@@ -653,6 +654,7 @@ export function GanttChartView({
   onOpenMaterialBreakdown,
   onImportBom,
   onNavigateToCostEstimate,
+  materialStocks,
 }: {
   projectId: number;
   /** Each task's own percentComplete (see CostTask's own doc comment)
@@ -731,6 +733,7 @@ export function GanttChartView({
    * entry point into the identical flow, not a separate one. */
   onImportBom: () => void;
   onNavigateToCostEstimate?: (target: CostNavigateDestination) => void;
+  materialStocks?: MaterialStockItem[];
 }) {
   const router = useRouter();
   // Month is the default — unlike Week, its column labels are plain
@@ -4443,6 +4446,7 @@ export function GanttChartView({
       <ProgressTrackingModal
         target={progressModal}
         projectId={projectId}
+        materialStocks={materialStocks}
         categories={categoriesForDisplay}
         workingDays={workingDays}
         holidays={holidays}

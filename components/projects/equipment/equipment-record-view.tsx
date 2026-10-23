@@ -160,6 +160,7 @@ export function EquipmentRecordView({
   currentUserName: string;
 }) {
   const [costQuery, setCostQuery] = useState("");
+  const [costKind, setCostKind] = useState<"all" | "planned" | "not_on_list">("all");
   const [assignedQuery, setAssignedQuery] = useState("");
   const [assignedStatus, setAssignedStatus] = useState<"on_site" | "returned" | "all">("all");
   const [monitoringQuery, setMonitoringQuery] = useState("");
@@ -178,13 +179,19 @@ export function EquipmentRecordView({
 
   const costLogsShown = useMemo(() => {
     const q = costQuery.trim().toLowerCase();
-    return costLogs.filter(
-      (entry) =>
+    return costLogs.filter((entry) => {
+      if (costKind === "planned" && entry.isUnplanned) return false;
+      if (costKind === "not_on_list" && !entry.isUnplanned) return false;
+      return (
         !q ||
         entry.itemName.toLowerCase().includes(q) ||
-        entry.savedByName?.toLowerCase().includes(q)
-    );
-  }, [costLogs, costQuery]);
+        (entry.equipmentName && entry.equipmentName.toLowerCase().includes(q)) ||
+        (entry.isUnplanned && ("unplanned".includes(q) || "not on the list".includes(q))) ||
+        entry.savedByName?.toLowerCase().includes(q) ||
+        entry.equipmentItems?.some((item) => item.name.toLowerCase().includes(q))
+      );
+    });
+  }, [costLogs, costQuery, costKind]);
 
   const assignedShown = useMemo(() => {
     const q = assignedQuery.trim().toLowerCase();
@@ -246,7 +253,9 @@ export function EquipmentRecordView({
           <h2 className="text-base font-semibold text-zinc-900">Equipment record</h2>
           {view === "cost" ? (
             <span className="text-xs text-zinc-400">
-              {costLogs.length} {costLogs.length === 1 ? "override log" : "override logs"}
+              {costLogs.length} {costLogs.length === 1 ? "cost log" : "cost logs"}
+              {costLogs.filter((e) => e.isUnplanned).length > 0 &&
+                ` · ${costLogs.filter((e) => e.isUnplanned).length} unplanned`}
             </span>
           ) : view === "assigned" ? (
             <span className="text-xs text-zinc-400">
@@ -279,12 +288,30 @@ export function EquipmentRecordView({
         <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 px-4 py-3">
           <ViewMenu views={RECORD_VIEWS} value={view} onChange={switchView} />
           {view === "cost" ? (
-            <SearchBox
-              value={costQuery}
-              onChange={setCostQuery}
-              placeholder="Search task, phase, or saved by..."
-              label="Search equipment cost logs"
-            />
+            <>
+              <SearchBox
+                value={costQuery}
+                onChange={setCostQuery}
+                placeholder="Search task, equipment, or saved by..."
+                label="Search equipment cost logs"
+              />
+              <div className="relative">
+                <select
+                  aria-label="Filter equipment cost type"
+                  value={costKind}
+                  onChange={(e) => setCostKind(e.target.value as "all" | "planned" | "not_on_list")}
+                  className={SELECT}
+                >
+                  <option value="all">All equipment costs</option>
+                  <option value="planned">Planned equipment</option>
+                  <option value="not_on_list">Unplanned</option>
+                </select>
+                <ChevronDown
+                  aria-hidden
+                  className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-zinc-500"
+                />
+              </div>
+            </>
           ) : view === "assigned" ? (
             <>
               <SearchBox
@@ -374,7 +401,8 @@ export function EquipmentRecordView({
               <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
                 <tr>
                   <th className="px-5 py-3">Date</th>
-                  <th className="px-4 py-3">Task / Phase</th>
+                  <th className="px-4 py-3">Task</th>
+                  <th className="px-4 py-3">Equipment cost name</th>
                   <th className="px-4 py-3 text-right">Equipment cost</th>
                   <th className="px-4 py-3">Saved by</th>
                   <th className="w-14 py-3 pr-5">
@@ -400,24 +428,38 @@ export function EquipmentRecordView({
                       aria-label={`Open the ${formatDay(entry.entryDate)} progress override for ${entry.itemName}`}
                       className="cursor-pointer transition-colors hover:bg-zinc-50 focus-visible:bg-zinc-50 focus-visible:outline-none"
                     >
-                      <td className="px-5 py-3.5 font-medium whitespace-nowrap text-zinc-900 tabular-nums">
+                      <td className="px-5 py-3.5 align-top font-medium whitespace-nowrap text-zinc-900 tabular-nums">
                         {formatDay(entry.entryDate)}
                       </td>
-                      <td className="max-w-112 px-4 py-3.5">
+                      <td className="max-w-72 px-4 py-3.5 align-top">
                         <p className="truncate font-semibold text-zinc-900" title={entry.itemName}>
                           {entry.itemName || "Untitled task"}
                         </p>
-                        <p className="mt-0.5 text-xs text-zinc-400">Progress Tracking Override</p>
                       </td>
-                      <td className="px-4 py-3.5 text-right font-semibold whitespace-nowrap text-zinc-900 tabular-nums">
+                      <td className="max-w-80 px-4 py-3.5 align-top">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span
+                            className="font-medium text-zinc-900"
+                            title={entry.equipmentName ?? undefined}
+                          >
+                            {entry.equipmentName ?? <Dash />}
+                          </span>
+                          {entry.isUnplanned && (
+                            <span className="shrink-0 rounded bg-orange-50 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700">
+                              Unplanned
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5 align-top text-right font-semibold whitespace-nowrap text-zinc-900 tabular-nums">
                         {formatPeso(entry.amount)}
                       </td>
-                      <td className="max-w-56 px-4 py-3.5">
+                      <td className="max-w-56 px-4 py-3.5 align-top">
                         <span className="block truncate text-zinc-600" title={entry.savedByName ?? undefined}>
                           {entry.savedByName ?? <Dash />}
                         </span>
                       </td>
-                      <td className="py-3.5 pr-5">
+                      <td className="py-3.5 pr-5 align-top">
                         <span className="ml-auto flex size-7 items-center justify-center rounded text-zinc-400 transition">
                           <ChevronRight aria-hidden className="size-4" />
                         </span>

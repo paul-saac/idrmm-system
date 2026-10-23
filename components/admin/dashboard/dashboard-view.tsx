@@ -2,7 +2,6 @@ import { FolderKanban, CheckCircle2, PackageSearch, Wrench } from "lucide-react"
 import { AdminPageHeader } from "@/components/admin/page-header";
 import { StatCard } from "@/components/admin/dashboard/stat-card";
 import { ActiveProjectsCard } from "@/components/admin/dashboard/active-projects-card";
-import { NotificationsCard } from "@/components/admin/dashboard/notifications-card";
 import { PendingApprovalsCard } from "@/components/admin/dashboard/pending-approvals-card";
 import { RecentActivityCard } from "@/components/admin/dashboard/recent-activity-card";
 import { ResourcesCard } from "@/components/admin/dashboard/resources-card";
@@ -49,7 +48,6 @@ export async function DashboardView({ basePath }: { basePath: PortalBasePath }) 
             <RecentActivityCard basePath={basePath} items={data.recentActivity} />
           </div>
           <div className="flex flex-col gap-4">
-            <NotificationsCard />
             <PendingApprovalsCard
               basePath={basePath}
               items={data.pendingRequests}

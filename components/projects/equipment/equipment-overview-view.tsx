@@ -73,9 +73,17 @@ function StatCard({
 
 /** A panel card's top — its title (and anything beside it), and
  * whatever sits on the right. */
-function CardHeader({ title, aside }: { title: ReactNode; aside?: ReactNode }) {
+function CardHeader({
+  title,
+  aside,
+  className = "px-5 pt-5",
+}: {
+  title: ReactNode;
+  aside?: ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="flex items-center justify-between gap-3 px-5 pt-5">
+    <div className={`flex items-center justify-between gap-3 ${className}`}>
       <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-900">
         {title}
       </h3>
@@ -168,8 +176,13 @@ function RecentActivity({ entries }: { entries: ProgressEquipmentCost[] }) {
     // of setting its own (contain-size), and scrolls within it.
     <section className="flex min-w-0 flex-col bg-white lg:contain-size">
       <CardHeader
-        title="Recent activity"
-        aside={<History aria-hidden className="size-4 shrink-0 text-zinc-400" />}
+        className="border-b border-zinc-200 px-5 pt-5 pb-4"
+        title={
+          <>
+            <History aria-hidden className="size-4 shrink-0 text-zinc-400" />
+            <span>Recent activity</span>
+          </>
+        }
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -202,17 +215,36 @@ function RecentActivity({ entries }: { entries: ProgressEquipmentCost[] }) {
                         <Wrench className="size-3.5" />
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="flex min-h-7 items-center text-sm font-semibold text-zinc-900">
-                          Equipment cost logged
+                        <p className="flex min-h-7 items-center gap-2 text-sm font-semibold text-zinc-900">
+                          <span>Equipment cost logged</span>
+                          {entry.isUnplanned && (
+                            <span className="rounded bg-orange-50 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700">
+                              Unplanned
+                            </span>
+                          )}
                         </p>
                         <div className="mt-2 rounded border border-zinc-200 bg-zinc-50 p-3">
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="text-xs text-zinc-500">Logged on</p>
-                              <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-sm text-zinc-900">
-                                <Layers aria-hidden className="size-3.5 shrink-0 text-zinc-400" />
-                                <span className="truncate">{entry.itemName}</span>
+                              <p className="text-xs text-zinc-500">
+                                {entry.equipmentName ? "Equipment" : "Task"}
                               </p>
+                              <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-sm font-semibold text-zinc-900">
+                                {entry.equipmentName ? (
+                                  <Wrench aria-hidden className="size-3.5 shrink-0 text-zinc-400" />
+                                ) : (
+                                  <Layers aria-hidden className="size-3.5 shrink-0 text-zinc-400" />
+                                )}
+                                <span className="truncate">
+                                  {entry.equipmentName ?? entry.itemName}
+                                </span>
+                              </p>
+                              {entry.equipmentName && (
+                                <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-zinc-500">
+                                  <Layers aria-hidden className="size-3 shrink-0 text-zinc-400" />
+                                  <span className="truncate">Task: {entry.itemName}</span>
+                                </p>
+                              )}
                             </div>
                             <div className="shrink-0 text-right">
                               <p className="text-xs text-zinc-500">Amount</p>

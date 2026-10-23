@@ -9,6 +9,13 @@ export type ProgressExpense = {
   supplier?: string;
   invoiceNumber?: string;
   costs: CostAmounts;
+  equipmentItems?: {
+    name: string;
+    amount: number;
+    unplanned: boolean;
+  }[];
+  isUnplanned?: boolean;
+  equipmentName?: string;
 };
 
 export const EXPENSE_CATEGORIES = ["material", "equipment", "labor", "other"] as const;

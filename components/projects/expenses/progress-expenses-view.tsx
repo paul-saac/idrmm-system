@@ -97,8 +97,35 @@ export function ProgressExpensesView({ entries, planned, onOpenProgressLog }: {
             <table className="w-full min-w-[620px] text-left text-sm">
               <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500"><tr><th className="w-40 px-5 py-3">{category === "material" ? "Purchase date" : "Log date"}</th><th className="px-5 py-3">{category === "material" ? "Material / invoice" : "Task / phase"}</th><th className="px-5 py-3">{category === "material" ? "Supplier" : "Saved by"}</th><th className="px-5 py-3 text-right">Amount</th></tr></thead>
               <tbody className="divide-y divide-zinc-100">{rows.length ? rows.map((entry) => <tr key={entry.id} onClick={category === "material" ? undefined : () => onOpenProgressLog(entry.itemKey, entry.entryDate)} className="cursor-pointer hover:bg-sky-50/60 focus-within:bg-sky-50/60">
-                <td className="px-5 py-4">{category === "material" ? dateLabel(entry.entryDate) : <button type="button" onClick={(event) => { event.stopPropagation(); onOpenProgressLog(entry.itemKey, entry.entryDate); }} aria-label={`View ${labels[category].toLowerCase()} progress log for ${entry.itemName}, ${dateLabel(entry.entryDate)}`} className="cursor-pointer text-sky-700 underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-sky-500">{dateLabel(entry.entryDate)}</button>}</td>
-                <td className="px-5 py-4 font-medium">{entry.itemName}{category === "material" && <div className="text-xs text-zinc-400">{entry.invoiceNumber || "No invoice reference"}</div>}</td><td className="px-5 py-4 text-zinc-500">{(category === "material" ? entry.supplier : entry.savedByName) ?? "—"}</td><td className="px-5 py-4 text-right font-medium tabular-nums">{money(entry.costs[category])}</td>
+                <td className="px-5 py-4 align-top">{category === "material" ? dateLabel(entry.entryDate) : <button type="button" onClick={(event) => { event.stopPropagation(); onOpenProgressLog(entry.itemKey, entry.entryDate); }} aria-label={`View ${labels[category].toLowerCase()} progress log for ${entry.itemName}, ${dateLabel(entry.entryDate)}`} className="cursor-pointer text-sky-700 underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-sky-500">{dateLabel(entry.entryDate)}</button>}</td>
+                <td className="px-5 py-4 align-top font-medium">
+                  {category === "equipment" && entry.equipmentName ? (
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-zinc-900">{entry.equipmentName}</span>
+                        {entry.isUnplanned && (
+                          <span className="shrink-0 rounded bg-orange-50 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700">
+                            Unplanned
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-xs font-normal text-zinc-500">
+                        Task: {entry.itemName}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <span>{entry.itemName}</span>
+                      {category === "material" && (
+                        <div className="text-xs font-normal text-zinc-400">
+                          {entry.invoiceNumber || "No invoice reference"}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </td>
+                <td className="px-5 py-4 align-top text-zinc-500">{(category === "material" ? entry.supplier : entry.savedByName) ?? "—"}</td>
+                <td className="px-5 py-4 align-top text-right font-medium tabular-nums">{money(entry.costs[category])}</td>
               </tr>) : <tr><td colSpan={4} className="px-5 py-10 text-center text-zinc-400">No {labels[category].toLowerCase()} expenses recorded yet.</td></tr>}</tbody>
             </table>
           </div>

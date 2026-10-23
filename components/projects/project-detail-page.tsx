@@ -24,7 +24,13 @@ import {
   listProjectMaterials,
   listProgressMaterialUsage,
   summarizeMaterials,
+  type MaterialsOverviewCounts,
 } from "@/lib/materials/data";
+import { listMaterialPurchases } from "@/lib/materials/purchases";
+import {
+  computeMaterialStocks,
+  summarizeMaterialStocks,
+} from "@/lib/materials/purchases-model";
 import { buildMaterialRecords } from "@/lib/materials/records";
 import { listMaterialRequests } from "@/lib/material-requests/data";
 import { listEquipmentRequests } from "@/lib/equipment-requests/data";
@@ -95,6 +101,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     memberGroups,
     sheetsResult,
     equipmentTrackingResult,
+    materialPurchases,
   ] = await Promise.all([
     getProjectById(projectId),
     listAccountsByRole(["project_manager"]),
@@ -127,7 +134,12 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     listMemberGroups(),
     listSheets(projectId),
     loadEquipmentTracking(projectId),
+    listMaterialPurchases(projectId),
   ]);
+
+  if (!project) {
+    notFound();
+  }
 
   // Every material the project has, each once: planned, used, in stock.
   const materialRecords = buildMaterialRecords(
@@ -148,7 +160,105 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
 
   // Every task's equipment cost — the Equipment tab's: its budget, what's
   // been spent of it from its progress updates, and its cost log.
-  const equipmentCosts = progressExpenses.filter((entry) => entry.costs.equipment > 0)
+  // Any "not on the list" equipment entries are expanded as their own
+  // standalone records alongside planned costs.
+  const resolvedProgressExpenses = progressExpenses.flatMap((entry) => {
+    let items = entry.equipmentItems;
+    if (entry.costs.equipment > 0 && (!items || items.length === 0)) {
+      const matchingLog = overrideHistory[entry.itemKey]?.find(
+        (log) => log.entryDate === entry.entryDate
+      );
+      if (matchingLog && matchingLog.equipmentCosts && matchingLog.equipmentCosts.length > 0) {
+        items = matchingLog.equipmentCosts.map((c) => ({
+          name: c.name,
+          amount: c.amount,
+          unplanned: Boolean(c.unplanned),
+        }));
+      }
+    }
+
+    const unplannedItems = (items ?? []).filter((i) => i.unplanned);
+    const plannedItems = (items ?? []).filter((i) => !i.unplanned);
+
+    if (entry.costs.equipment <= 0) {
+      return [{ ...entry, equipmentItems: items, isUnplanned: false }];
+    }
+
+    if (unplannedItems.length === 0 && plannedItems.length <= 1) {
+      return [
+        {
+          ...entry,
+          equipmentItems: items,
+          isUnplanned: false,
+          equipmentName: plannedItems[0]?.name,
+        },
+      ];
+    }
+
+    const expanded: typeof progressExpenses = [];
+    // 1. Standalone "not on the list" records
+    for (let idx = 0; idx < unplannedItems.length; idx++) {
+      const item = unplannedItems[idx];
+      expanded.push({
+        ...entry,
+        id: `${entry.id}-unplanned-${idx}`,
+        costs: { material: 0, equipment: item.amount, labor: 0, other: 0 },
+        isUnplanned: true,
+        equipmentName: item.name,
+        equipmentItems: [item],
+      });
+    }
+
+    // 2. Planned task equipment records
+    if (plannedItems.length > 1) {
+      for (let idx = 0; idx < plannedItems.length; idx++) {
+        const item = plannedItems[idx];
+        expanded.push({
+          ...entry,
+          id: `${entry.id}-planned-${idx}`,
+          costs: {
+            material: idx === 0 ? entry.costs.material : 0,
+            equipment: item.amount,
+            labor: idx === 0 ? entry.costs.labor : 0,
+            other: idx === 0 ? entry.costs.other : 0,
+          },
+          isUnplanned: false,
+          equipmentName: item.name,
+          equipmentItems: [item],
+        });
+      }
+    } else {
+      const unplannedTotal = unplannedItems.reduce((sum, item) => sum + item.amount, 0);
+      const plannedTotal =
+        plannedItems.length === 1
+          ? plannedItems[0].amount
+          : Math.max(0, entry.costs.equipment - unplannedTotal);
+
+      if (
+        plannedTotal > 0.005 ||
+        entry.costs.labor > 0 ||
+        entry.costs.other > 0 ||
+        entry.costs.material > 0
+      ) {
+        expanded.push({
+          ...entry,
+          id: unplannedItems.length > 0 ? `${entry.id}-planned` : entry.id,
+          costs: {
+            ...entry.costs,
+            equipment: plannedTotal,
+          },
+          isUnplanned: false,
+          equipmentName: plannedItems[0]?.name,
+          equipmentItems: plannedItems,
+        });
+      }
+    }
+
+    return expanded;
+  });
+
+  const equipmentCosts = resolvedProgressExpenses
+    .filter((entry) => entry.costs.equipment > 0)
     .map(({ costs, ...entry }) => ({ ...entry, amount: costs.equipment }));
   const equipmentCostRecords = buildEquipmentCostRecords(costEstimate, equipmentCosts);
 
@@ -196,6 +306,21 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     expenseOverview
   );
 
+  const materialStocks = computeMaterialStocks(materialPurchases, progressMaterialUsage);
+  const stockSummary = summarizeMaterialStocks(materialStocks);
+  const materialsCounts: MaterialsOverviewCounts =
+    materialStocks.length > 0
+      ? {
+          totalMaterials: Math.max(materialRecords.length, stockSummary.totalMaterials),
+          availableMaterials: stockSummary.availableMaterials,
+          lowStockMaterials: stockSummary.lowStockMaterials,
+          consumedMaterials: stockSummary.outOfStockMaterials,
+        }
+      : {
+          ...summarizeMaterials(materials),
+          totalMaterials: materialRecords.length,
+        };
+
   return (
     <ProjectDetailView
       project={project}
@@ -207,18 +332,15 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       dailyLogs={dailyLogs}
       surveyQuestions={surveyQuestions}
       materials={materials}
-      materialsCounts={{
-        ...summarizeMaterials(materials),
-        // Every material the project has, not just its stock records.
-        totalMaterials: materialRecords.length,
-      }}
+      materialsCounts={materialsCounts}
+      materialPurchases={materialPurchases}
       materialRecords={materialRecords}
       recentMaterialUsage={progressMaterialUsage}
       materialRequests={materialRequests}
       fulfillableMaterialRequests={fulfillableMaterialRequests}
       equipmentRequests={equipmentRequests}
       fulfillableEquipmentRequests={fulfillableEquipmentRequests}
-      progressExpenses={progressExpenses}
+      progressExpenses={resolvedProgressExpenses}
       currentUserName={currentUserName}
       projectEquipmentAssignments={projectEquipmentAssignments}
       equipmentTaskMovements={equipmentTaskMovements}

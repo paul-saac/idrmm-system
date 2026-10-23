@@ -19,10 +19,6 @@ const STATUS_FILTERS: { value: EquipmentStatus; label: string }[] = [
   { value: "retired", label: "Retired" },
 ];
 
-// The toolbar's own buttons (the Team page's toolbar style).
-const TOOLBAR_BUTTON =
-  "flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
-
 export function InventoryBrowser({
   equipment,
   projects,
@@ -40,8 +36,7 @@ export function InventoryBrowser({
     { mode: "add" } | { mode: "edit"; equipment: EquipmentRow } | null
   >(null);
   const [assignTarget, setAssignTarget] = useState<EquipmentRow | null>(null);
-  // The company-wide inventory is view-only in the foreman portal.
-  const { isAdmin } = usePortal();
+  const { basePath, isAdmin } = usePortal();
 
   // By name.
   const filtered = useMemo(() => {
@@ -132,7 +127,7 @@ export function InventoryBrowser({
                   type="button"
                   onClick={handleDeleteSelected}
                   disabled={deleting}
-                  className={`${TOOLBAR_BUTTON} text-red-600 hover:border-red-600 hover:bg-red-600 hover:text-white`}
+                  className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-3 py-1.5 text-sm font-semibold text-red-600 transition hover:border-red-600 hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Trash2 className="size-4" />
                   Delete
@@ -142,7 +137,7 @@ export function InventoryBrowser({
             <button
               type="button"
               onClick={() => setFormModal({ mode: "add" })}
-              className={`${TOOLBAR_BUTTON} text-zinc-900 duration-150 hover:-translate-y-0.5 hover:border-zinc-900 hover:bg-zinc-900 hover:text-white active:translate-y-0`}
+              className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
             >
               <Plus className="size-4" />
               Add Equipment
@@ -158,9 +153,9 @@ export function InventoryBrowser({
       )}
 
       {filtered.length === 0 ? (
-        <p className="rounded-lg border border-zinc-200 bg-white py-10 text-center text-sm text-zinc-400">
+        <div className="rounded-lg border border-zinc-200 bg-white py-12 text-center text-sm text-zinc-400">
           {equipment.length === 0 ? "No equipment recorded yet." : "No equipment matches."}
-        </p>
+        </div>
       ) : (
         <EquipmentTable
           equipment={filtered}
@@ -168,6 +163,7 @@ export function InventoryBrowser({
           onCheck={setChecked}
           onEdit={(item) => setFormModal({ mode: "edit", equipment: item })}
           onAssign={(item) => setAssignTarget(item)}
+          basePath={basePath}
           readOnly={!isAdmin}
         />
       )}

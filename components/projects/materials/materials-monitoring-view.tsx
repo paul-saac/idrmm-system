@@ -49,7 +49,7 @@ const STATUS: Record<MaterialRecordStatus, { label: string; style: string }> = {
   in_use: { label: "In use", style: "bg-sky-50 text-sky-700" },
   not_used: { label: "Not used yet", style: "bg-zinc-100 text-zinc-600" },
   fully_used: { label: "Fully used", style: "bg-emerald-50 text-emerald-700" },
-  not_on_list: { label: "Not on the list", style: "bg-orange-50 text-orange-700" },
+  not_on_list: { label: "Unplanned", style: "bg-orange-50 text-orange-700" },
   stock_only: { label: "Stock only", style: "bg-violet-50 text-violet-700" },
 };
 
@@ -309,7 +309,7 @@ export function MaterialsMonitoringView({
               {overPlan > 0 && (
                 <span className="font-medium text-red-600"> · {overPlan} over plan</span>
               )}
-              {notOnList > 0 && ` · ${notOnList} not on the list`}
+              {notOnList > 0 && ` · ${notOnList} unplanned`}
             </span>
           ) : (
             <span className="text-xs text-zinc-400">
@@ -619,7 +619,7 @@ export function MaterialsMonitoringView({
                                             </span>
                                             {item.planned <= 0 && item.used > 0 && (
                                               <span className="shrink-0 rounded-sm bg-orange-50 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700">
-                                                Not on the list
+                                                Unplanned
                                               </span>
                                             )}
                                           </span>

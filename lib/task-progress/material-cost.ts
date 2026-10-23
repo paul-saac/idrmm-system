@@ -24,10 +24,10 @@ export function readUnplannedMaterials(
     const quantity = Number(material?.quantity);
     const unitCost = Number(material?.unitCost);
     if (!Number.isFinite(quantity) || quantity < 0 || !Number.isFinite(unitCost) || unitCost < 0) {
-      return { error: "A material not on the list needs a quantity and unit cost of 0 or more." };
+      return { error: "An unplanned material needs a quantity and unit cost of 0 or more." };
     }
     if (quantity === 0) continue;
-    if (!name) return { error: "Name each material used that isn't on the list." };
+    if (!name) return { error: "Name each unplanned material used." };
     const unit = typeof material.unit === "string" ? material.unit.trim() : "";
     result.push({ name, unit: unit || null, quantity, unitCost });
   }

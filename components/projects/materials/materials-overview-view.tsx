@@ -64,9 +64,17 @@ function MaterialStatCard({
 
 /** A panel card's top — its title (and anything beside it), and
  * whatever sits on the right. */
-function CardHeader({ title, aside }: { title: ReactNode; aside?: ReactNode }) {
+function CardHeader({
+  title,
+  aside,
+  className = "px-5 pt-5",
+}: {
+  title: ReactNode;
+  aside?: ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="flex items-center justify-between gap-3 px-5 pt-5">
+    <div className={`flex items-center justify-between gap-3 ${className}`}>
       <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-zinc-900">
         {title}
       </h3>
@@ -159,8 +167,13 @@ function RecentActivity({ entries }: { entries: ProgressMaterialUsage[] }) {
     // of setting its own (contain-size), and scrolls within it.
     <section className="flex min-w-0 flex-col bg-white lg:contain-size">
       <CardHeader
-        title="Recent activity"
-        aside={<History aria-hidden className="size-4 shrink-0 text-zinc-400" />}
+        className="border-b border-zinc-200 px-5 pt-5 pb-4"
+        title={
+          <>
+            <History aria-hidden className="size-4 shrink-0 text-zinc-400" />
+            <span>Recent activity</span>
+          </>
+        }
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -198,7 +211,7 @@ function RecentActivity({ entries }: { entries: ProgressMaterialUsage[] }) {
                           Material used
                           {entry.unitCost !== null && (
                             <span className="rounded-sm bg-orange-50 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700">
-                              Not on the list
+                              Unplanned
                             </span>
                           )}
                         </p>

@@ -1,6 +1,8 @@
 import type { UserRole } from "@/lib/auth/roles";
 import type { MaterialPurchase } from "@/lib/materials/purchases-model";
 import type { CloseoutRecord } from "@/lib/reports/closeout-model";
+import type { PunchItem } from "@/lib/reports/punch-list-model";
+import type { QualityInspection } from "@/lib/reports/quality-inspection-model";
 import type { Sheet, SheetReview } from "@/lib/sheets/model";
 
 export type ProjectStatus = "planning" | "ongoing" | "completed";
@@ -54,6 +56,27 @@ export interface Database {
         Row: CloseoutRecord;
         Insert: Pick<CloseoutRecord, "project_id"> & Partial<Omit<CloseoutRecord, "project_id">>;
         Update: Partial<Omit<CloseoutRecord, "project_id">>;
+        Relationships: [];
+      };
+      project_punch_items: {
+        Row: Omit<PunchItem, "assigned_to_name" | "identified_by_name" | "verified_by_name">;
+        Insert: Omit<PunchItem, "id" | "assigned_to_name" | "identified_by_name" | "verified_by_name" | "verified_by" | "verified_at" | "resolved_at" | "created_at" | "updated_at"> & {
+          verified_by?: string | null;
+          verified_at?: string | null;
+          resolved_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Omit<PunchItem, "id" | "project_id" | "assigned_to_name" | "identified_by_name" | "verified_by_name" | "identified_by" | "created_at">>;
+        Relationships: [];
+      };
+      project_quality_inspections: {
+        Row: Omit<QualityInspection, "recorded_by_name">;
+        Insert: Omit<QualityInspection, "id" | "recorded_by_name" | "created_at" | "updated_at"> & {
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Omit<QualityInspection, "id" | "project_id" | "recorded_by" | "recorded_by_name" | "created_at">>;
         Relationships: [];
       };
       profiles: {

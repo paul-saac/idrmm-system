@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronRight,
   ClipboardCheck,
   ClipboardList,
   HistoryIcon,
@@ -19,21 +20,27 @@ import {
 import { ModalFooter, ModalHeaderAddon } from "@/components/ui/modal";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { InitialsAvatar } from "@/components/ui/list-table";
+import { MaterialStockPickerModal } from "@/components/projects/materials/material-stock-picker-modal";
+import { WorkerPickerModal } from "./worker-picker-modal";
+import { loadMaterialPurchases } from "@/lib/materials/purchase-actions";
+import {
+  computeMaterialStocks,
+  type MaterialStockItem,
+} from "@/lib/materials/purchases-model";
 import type { LatestOverride, TaskProgressToday } from "@/lib/task-progress/data";
 import type { OverrideLog } from "@/lib/progress-logs/types";
-import { UNIT_OPTIONS } from "@/lib/cost-estimate/units";
 import type { Worker } from "@/lib/workers/data";
 import { formatHours, weekdayIndex } from "@/lib/workers/schedule";
 import {
   COST_COMPONENTS,
   computeProgressBreakdown,
-  computeTodayPlan,
   itemizedMaterialCost,
   itemizedOtherCost,
   materialKey,
   otherCostKey,
   toIsoDate,
   unplannedMaterialCost,
+  ZERO_COSTS,
   type CostAmounts,
   type CostComponent,
   type PlannedMaterial,
@@ -58,21 +65,19 @@ const SCHEDULE_STATUS_STYLE: Record<ScheduleStatus, string> = {
   behind: "bg-red-50 text-red-600",
 };
 
-// Materials used today's Material | Quantity used | Cost — shared by its
-// header and each row.
 const MATERIAL_COLUMNS = "grid grid-cols-[minmax(0,1fr)_8rem] items-center gap-3 px-4";
 
 // A material not on the task's own lines: what it is, its unit, how
 // much, at what unit cost, what that comes to, and its remove button.
 const UNPLANNED_COLUMNS =
-  "grid grid-cols-[minmax(0,1fr)_5rem_6.5rem_1.75rem] items-center gap-2 px-4";
+  "grid grid-cols-[minmax(0,1fr)_5rem_6.5rem_2.25rem] items-center gap-2 px-4";
 
 const OTHER_COST_COLUMNS = "grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 px-4";
 const UNPLANNED_OTHER_COLUMNS =
-  "grid grid-cols-[minmax(0,1fr)_9rem_1.75rem] items-center gap-2 px-4";
+  "grid grid-cols-[minmax(0,1fr)_9rem_2.25rem] items-center gap-2 px-4";
 
 const CELL_INPUT =
-  "w-full min-w-0 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
+  "h-[34px] w-full min-w-0 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
 
 /** One typed row of a material used that isn't on the task's own lines. */
 type UnplannedRow = { id: number; name: string; unit: string; quantity: string; unitCost: string };
@@ -149,7 +154,7 @@ function AmountInput({
   compact?: boolean;
 }) {
   return (
-    <div className="flex items-center rounded-md border border-zinc-200 bg-white transition focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200">
+    <div className={`flex items-center rounded-md border border-zinc-200 bg-white transition focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200 ${compact ? "h-[34px]" : ""}`}>
       {prefix && <span className="shrink-0 pl-3 text-sm text-zinc-400">{prefix}</span>}
       <input
         id={id}
@@ -192,9 +197,8 @@ function paidHourly(worker: Worker) {
 const LABOR_COLUMNS = "grid grid-cols-[minmax(0,1fr)_6rem_7rem_7rem] items-center gap-3 px-4";
 
 /** "Labor today": whoever's assigned to the task (and anyone added who
- * helped), each with the hours they worked — starting from today's hours
- * in their own Working Days — at their own Default Rate. The day's labor
- * cost is their total; the server prices it the same way on save. */
+ * helped), each with the actual hours entered at their Default Rate. The
+ * day's labor cost is their total; the server prices it the same way on save. */
 function LaborToday({
   rows,
   team,
@@ -219,6 +223,7 @@ function LaborToday({
   subcontractorsAssigned: boolean;
 }) {
   const today = weekdayIndex();
+  const [pickerOpen, setPickerOpen] = useState(false);
   const listed = new Set(rows.map((row) => row.worker.id));
   const addable = team.filter((worker) => !listed.has(worker.id));
   const missingRate = rows.some(
@@ -320,34 +325,30 @@ function LaborToday({
 
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         {addable.length > 0 ? (
-          <div className="relative w-fit">
-            {/* Picking someone adds them as a helper, at today's hours. */}
-            <Plus
-              aria-hidden
-              className="pointer-events-none absolute top-1/2 left-1.5 size-4 -translate-y-1/2 text-zinc-700"
-            />
-            <select
-              value=""
-              onChange={(e) => onAdd(Number(e.target.value))}
-              aria-label="Add someone who helped"
-              className="cursor-pointer appearance-none rounded bg-transparent py-1 pr-7 pl-7 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-100 hover:text-zinc-900"
-            >
-              <option value="" disabled>
-                Add someone who helped
-              </option>
-              {addable.map((worker) => (
-                <option key={worker.id} value={worker.id}>
-                  {worker.title ? `${worker.fullName} — ${worker.title}` : worker.fullName}
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute top-1/2 right-1.5 size-4 -translate-y-1/2 text-zinc-400" />
-          </div>
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            aria-label="Add someone who helped"
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded py-1 px-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
+          >
+            <Plus aria-hidden className="size-4 text-zinc-700" />
+            <span>Add someone who helped</span>
+          </button>
         ) : (
           <span />
         )}
         {laborDetail && <span className="text-xs text-zinc-500 tabular-nums">{laborDetail}</span>}
       </div>
+
+      <WorkerPickerModal
+        open={pickerOpen}
+        workers={addable}
+        onSelect={(worker) => {
+          onAdd(worker.id);
+          setPickerOpen(false);
+        }}
+        onClose={() => setPickerOpen(false)}
+      />
 
       {missingRate && (
         <p className="text-xs text-amber-600">
@@ -526,7 +527,7 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
         return material.unitCost === null || material.unitCost === undefined
           ? [material.name, amount]
           : [
-              `${material.name} (not on the list)`,
+              `${material.name} (unplanned)`,
               `${amount} · ${formatPeso(material.quantity * material.unitCost)}`,
             ];
       }),
@@ -537,7 +538,7 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
             title: "Equipment costs",
             empty: "",
             rows: (log.equipmentCosts ?? []).map((item): [string, string] => [
-              item.unplanned ? `${item.name} (not on the list)` : item.name,
+              item.unplanned ? `${item.name} (unplanned)` : item.name,
               formatPeso(item.amount),
             ]),
           },
@@ -549,7 +550,7 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
             title: "Other costs",
             empty: "",
             rows: (log.otherCosts ?? []).map((item): [string, string] => [
-              item.unplanned ? `${item.name} (not on the list)` : item.name,
+              item.unplanned ? `${item.name} (unplanned)` : item.name,
               formatPeso(item.amount),
             ]),
           },
@@ -582,6 +583,45 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
         <span>Total cost</span>
         <span className="tabular-nums">{formatPeso(total)}</span>
       </div>
+    </div>
+  );
+}
+
+type BreakdownSection = {
+  title: string;
+  empty: string;
+  rows: [string, string][];
+};
+
+/** Expandable breakdown inside the Planned and Actual summary containers. */
+function StandingBreakdownDetails({
+  sections,
+}: {
+  sections: BreakdownSection[];
+}) {
+  return (
+    <div className="flex flex-col gap-3 text-xs">
+      {sections.map((section) => (
+        <div key={section.title} className="flex flex-col gap-1">
+          <p className="font-medium text-zinc-700">{section.title}</p>
+          <div className="ml-1 border-l border-zinc-300 pl-2.5 py-0.5">
+            {section.rows.length === 0 ? (
+              <p className="text-zinc-400">{section.empty}</p>
+            ) : (
+              <ul className="flex flex-col gap-1">
+                {section.rows.map(([label, value], index) => (
+                  <li key={index} className="flex justify-between gap-3">
+                    <span className="min-w-0 truncate text-zinc-600" title={label}>
+                      {label}
+                    </span>
+                    <span className="shrink-0 text-zinc-900 tabular-nums">{value}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -912,6 +952,8 @@ export function ProgressTrackingModalContent({
   highlightLatest = false,
   highlightEntryDate,
   overrideHistory,
+  projectId,
+  materialStocks,
   onSave,
   onDeleteOverride,
   loadOverrideHistory,
@@ -948,6 +990,8 @@ export function ProgressTrackingModalContent({
   highlightEntryDate?: string;
   /** Preloaded project data, so the Log history is visible on first paint. */
   overrideHistory: OverrideLog[];
+  projectId?: number;
+  materialStocks?: readonly MaterialStockItem[];
   onSave: (input: {
     quantityCompletedToday: number;
     costs: CostAmounts;
@@ -968,6 +1012,48 @@ export function ProgressTrackingModalContent({
 }) {
   const router = useRouter();
   const savedToday = progressToday.today;
+
+  const [stockModalRowId, setStockModalRowId] = useState<number | null>(null);
+  const [fetchedStocks, setFetchedStocks] = useState<MaterialStockItem[] | null>(null);
+
+  useEffect(() => {
+    if (materialStocks && materialStocks.length > 0) return;
+    if (!projectId) return;
+    let cancelled = false;
+    loadMaterialPurchases(projectId)
+      .then((purchases) => {
+        if (cancelled) return;
+        setFetchedStocks(computeMaterialStocks(purchases, []));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [materialStocks, projectId]);
+
+  const effectiveMaterialStocks = useMemo(() => {
+    if (materialStocks && materialStocks.length > 0) return materialStocks;
+    return fetchedStocks ?? [];
+  }, [materialStocks, fetchedStocks]);
+
+  const assignedMaterialNames = useMemo(() => {
+    return new Set(plannedMaterials.map((m) => m.name.trim().toLowerCase()));
+  }, [plannedMaterials]);
+
+  const assignedMaterialKeys = useMemo(() => {
+    return new Set(plannedMaterials.map((m) => materialKey(m.name, m.unit)));
+  }, [plannedMaterials]);
+
+  // Exclude materials already assigned to this task from the unplanned stock picker
+  const unassignedStocks = useMemo(() => {
+    return effectiveMaterialStocks.filter((stock) => {
+      const name = stock.name.trim().toLowerCase();
+      if (assignedMaterialNames.has(name)) return false;
+      const key = materialKey(stock.name, stock.unit);
+      if (assignedMaterialKeys.has(key)) return false;
+      return true;
+    });
+  }, [effectiveMaterialStocks, assignedMaterialNames, assignedMaterialKeys]);
 
   // An override's Delete — the day it's for while its confirmation is
   // open; then the window closes like Save does, so it reopens from
@@ -1012,32 +1098,6 @@ export function ProgressTrackingModalContent({
   }, []);
   const schedule = { plannedStartDate, plannedEndDate, workingDays, holidays };
 
-  // Today's automatic values — already counted from 12:00 AM while
-  // nothing's saved for today, never past what's left of the plan
-  // (computeTodayPlan) — so an unsaved day's inputs start from them;
-  // saving records what's here instead. Only used while today isn't saved,
-  // so the saved totals here are every day's but today's.
-  const [dailyPlan] = useState(() =>
-    computeTodayPlan({
-      ...schedule,
-      plannedCosts,
-      estimatedQuantity,
-      plannedMaterials,
-      plannedEquipmentCosts,
-      plannedOtherCosts,
-      anchor: {
-        cumulativeQuantityCompleted: progressToday.cumulativeQuantityCompleted,
-        cumulativeMaterialUsage: progressToday.cumulativeMaterialUsage,
-        cumulativeEquipmentCostSpend: progressToday.cumulativeEquipmentCostSpend,
-        cumulativeOtherCostSpend: progressToday.cumulativeOtherCostSpend,
-        cumulativeCosts: progressToday.cumulativeCosts,
-        cumulativeUnplannedMaterialCost: progressToday.cumulativeUnplannedMaterialCost,
-        loggedDates: progressToday.loggedDates,
-      },
-      today: new Date(),
-    })
-  );
-
   // Where the task stands as saved, before anything typed here — every
   // saved log (today's too, once saved), each day without one counting its
   // planned share: the standing the Gantt chart shows. The Actual box reads
@@ -1078,26 +1138,23 @@ export function ProgressTrackingModalContent({
   );
 
   const [quantityInput, setQuantityInput] = useState(() =>
-    toInput(savedToday ? savedToday.quantityCompleted : dailyPlan.quantity)
+    savedToday ? toInput(savedToday.quantityCompleted) : ""
   );
   const [costInputs, setCostInputs] = useState<Record<CostComponent, string>>(() => {
-    const start = savedToday ? savedToday.costs : dailyPlan.costs;
     return {
-      labor: toInput(start.labor),
+      labor: savedToday ? toInput(savedToday.costs.labor) : "",
       // Only typed without Material Breakdown lines.
-      material: toInput(hasItemizedMaterials ? 0 : start.material),
-      equipment: toInput(hasItemizedEquipmentCosts ? 0 : start.equipment),
-      other: toInput(hasItemizedOtherCosts ? 0 : start.other),
+      material: savedToday && !hasItemizedMaterials ? toInput(savedToday.costs.material) : "",
+      equipment: savedToday && !hasItemizedEquipmentCosts ? toInput(savedToday.costs.equipment) : "",
+      other: savedToday && !hasItemizedOtherCosts ? toInput(savedToday.costs.other) : "",
     };
   });
   const [materialInputs, setMaterialInputs] = useState<Record<string, string>>(() => {
     const initial: Record<string, string> = {};
     for (const material of plannedMaterials) {
-      initial[material.key] = toInput(
-        savedToday
-          ? (savedToday.materialUsage[material.key] ?? 0)
-          : (dailyPlan.materials[material.key] ?? 0)
-      );
+      initial[material.key] = savedToday
+        ? toInput(savedToday.materialUsage[material.key] ?? 0)
+        : "";
     }
     return initial;
   });
@@ -1117,7 +1174,7 @@ export function ProgressTrackingModalContent({
           initial[item.key] = toInput(savedToday.costs.equipment * share);
         }
       } else {
-        initial[item.key] = toInput(dailyPlan.equipmentCosts[item.key] ?? 0);
+        initial[item.key] = "";
       }
     }
     return initial;
@@ -1146,7 +1203,7 @@ export function ProgressTrackingModalContent({
           initial[item.key] = toInput(savedToday.costs.other * share);
         }
       } else {
-        initial[item.key] = toInput(dailyPlan.otherCosts[item.key] ?? 0);
+        initial[item.key] = "";
       }
     }
     return initial;
@@ -1173,20 +1230,16 @@ export function ProgressTrackingModalContent({
   );
   const nextUnplannedId = useRef(unplannedRows.length);
 
-  // Labor today: what's saved for today, else the assigned crew (skilled
-  // employees only — see paidHourly) at today's hours in their own
-  // Working Days.
+  // Labor today: only saved attendance is restored. New logs start blank so
+  // scheduled hours are not mistaken for actual hours worked.
   const crewHourly = crew.filter(paidHourly);
   const [hours, setHours] = useState<Record<number, string>>(() => {
-    const today = weekdayIndex();
     const initial: Record<number, string> = {};
     const saved = progressToday.todayAttendance;
-    // A day saved with nobody listed (typed labor) starts like a new day.
-    const fresh = !savedToday || saved.length === 0;
     for (const worker of crewHourly) {
-      initial[worker.id] = fresh ? toInput(worker.workHours[today] ?? 0) : "";
+      initial[worker.id] = "";
     }
-    if (!fresh) {
+    if (savedToday) {
       for (const mark of saved) {
         if (mark.workerId !== null) initial[mark.workerId] = toInput(mark.hours);
       }
@@ -1480,6 +1533,34 @@ export function ProgressTrackingModalContent({
   // planned share), each at its unit cost — and what's gone on materials
   // not on the list, today's included.
 
+  // Check if any override progress has been entered (either saved in history
+  // or entered in today's log inputs).
+  const hasSavedOverride =
+    savedToday !== null ||
+    progressToday.loggedDates.length > 0 ||
+    history.some((log) => log.action === "saved");
+
+  const hasEnteredToday =
+    Boolean(quantityInput.trim() && (parseAmount(quantityInput) ?? 0) > 0) ||
+    COST_COMPONENTS.some(
+      (c) => Boolean(costInputs[c].trim()) && (parseAmount(costInputs[c]) ?? 0) > 0
+    ) ||
+    Object.values(materialInputs).some(
+      (v) => Boolean(v.trim()) && (parseAmount(v) ?? 0) > 0
+    ) ||
+    Object.values(equipmentCostInputs).some(
+      (v) => Boolean(v.trim()) && (parseAmount(v) ?? 0) > 0
+    ) ||
+    Object.values(otherCostInputs).some(
+      (v) => Boolean(v.trim()) && (parseAmount(v) ?? 0) > 0
+    ) ||
+    Object.values(hours).some((v) => (parseHours(v) ?? 0) > 0) ||
+    unplannedRows.some((r) => (parseAmount(r.quantity) ?? 0) > 0) ||
+    unplannedEquipmentRows.some((r) => (parseAmount(r.amount) ?? 0) > 0) ||
+    unplannedOtherRows.some((r) => (parseAmount(r.amount) ?? 0) > 0);
+
+  const hasOverrideProgress = hasSavedOverride || hasEnteredToday;
+
   // The plan so far — through today, the same working days Expected
   // progress counts: each part's planned total × that share, what every
   // day up to and including today should add up to. All of it once the
@@ -1496,21 +1577,270 @@ export function ProgressTrackingModalContent({
     },
   };
 
-  // The Actual box — the task as saved (savedStanding), not what's typed
-  // below; the figures under the inputs follow the typing instead. Its
-  // material priced the way the plan's is: with Material Breakdown lines,
-  // what's been used of them, plus what's gone on materials not on them.
-  const actualToDate = {
-    quantity: savedStanding.quantityToDate,
-    percent: savedStanding.percentComplete,
-    costs: {
-      ...savedStanding.costsToDate,
-      material: hasItemizedMaterials
-        ? itemizedMaterialCost(plannedMaterials, savedStanding.materialUsageToDate) +
-          (progressToday.cumulativeUnplannedMaterialCost ?? 0)
-        : savedStanding.costsToDate.material,
+  // The Actual box — starts at 0 until an override progress has been entered
+  // (saved in history or typed into today's log). Once entered, it fills with
+  // the actual progress standing.
+  const actualStanding = hasEnteredToday && !readOnly ? breakdown : savedStanding;
+  const actualToDate = hasOverrideProgress
+    ? {
+        quantity: actualStanding.quantityToDate,
+        percent: actualStanding.percentComplete,
+        costs: {
+          ...actualStanding.costsToDate,
+          material: hasItemizedMaterials
+            ? itemizedMaterialCost(plannedMaterials, actualStanding.materialUsageToDate) +
+              (progressToday.cumulativeUnplannedMaterialCost ?? 0) +
+              (hasEnteredToday ? unplannedToday : 0)
+            : actualStanding.costsToDate.material,
+        },
+      }
+    : {
+        quantity: 0,
+        percent: 0,
+        costs: ZERO_COSTS,
+      };
+
+  const [plannedOpen, setPlannedOpen] = useState(false);
+  const [actualOpen, setActualOpen] = useState(false);
+
+  // Breakdown sections for the Planned dropdown card.
+  const plannedLaborRows: [string, string][] = [
+    ...crewHourly.map((worker): [string, string] => [
+      worker.title ? `${worker.fullName} · ${worker.title}` : worker.fullName,
+      worker.hourlyRate !== null ? `${formatPeso(worker.hourlyRate)}/hr` : "No rate",
+    ]),
+    ...(plannedCosts.labor > 0
+      ? ([
+          [
+            "Planned labor",
+            `${formatPeso(plannedToDate.costs.labor)} / ${formatPeso(plannedCosts.labor)}`,
+          ],
+        ] as [string, string][])
+      : []),
+  ];
+
+  const plannedMaterialRows: [string, string][] = hasItemizedMaterials
+    ? itemizedMaterials.map((material): [string, string] => {
+        const plannedQty = material.plannedQuantity * plannedShare;
+        const plannedVal = material.plannedValue * plannedShare;
+        const unitLabel = material.unit ? ` ${material.unit}` : "";
+        return [
+          material.name,
+          `${formatQuantity(plannedQty)} / ${formatQuantity(material.plannedQuantity)}${unitLabel} · ${formatPeso(plannedVal)}`,
+        ];
+      })
+    : plannedCosts.material > 0
+      ? [
+          [
+            "Planned material",
+            `${formatPeso(plannedToDate.costs.material)} / ${formatPeso(plannedCosts.material)}`,
+          ],
+        ]
+      : [];
+
+  const plannedEquipmentRows: [string, string][] = hasItemizedEquipmentCosts
+    ? itemizedEquipmentCosts.map((item): [string, string] => [
+        item.name,
+        `${formatPeso(item.plannedAmount * plannedShare)} / ${formatPeso(item.plannedAmount)}`,
+      ])
+    : plannedCosts.equipment > 0
+      ? [
+          [
+            "Planned equipment",
+            `${formatPeso(plannedToDate.costs.equipment)} / ${formatPeso(plannedCosts.equipment)}`,
+          ],
+        ]
+      : [];
+
+  const plannedOtherRows: [string, string][] = hasItemizedOtherCosts
+    ? itemizedOtherCosts.map((item): [string, string] => [
+        item.name,
+        `${formatPeso(item.plannedAmount * plannedShare)} / ${formatPeso(item.plannedAmount)}`,
+      ])
+    : plannedCosts.other > 0
+      ? [
+          [
+            "Planned other cost",
+            `${formatPeso(plannedToDate.costs.other)} / ${formatPeso(plannedCosts.other)}`,
+          ],
+        ]
+      : [];
+
+  const plannedBreakdownSections: BreakdownSection[] = [
+    { title: "Labor breakdown", empty: "None planned", rows: plannedLaborRows },
+    { title: "Materials used (as planned)", empty: "None planned", rows: plannedMaterialRows },
+    { title: "Equipment costs", empty: "None planned", rows: plannedEquipmentRows },
+    { title: "Other costs", empty: "None planned", rows: plannedOtherRows },
+  ];
+
+  // Active saved logs (latest per logged entryDate) for aggregating
+  // actual attendance and unplanned items in the Actual dropdown card.
+  const loggedDateSet = new Set(progressToday.loggedDates);
+  const seenLogDates = new Set<string>();
+  const activeSavedLogs: OverrideLog[] = [];
+  for (const log of history) {
+    if (seenLogDates.has(log.entryDate)) continue;
+    seenLogDates.add(log.entryDate);
+    if (log.action === "saved" && loggedDateSet.has(log.entryDate)) {
+      activeSavedLogs.push(log);
+    }
+  }
+
+  const workerActualMap = new Map<string, { name: string; hours: number; cost: number }>();
+  for (const log of activeSavedLogs) {
+    for (const att of log.attendance ?? []) {
+      const key = att.name.trim().toLowerCase();
+      const existing = workerActualMap.get(key);
+      const cost = att.hours * att.rate;
+      if (existing) {
+        existing.hours += att.hours;
+        existing.cost += cost;
+      } else {
+        workerActualMap.set(key, { name: att.name, hours: att.hours, cost });
+      }
+    }
+  }
+  const actualLaborRows: [string, string][] = Array.from(workerActualMap.values()).map((w) => [
+    `${w.name} · ${formatHours(w.hours)}`,
+    formatPeso(w.cost),
+  ]);
+  const loggedLaborTotal = Array.from(workerActualMap.values()).reduce((s, w) => s + w.cost, 0);
+  const unitemizedActualLabor = actualToDate.costs.labor - loggedLaborTotal;
+  if (actualLaborRows.length === 0 && actualToDate.costs.labor > 0) {
+    actualLaborRows.push(["Labor to date", formatPeso(actualToDate.costs.labor)]);
+  } else if (actualLaborRows.length > 0 && unitemizedActualLabor > 0.005) {
+    actualLaborRows.push(["Automatic / direct labor", formatPeso(unitemizedActualLabor)]);
+  }
+
+  const unplannedMatMap = new Map<
+    string,
+    { name: string; unit: string | null; quantity: number; cost: number }
+  >();
+  for (const log of activeSavedLogs) {
+    for (const m of log.materialsUsed ?? []) {
+      if (m.unitCost === null || m.unitCost === undefined || m.quantity <= 0) continue;
+      const key = `${materialKey(m.name, m.unit ?? null)}|${m.unitCost}`;
+      const existing = unplannedMatMap.get(key);
+      const cost = m.quantity * m.unitCost;
+      if (existing) {
+        existing.quantity += m.quantity;
+        existing.cost += cost;
+      } else {
+        unplannedMatMap.set(key, {
+          name: m.name,
+          unit: m.unit ?? null,
+          quantity: m.quantity,
+          cost,
+        });
+      }
+    }
+  }
+  const actualMaterialRows: [string, string][] = [
+    ...itemizedMaterials.map((material): [string, string] => {
+      const used = savedStanding.materialUsageToDate[material.key] ?? 0;
+      const unitCost =
+        material.plannedQuantity > 0 ? material.plannedValue / material.plannedQuantity : 0;
+      const unitLabel = material.unit ? ` ${material.unit}` : "";
+      return [
+        material.name,
+        `${formatQuantity(used)} / ${formatQuantity(material.plannedQuantity)}${unitLabel} · ${formatPeso(used * unitCost)}`,
+      ];
+    }),
+    ...Array.from(unplannedMatMap.values()).map((m): [string, string] => [
+      `${m.name} (unplanned)`,
+      `${formatQuantity(m.quantity)}${m.unit ? ` ${m.unit}` : ""} · ${formatPeso(m.cost)}`,
+    ]),
+  ];
+  if (actualMaterialRows.length === 0 && actualToDate.costs.material > 0) {
+    actualMaterialRows.push(["Material to date", formatPeso(actualToDate.costs.material)]);
+  }
+
+  const unplannedEqMap = new Map<string, { name: string; amount: number }>();
+  for (const log of activeSavedLogs) {
+    for (const item of log.equipmentCosts ?? []) {
+      if (!item.unplanned || item.amount <= 0) continue;
+      const key = otherCostKey(item.name);
+      const existing = unplannedEqMap.get(key);
+      if (existing) existing.amount += item.amount;
+      else unplannedEqMap.set(key, { name: item.name, amount: item.amount });
+    }
+  }
+  const actualEquipmentRows: [string, string][] = [
+    ...itemizedEquipmentCosts.map((item): [string, string] => {
+      const spent = savedStanding.equipmentCostSpendToDate[item.key] ?? 0;
+      return [item.name, `${formatPeso(spent)} / ${formatPeso(item.plannedAmount)}`];
+    }),
+    ...Array.from(unplannedEqMap.values()).map((item): [string, string] => [
+      `${item.name} (unplanned)`,
+      formatPeso(item.amount),
+    ]),
+  ];
+  const itemizedActualEq =
+    itemizedEquipmentCosts.reduce(
+      (s, item) => s + (savedStanding.equipmentCostSpendToDate[item.key] ?? 0),
+      0
+    ) + Array.from(unplannedEqMap.values()).reduce((s, item) => s + item.amount, 0);
+  const remainingActualEq = actualToDate.costs.equipment - itemizedActualEq;
+  if (actualEquipmentRows.length === 0 && actualToDate.costs.equipment > 0) {
+    actualEquipmentRows.push(["Equipment to date", formatPeso(actualToDate.costs.equipment)]);
+  } else if (actualEquipmentRows.length > 0 && remainingActualEq > 0.005) {
+    actualEquipmentRows.push(["Automatic / direct equipment", formatPeso(remainingActualEq)]);
+  }
+
+  const unplannedOtherMap = new Map<string, { name: string; amount: number }>();
+  for (const log of activeSavedLogs) {
+    for (const item of log.otherCosts ?? []) {
+      if (!item.unplanned || item.amount <= 0) continue;
+      const key = otherCostKey(item.name);
+      const existing = unplannedOtherMap.get(key);
+      if (existing) existing.amount += item.amount;
+      else unplannedOtherMap.set(key, { name: item.name, amount: item.amount });
+    }
+  }
+  const actualOtherRows: [string, string][] = [
+    ...itemizedOtherCosts.map((item): [string, string] => {
+      const spent = savedStanding.otherCostSpendToDate[item.key] ?? 0;
+      return [item.name, `${formatPeso(spent)} / ${formatPeso(item.plannedAmount)}`];
+    }),
+    ...Array.from(unplannedOtherMap.values()).map((item): [string, string] => [
+      `${item.name} (unplanned)`,
+      formatPeso(item.amount),
+    ]),
+  ];
+  const itemizedActualOther =
+    itemizedOtherCosts.reduce(
+      (s, item) => s + (savedStanding.otherCostSpendToDate[item.key] ?? 0),
+      0
+    ) + Array.from(unplannedOtherMap.values()).reduce((s, item) => s + item.amount, 0);
+  const remainingActualOther = actualToDate.costs.other - itemizedActualOther;
+  if (actualOtherRows.length === 0 && actualToDate.costs.other > 0) {
+    actualOtherRows.push(["Other cost to date", formatPeso(actualToDate.costs.other)]);
+  } else if (actualOtherRows.length > 0 && remainingActualOther > 0.005) {
+    actualOtherRows.push(["Automatic / direct other cost", formatPeso(remainingActualOther)]);
+  }
+
+  const actualBreakdownSections: BreakdownSection[] = [
+    {
+      title: "Labor breakdown",
+      empty: "None logged",
+      rows: hasOverrideProgress ? actualLaborRows : [],
     },
-  };
+    {
+      title: "Materials used",
+      empty: "None used",
+      rows: hasOverrideProgress ? actualMaterialRows : [],
+    },
+    {
+      title: "Equipment costs",
+      empty: "None logged",
+      rows: hasOverrideProgress ? actualEquipmentRows : [],
+    },
+    {
+      title: "Other costs",
+      empty: "None logged",
+      rows: hasOverrideProgress ? actualOtherRows : [],
+    },
+  ];
 
   async function handleSave() {
     if (readOnly) return;
@@ -1528,11 +1858,11 @@ export function ProgressTrackingModalContent({
       return;
     }
     if (unplannedMaterials.some((material) => material.quantity === null || material.unitCost === null)) {
-      setError("A material not on the list needs a quantity and unit cost of 0 or more.");
+      setError("An unplanned material needs a quantity and unit cost of 0 or more.");
       return;
     }
     if (unplannedMaterials.some((material) => (material.quantity ?? 0) > 0 && !material.name)) {
-      setError("Name each material used that isn't on the list.");
+      setError("Name each unplanned material used.");
       return;
     }
     if (equipmentCostsUsed.some((item) => item.amount === null) || unplannedEquipmentCosts.some((item) => item.amount === null)) {
@@ -1766,18 +2096,17 @@ export function ProgressTrackingModalContent({
 
         {/* Labor today: the assigned skilled workers' hours, each at their
             own hourly rate — the day's labor cost. */}
-        {(laborRows.length > 0 || team.some(paidHourly)) && (
+        {(laborRows.length > 0 || team.length > 0) && (
           <div className={`px-6 py-5 ${nextLogSectionBg()}`}>
             <LaborToday
               rows={laborRows}
-              team={team.filter(paidHourly)}
+              team={team}
               hours={hours}
               onHours={(workerId, value) => setHours((prev) => ({ ...prev, [workerId]: value }))}
               onAdd={(workerId) =>
                 setHours((prev) => ({
                   ...prev,
-                  // Their hours for today — a full 8 when it's their day off.
-                  [workerId]: toInput(teamById.get(workerId)?.workHours[weekdayIndex()] || 8),
+                  [workerId]: "",
                 }))
               }
               onRemove={(workerId) =>
@@ -1883,7 +2212,7 @@ export function ProgressTrackingModalContent({
                       hasItemizedEquipmentCosts ? "border-y" : "border-b"
                     } border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
                   >
-                    <span>{hasItemizedEquipmentCosts ? "Not on the list" : "Equipment cost"}</span>
+                    <span>{hasItemizedEquipmentCosts ? "Unplanned" : "Equipment cost"}</span>
                     <span>Amount</span>
                     <span className="sr-only">Remove</span>
                   </div>
@@ -1946,7 +2275,7 @@ export function ProgressTrackingModalContent({
               className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
             >
               <Plus className="size-4" />
-              {hasItemizedEquipmentCosts ? "Add an equipment cost not on the list" : "Add an equipment cost"}
+              {hasItemizedEquipmentCosts ? "Add unplanned equipment cost" : "Add an equipment cost"}
             </button>
             {plannedCosts.equipment > 0 && (
               <p
@@ -1979,7 +2308,7 @@ export function ProgressTrackingModalContent({
                   className={`${MATERIAL_COLUMNS} border-b border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
                 >
                   <span>Material</span>
-                  <span>Quantity</span>
+                  <span>Actual Quantity</span>
                 </div>
                 <ul className="divide-y divide-zinc-100">
                   {plannedMaterials.map((material, index) => {
@@ -2045,7 +2374,7 @@ export function ProgressTrackingModalContent({
                     <div
                       className={`${UNPLANNED_COLUMNS} border-y border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
                     >
-                      <span>Not on the list</span>
+                      <span>Unplanned</span>
                       <span>Unit</span>
                       <span>Quantity</span>
                       <span className="sr-only">Remove</span>
@@ -2054,19 +2383,28 @@ export function ProgressTrackingModalContent({
                       {unplannedRows.map((row) => {
                         return (
                           <li key={row.id} className={`${UNPLANNED_COLUMNS} py-2.5 text-sm`}>
-                            <input
-                              value={row.name}
-                              onChange={(e) => renameUnplanned(row, e.target.value)}
-                              list="progress-material-suggestions"
-                              autoComplete="off"
-                              placeholder="e.g., Common nails"
-                              aria-label="Material not on the list"
-                              className={CELL_INPUT}
-                            />
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <input
+                                value={row.name}
+                                onChange={(e) => renameUnplanned(row, e.target.value)}
+                                autoComplete="off"
+                                placeholder="e.g., Common nails"
+                                aria-label="Unplanned material"
+                                className={CELL_INPUT}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setStockModalRowId(row.id)}
+                                title="Select material from stock"
+                                aria-label="Select material from stock"
+                                className="flex size-[34px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none"
+                              >
+                                <ChevronRight className="size-4" />
+                              </button>
+                            </div>
                             <input
                               value={row.unit}
                               onChange={(e) => updateUnplanned(row.id, { unit: e.target.value })}
-                              list="progress-unit-options"
                               autoComplete="off"
                               placeholder="Unit"
                               aria-label={`${row.name || "Material"} unit`}
@@ -2085,7 +2423,7 @@ export function ProgressTrackingModalContent({
                               }
                               aria-label={`Remove ${row.name || "this material"}`}
                               title="Remove"
-                              className="flex cursor-pointer items-center justify-center rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
+                              className="flex size-[34px] cursor-pointer items-center justify-center rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
                             >
                               <X className="size-4" />
                             </button>
@@ -2097,21 +2435,6 @@ export function ProgressTrackingModalContent({
                 )}
               </div>
 
-              {/* The estimate's materials and the usual units, suggested
-                  as a material not on the list is typed. */}
-              <datalist id="progress-material-suggestions">
-                {suggestions.map((price) => (
-                  <option key={materialKey(price.name, price.unit)} value={price.name}>
-                    {price.unit ?? "—"}
-                  </option>
-                ))}
-              </datalist>
-              <datalist id="progress-unit-options">
-                {UNIT_OPTIONS.map((option) => (
-                  <option key={option} value={option} />
-                ))}
-              </datalist>
-
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                 <button
                   type="button"
@@ -2119,7 +2442,7 @@ export function ProgressTrackingModalContent({
                   className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >
                   <Plus className="size-4" />
-                  Add a material not on the list
+                  Add unplanned material
                 </button>
               </div>
             </section>
@@ -2201,7 +2524,7 @@ export function ProgressTrackingModalContent({
                       hasItemizedOtherCosts ? "border-y" : "border-b"
                     } border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
                   >
-                    <span>{hasItemizedOtherCosts ? "Not on the list" : "Other cost"}</span>
+                    <span>{hasItemizedOtherCosts ? "Unplanned" : "Other cost"}</span>
                     <span>Amount</span>
                     <span className="sr-only">Remove</span>
                   </div>
@@ -2264,7 +2587,7 @@ export function ProgressTrackingModalContent({
               className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
             >
               <Plus className="size-4" />
-              {hasItemizedOtherCosts ? "Add an other cost not on the list" : "Add an other cost"}
+              {hasItemizedOtherCosts ? "Add unplanned other cost" : "Add an other cost"}
             </button>
             {plannedCosts.other > 0 && (
               <p
@@ -2293,44 +2616,58 @@ export function ProgressTrackingModalContent({
               before it) against; Expected progress is the same share.
               Hidden until the task has a Start and End to plan from. */}
           {breakdown.totalWorkingDays !== null && (
-            <section aria-label="Planned so far" className="bg-sky-50 px-6 py-4">
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                <span className="flex items-center gap-2">
-                  <ClipboardList aria-hidden className="size-4 text-sky-700" />
-                  <span
-                    title="The plan so far, through today — from automatic progress."
-                    className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
-                  >
-                    Planned
+            <section aria-label="Planned so far" className="bg-sky-50">
+              <button
+                type="button"
+                onClick={() => setPlannedOpen((open) => !open)}
+                aria-expanded={plannedOpen}
+                className="block w-full cursor-pointer px-6 py-4 text-left transition hover:bg-sky-100/60"
+              >
+                <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                  <span className="flex items-center gap-2">
+                    <ClipboardList aria-hidden className="size-4 text-sky-700" />
+                    <span
+                      title="The plan so far, through today — from automatic progress."
+                      className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                    >
+                      Planned
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      title="Expected progress"
+                      className="text-base font-bold text-sky-700 tabular-nums"
+                    >
+                      {(breakdown.timePercent ?? 0).toFixed(2)}%
+                    </span>
+                    <ChevronDown
+                      aria-hidden
+                      className={`size-4 shrink-0 text-sky-700 transition ${plannedOpen ? "rotate-180" : ""}`}
+                    />
                   </span>
                 </span>
-                <span
-                  title="Expected progress"
-                  className="text-base font-bold text-sky-700 tabular-nums"
-                >
-                  {(breakdown.timePercent ?? 0).toFixed(2)}%
-                </span>
-              </div>
-              {plannedShare === 0 ? (
-                <p className="mt-3 text-sm text-zinc-500">No work is planned yet — it hasn&apos;t started.</p>
-              ) : (
-                <dl className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-5" : ""}`}>
-                  <div className="min-w-0">
-                    <dt className="truncate text-xs text-zinc-500">Quantity</dt>
-                    <dd className="mt-0.5 text-sm font-semibold text-zinc-900 tabular-nums">
+                <span className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-5" : ""}`}>
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs text-zinc-500">Quantity</span>
+                    <span className="mt-0.5 block text-sm font-semibold text-zinc-900 tabular-nums">
                       {formatQuantity(plannedToDate.quantity)}
                       {unit ? ` ${unit}` : ""}
-                    </dd>
-                  </div>
+                    </span>
+                  </span>
                   {COST_COMPONENTS.map((component) => (
-                    <div key={component} className="min-w-0">
-                      <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
-                      <dd className="mt-0.5 text-sm font-semibold text-zinc-900 tabular-nums">
+                    <span key={component} className="min-w-0">
+                      <span className="block truncate text-xs text-zinc-500">{COST_LABEL[component]}</span>
+                      <span className="mt-0.5 block text-sm font-semibold text-zinc-900 tabular-nums">
                         {formatPeso(plannedToDate.costs[component])}
-                      </dd>
-                    </div>
+                      </span>
+                    </span>
                   ))}
-                </dl>
+                </span>
+              </button>
+              {plannedOpen && (
+                <div className="border-t border-sky-200/80 px-6 pt-3 pb-4">
+                  <StandingBreakdownDetails sections={plannedBreakdownSections} />
+                </div>
               )}
             </section>
           )}
@@ -2340,42 +2677,60 @@ export function ProgressTrackingModalContent({
               percent complete. Still while today's log is typed below. */}
           <section
             aria-label="Actual so far"
-            className={`bg-orange-50 px-6 py-4 ${breakdown.totalWorkingDays !== null ? "border-t border-zinc-200" : ""}`}
+            className={`bg-orange-50 ${breakdown.totalWorkingDays !== null ? "border-t border-zinc-200" : ""}`}
           >
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <span className="flex items-center gap-2">
-                <ClipboardCheck aria-hidden className="size-4 text-orange-600" />
-                <span
-                  title="Where it stands so far, through today — every saved log, each day without one at its planned share."
-                  className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 ring-1 ring-orange-200"
-                >
-                  Actual
+            <button
+              type="button"
+              onClick={() => setActualOpen((open) => !open)}
+              aria-expanded={actualOpen}
+              className="block w-full cursor-pointer px-6 py-4 text-left transition hover:bg-orange-100/60"
+            >
+              <span className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                <span className="flex items-center gap-2">
+                  <ClipboardCheck aria-hidden className="size-4 text-orange-600" />
+                  <span
+                    title="Where it stands so far, through today — every saved log, each day without one at its planned share."
+                    className="rounded-sm bg-white px-1.5 py-0.5 text-[10px] font-semibold text-orange-700 ring-1 ring-orange-200"
+                  >
+                    Actual
+                  </span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span
+                    title="Actual progress"
+                    className="text-base font-bold text-orange-600 tabular-nums"
+                  >
+                    {actualToDate.percent.toFixed(2)}%
+                  </span>
+                  <ChevronDown
+                    aria-hidden
+                    className={`size-4 shrink-0 text-orange-600 transition ${actualOpen ? "rotate-180" : ""}`}
+                  />
                 </span>
               </span>
-              <span
-                title="Actual progress"
-                className="text-base font-bold text-orange-600 tabular-nums"
-              >
-                {actualToDate.percent.toFixed(2)}%
+              <span className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-5" : ""}`}>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs text-zinc-500">Quantity</span>
+                  <span className="mt-0.5 block text-sm font-semibold text-zinc-900 tabular-nums">
+                    {formatQuantity(actualToDate.quantity)}
+                    {unit ? ` ${unit}` : ""}
+                  </span>
+                </span>
+                {COST_COMPONENTS.map((component) => (
+                  <span key={component} className="min-w-0">
+                    <span className="block truncate text-xs text-zinc-500">{COST_LABEL[component]}</span>
+                    <span className="mt-0.5 block text-sm font-semibold text-zinc-900 tabular-nums">
+                      {formatPeso(actualToDate.costs[component])}
+                    </span>
+                  </span>
+                ))}
               </span>
-            </div>
-            <dl className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-5" : ""}`}>
-              <div className="min-w-0">
-                <dt className="truncate text-xs text-zinc-500">Quantity</dt>
-                <dd className="mt-0.5 text-sm font-semibold text-zinc-900 tabular-nums">
-                  {formatQuantity(actualToDate.quantity)}
-                  {unit ? ` ${unit}` : ""}
-                </dd>
+            </button>
+            {actualOpen && (
+              <div className="border-t border-orange-200/80 px-6 pt-3 pb-4">
+                <StandingBreakdownDetails sections={actualBreakdownSections} />
               </div>
-              {COST_COMPONENTS.map((component) => (
-                <div key={component} className="min-w-0">
-                  <dt className="truncate text-xs text-zinc-500">{COST_LABEL[component]}</dt>
-                  <dd className="mt-0.5 text-sm font-semibold text-zinc-900 tabular-nums">
-                    {formatPeso(actualToDate.costs[component])}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+            )}
           </section>
         </div>
 
@@ -2428,6 +2783,46 @@ export function ProgressTrackingModalContent({
             setDeleteDate(null);
             setDeleteOverrideError(null);
           }}
+        />
+      )}
+
+      {/* Material Stock Selection Modal */}
+      {!readOnly && (
+        <MaterialStockPickerModal
+          open={stockModalRowId !== null}
+          stocks={unassignedStocks}
+          selectedMaterialName={
+            stockModalRowId !== null
+              ? unplannedRows.find((r) => r.id === stockModalRowId)?.name
+              : undefined
+          }
+          title="Select material from stock"
+          description="Choose a material from current inventory stocks to record its usage today."
+          variant="centered"
+          onSelect={(stock) => {
+            if (stockModalRowId !== null) {
+              const row = unplannedRows.find((r) => r.id === stockModalRowId);
+              const matches = suggestions.filter(
+                (price) => price.name.trim().toLowerCase() === stock.name.trim().toLowerCase()
+              );
+              const match =
+                matches.find(
+                  (price) =>
+                    (price.unit ?? "").trim().toLowerCase() ===
+                    (stock.unit || row?.unit || "").trim().toLowerCase()
+                ) ?? matches[0];
+
+              updateUnplanned(stockModalRowId, {
+                name: stock.name,
+                unit: stock.unit || row?.unit || "",
+                ...(match && (!row?.unitCost.trim() || row.unitCost === "0")
+                  ? { unitCost: toInput(match.unitCost) }
+                  : {}),
+              });
+              setStockModalRowId(null);
+            }
+          }}
+          onClose={() => setStockModalRowId(null)}
         />
       )}
 

@@ -407,7 +407,7 @@ export function CostEstimateView({
                       type="button"
                       onClick={() => setLaborBreakdownOpen(true)}
                       title="View the project's full labor breakdown"
-                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white"
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-100 hover:text-zinc-900"
                     >
                       Labor
                       <ChevronRight className="size-3.5 shrink-0" />
@@ -418,7 +418,7 @@ export function CostEstimateView({
                       type="button"
                       onClick={() => onOpenMaterialBreakdown()}
                       title="View the project's full material breakdown"
-                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white"
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-100 hover:text-zinc-900"
                     >
                       Material
                       <ChevronRight className="size-3.5 shrink-0" />
@@ -426,7 +426,7 @@ export function CostEstimateView({
                   </th>
                   <th className="w-28 border-r border-zinc-200 text-right">
                     <button type="button" onClick={() => { setEquipmentHighlight(null); setEquipmentBreakdownOpen(true); }}
-                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white">
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-100 hover:text-zinc-900">
                       Tools &amp; Equipment <ChevronRight className="size-3.5 shrink-0" />
                     </button>
                   </th>
@@ -435,7 +435,7 @@ export function CostEstimateView({
                       type="button"
                       onClick={() => setOtherBreakdownOpen(true)}
                       title="View the project's full other cost breakdown"
-                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-900 hover:text-white"
+                      className="flex h-full w-full cursor-pointer items-center justify-end gap-1 px-4 py-2.5 text-right transition hover:bg-zinc-100 hover:text-zinc-900"
                     >
                       Other
                       <ChevronRight className="size-3.5 shrink-0" />
@@ -497,7 +497,7 @@ export function CostEstimateView({
                           highlightedTarget?.kind === "category" &&
                           highlightedTarget.id === category.id
                             ? "bg-amber-50 text-zinc-900 ring-1 ring-amber-300 ring-inset"
-                            : "bg-white text-zinc-500"
+                            : "bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
                         }`}
                       >
                         <td className="border-r border-zinc-200 px-4 py-2.5">
@@ -636,7 +636,7 @@ export function CostEstimateView({
                               highlightedTarget?.kind === "task" &&
                               highlightedTarget.id === task.id
                                 ? "bg-amber-50 text-zinc-900 ring-1 ring-amber-300 ring-inset"
-                                : "text-zinc-500 hover:bg-zinc-900 hover:text-white"
+                                : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
                             }`}
                           >
                             <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8">

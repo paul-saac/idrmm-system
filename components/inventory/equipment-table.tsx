@@ -1,21 +1,10 @@
 "use client";
 
 import { useActionState } from "react";
-import { Send, Trash2, Undo2 } from "lucide-react";
+import Link from "next/link";
+import { Folder, Send, Trash2, Undo2 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
-import {
-  BLANK,
-  BODY,
-  CELL,
-  HEAD_CELL,
-  HEAD_ROW,
-  ICON_BUTTON,
-  SelectAllCell,
-  SelectCell,
-  TABLE,
-  TABLE_FRAME,
-  rowClass,
-} from "@/components/ui/list-table";
+import { SelectAllCell, SelectCell, BLANK } from "@/components/ui/list-table";
 import {
   deleteEquipment,
   returnEquipment,
@@ -23,7 +12,11 @@ import {
 } from "@/lib/equipment/actions";
 import type { EquipmentRow } from "@/lib/equipment/data";
 
-const NEUTRAL_BUTTON = `${ICON_BUTTON} hover:bg-zinc-100 hover:text-zinc-700`;
+const TH = "px-4 py-3 font-medium";
+const TD = "px-4 py-3.5";
+
+const ICON_BTN =
+  "cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-50";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString("en-US", {
@@ -37,32 +30,33 @@ function formatDateTime(iso: string) {
 }
 
 function StatusBadge({ equipment }: { equipment: EquipmentRow }) {
+  const isReturned = equipment.lastReturnedAt != null && equipment.status === "available";
   const { label, className } =
     equipment.status === "assigned"
       ? { label: "Assigned", className: "bg-amber-50 text-amber-700" }
       : equipment.status === "maintenance"
-        ? { label: "Maintenance", className: "bg-red-50 text-red-700" }
-        : equipment.status === "retired"
-          ? { label: "Retired", className: "bg-zinc-100 text-zinc-500" }
-          : // "available" reads as "Returned" once it has assignment
-            // history — the same green end-state, a more informative label.
-            {
-              label: equipment.lastReturnedAt ? "Returned" : "Available",
-              className: "bg-emerald-50 text-emerald-700",
-            };
+      ? { label: "Maintenance", className: "bg-red-50 text-red-700" }
+      : equipment.status === "retired"
+      ? { label: "Retired", className: "bg-zinc-100 text-zinc-500" }
+      : isReturned
+      ? { label: "Returned", className: "bg-teal-50 text-teal-700" }
+      : { label: "Available", className: "bg-emerald-50 text-emerald-700" };
+
   return (
-    <span className={`rounded-sm px-2 py-0.5 text-xs font-medium whitespace-nowrap ${className}`}>
+    <span
+      className={`rounded-sm px-2 py-0.5 text-xs font-medium whitespace-nowrap ${className}`}
+    >
       {label}
     </span>
   );
 }
 
-/** A row action's own error, just under it. */
+/** A row action's own error, floating just under it. */
 function ActionError({ message }: { message: string }) {
   return (
     <span
       role="alert"
-      className="absolute top-full left-0 z-10 mt-1 w-48 rounded-md border border-red-200 bg-white px-2 py-1 text-xs font-normal text-red-600 shadow-sm"
+      className="absolute top-full right-0 z-10 mt-1 w-48 rounded-md border border-red-200 bg-white px-2 py-1 text-right text-xs font-normal text-red-600 shadow-sm"
     >
       {message}
     </span>
@@ -94,9 +88,9 @@ function DeleteEquipmentButton({
         <button
           type="submit"
           disabled={pending}
-          title="Delete"
+          title="Delete equipment"
           aria-label={`Delete ${equipmentName}`}
-          className={`${ICON_BUTTON} hover:bg-red-50 hover:text-red-600`}
+          className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Trash2 className="size-3.5" />
         </button>
@@ -126,7 +120,7 @@ function ReturnEquipmentButton({
           disabled={pending}
           title="Mark as returned"
           aria-label="Return equipment"
-          className={NEUTRAL_BUTTON}
+          className={ICON_BTN}
         >
           <Undo2 className="size-3.5" />
         </button>
@@ -136,15 +130,17 @@ function ReturnEquipmentButton({
   );
 }
 
-/** The company's tools and equipment, in the Team table's own style (see
- * list-table) — checkboxes and the Actions column only where it's
- * editable (not the foreman portal's view-only copy). */
+/**
+ * Tools and equipment record table — styled cleanly to match the members table:
+ * standard rounded-lg container, rounded-sm badges, plain text asset tags, and comfortable row heights.
+ */
 export function EquipmentTable({
   equipment,
   selected,
   onCheck,
   onEdit,
   onAssign,
+  basePath = "/admin",
   readOnly = false,
 }: {
   equipment: EquipmentRow[];
@@ -153,102 +149,151 @@ export function EquipmentTable({
   onCheck: (ids: number[], checked: boolean) => void;
   onEdit: (equipment: EquipmentRow) => void;
   onAssign: (equipment: EquipmentRow) => void;
+  basePath?: string;
   readOnly?: boolean;
 }) {
   const ids = equipment.map((item) => item.id);
   const checkedCount = ids.filter((id) => selected.has(id)).length;
-  const allChecked = checkedCount === ids.length;
+  const allChecked = ids.length > 0 && checkedCount === ids.length;
 
   return (
-    <div className={TABLE_FRAME}>
-      <table className={TABLE}>
-        <thead>
-          <tr className={HEAD_ROW}>
-            {!readOnly && (
-              <SelectAllCell
-                checked={allChecked}
-                indeterminate={checkedCount > 0 && !allChecked}
-                onChange={() => onCheck(ids, !allChecked)}
-                label="Select all equipment"
-              />
-            )}
-            <th className={HEAD_CELL}>Asset Tag</th>
-            <th className={HEAD_CELL}>Name</th>
-            <th className={HEAD_CELL}>Category</th>
-            <th className={HEAD_CELL}>Description</th>
-            <th className={HEAD_CELL}>Status</th>
-            <th className={HEAD_CELL}>Assigned Project</th>
-            <th className={HEAD_CELL}>Last Activity</th>
-            {!readOnly && <th className={HEAD_CELL}>Actions</th>}
-          </tr>
-        </thead>
-        <tbody className={BODY}>
-          {equipment.map((item) => {
-            const lastActivity = item.lastAssignedAt ?? item.lastReturnedAt;
-            const checked = selected.has(item.id);
-            return (
-              <tr key={item.id} className={rowClass(checked)}>
-                {!readOnly && (
-                  <SelectCell
-                    checked={checked}
-                    onChange={() => onCheck([item.id], !checked)}
-                    label={`Select ${item.name}`}
-                  />
-                )}
-                <td className={`${CELL} font-medium whitespace-nowrap text-zinc-900`}>
-                  {item.assetTag}
-                </td>
-                <td className={`${CELL} font-medium text-zinc-900`}>{item.name}</td>
-                <td className={CELL}>{item.category || BLANK}</td>
-                <td className={`${CELL} max-w-64 truncate`} title={item.description ?? undefined}>
-                  {item.description || BLANK}
-                </td>
-                <td className={CELL}>
-                  <StatusBadge equipment={item} />
-                </td>
-                <td className={CELL}>{item.currentProjectName ?? BLANK}</td>
-                <td className={`${CELL} whitespace-nowrap text-zinc-500`}>
-                  {lastActivity ? formatDateTime(lastActivity) : BLANK}
-                </td>
-                {!readOnly && (
-                  <td className={CELL}>
-                    <div className="flex items-center gap-1">
-                      {item.status === "assigned" ? (
-                        item.currentProjectId != null && (
-                          <ReturnEquipmentButton
-                            equipmentId={item.id}
-                            projectId={item.currentProjectId}
-                          />
-                        )
-                      ) : item.status === "available" ? (
+    <div className="min-w-0 rounded-lg border border-zinc-200 bg-white">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-5xl text-left text-[13px] text-zinc-600">
+          <thead>
+            <tr className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
+              {!readOnly && (
+                <SelectAllCell
+                  checked={allChecked}
+                  indeterminate={checkedCount > 0 && !allChecked}
+                  onChange={() => onCheck(ids, !allChecked)}
+                  label="Select all equipment"
+                />
+              )}
+              <th className={TH}>Asset Tag</th>
+              <th className={TH}>Name</th>
+              <th className={TH}>Category</th>
+              <th className={TH}>Description</th>
+              <th className={TH}>Status</th>
+              <th className={TH}>Assigned Project</th>
+              <th className={TH}>Last Activity</th>
+              {!readOnly && (
+                <th className={`${TH} text-right`}>
+                  <span className="sr-only">Actions</span>
+                </th>
+              )}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {equipment.map((item) => {
+              const lastActivity = item.lastAssignedAt ?? item.lastReturnedAt;
+              const checked = selected.has(item.id);
+              return (
+                <tr
+                  key={item.id}
+                  className={`transition-colors ${
+                    checked ? "bg-zinc-100" : "hover:bg-zinc-50"
+                  }`}
+                >
+                  {!readOnly && (
+                    <SelectCell
+                      checked={checked}
+                      onChange={() => onCheck([item.id], !checked)}
+                      label={`Select ${item.name}`}
+                    />
+                  )}
+                  <td className={`${TD} font-medium whitespace-nowrap text-zinc-900`}>
+                    {item.assetTag}
+                  </td>
+                  <td className={`${TD} font-semibold text-zinc-900`}>
+                    {item.name}
+                  </td>
+                  <td className={`${TD} text-zinc-600`}>
+                    {item.category || BLANK}
+                  </td>
+                  <td
+                    className={`${TD} max-w-xs truncate text-zinc-500`}
+                    title={item.description ?? undefined}
+                  >
+                    {item.description || BLANK}
+                  </td>
+                  <td className={`${TD} whitespace-nowrap`}>
+                    <StatusBadge equipment={item} />
+                  </td>
+                  <td className={`${TD} text-zinc-600`}>
+                    {item.currentProjectId && item.currentProjectName ? (
+                      <span className="flex min-w-0 items-center gap-1.5" title={item.currentProjectName}>
+                        <Folder
+                          aria-hidden
+                          className="size-3.5 shrink-0 text-zinc-400"
+                        />
+                        <Link
+                          href={`${basePath}/projects/${item.currentProjectId}`}
+                          className="truncate font-medium text-zinc-900 hover:underline"
+                        >
+                          {item.currentProjectName}
+                        </Link>
+                      </span>
+                    ) : (
+                      BLANK
+                    )}
+                  </td>
+                  <td className={`${TD} whitespace-nowrap text-xs text-zinc-500 tabular-nums`}>
+                    {lastActivity ? formatDateTime(lastActivity) : BLANK}
+                  </td>
+                  {!readOnly && (
+                    <td className={`${TD} text-right whitespace-nowrap`}>
+                      <div className="flex items-center justify-end gap-1">
+                        {item.status === "assigned" ? (
+                          item.currentProjectId != null && (
+                            <ReturnEquipmentButton
+                              equipmentId={item.id}
+                              projectId={item.currentProjectId}
+                            />
+                          )
+                        ) : item.status === "available" ? (
+                          <button
+                            type="button"
+                            onClick={() => onAssign(item)}
+                            title="Assign to project"
+                            aria-label={`Assign ${item.name}`}
+                            className={ICON_BTN}
+                          >
+                            <Send className="size-3.5" />
+                          </button>
+                        ) : null}
                         <button
                           type="button"
-                          onClick={() => onAssign(item)}
-                          title="Assign to a project"
-                          aria-label={`Assign ${item.name}`}
-                          className={NEUTRAL_BUTTON}
+                          onClick={() => onEdit(item)}
+                          title="Edit equipment"
+                          aria-label={`Edit ${item.name}`}
+                          className={ICON_BTN}
                         >
-                          <Send className="size-3.5" />
+                          <EditIcon className="size-3.5" />
                         </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => onEdit(item)}
-                        title="Edit"
-                        aria-label={`Edit ${item.name}`}
-                        className={NEUTRAL_BUTTON}
-                      >
-                        <EditIcon className="size-3.5" />
-                      </button>
-                      <DeleteEquipmentButton equipmentId={item.id} equipmentName={item.name} />
-                    </div>
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                        <DeleteEquipmentButton
+                          equipmentId={item.id}
+                          equipmentName={item.name}
+                        />
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="border-t border-zinc-200 px-6 py-3 text-xs text-zinc-500">
+        Showing <span className="font-semibold text-zinc-700">{equipment.length}</span>{" "}
+        {equipment.length === 1 ? "equipment item" : "tools and equipment items"}
+        {checkedCount > 0 && (
+          <span className="ml-2 font-medium text-zinc-700">
+            ({checkedCount} selected)
+          </span>
+        )}
+      </div>
     </div>
   );
 }

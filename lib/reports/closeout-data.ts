@@ -1,19 +1,33 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { getSessionProfile } from "@/lib/auth/session";
 import { getProjectById } from "@/lib/projects/data";
 import { getCostEstimate } from "@/lib/cost-estimate/data";
 import { getProjectProgress } from "@/lib/progress/data";
+import { listProgressExpenses, listProjectEquipmentAssignments } from "@/lib/equipment/data";
 import type { Sheet } from "@/lib/sheets/model";
-import { buildCloseoutWork, type CloseoutRecord } from "./closeout-model";
+import { listPunchItems } from "./punch-list-data";
+import { listQualityInspections } from "./quality-inspection-data";
+import {
+  buildCloseoutWork,
+  buildCloseoutDeliverables,
+  buildCloseoutCostBaseline,
+  type CloseoutRecord,
+} from "./closeout-model";
 
 export async function getCloseoutReport(projectId: number) {
   const project = await getProjectById(projectId);
   if (!project) return null;
   const supabase = await createClient();
-  const [estimate, saved, sheetsResult] = await Promise.all([
+  const [estimate, saved, sheetsResult, expenses, equipmentAssignments, punchList, qualityInspections, sessionProfile] = await Promise.all([
     getCostEstimate(projectId),
     supabase.from("project_closeout_reports").select("*").eq("project_id", projectId).maybeSingle(),
     supabase.from("project_sheets").select("*").eq("project_id", projectId).order("sheet_number", { ascending: true }).order("revision", { ascending: true }),
+    listProgressExpenses(projectId),
+    listProjectEquipmentAssignments(projectId),
+    listPunchItems(projectId),
+    listQualityInspections(projectId),
+    getSessionProfile(),
   ]);
   // Only a missing migration is tolerated; other failures must not look like a blank draft.
   const storageAvailable = !saved.error;
@@ -29,10 +43,24 @@ export async function getCloseoutReport(projectId: number) {
     savedBy = profile ? `${profile.first_name} ${profile.last_name}`.trim() : null;
   }
   return {
-    project, progressPercent: progress.overallPercent,
-    work: buildCloseoutWork(estimate.categories, []),
-    record, savedBy, storageAvailable,
-    sheets, sheetsAvailable,
+    project,
+    progressPercent: progress.overallPercent,
+    work: buildCloseoutWork(estimate.categories, expenses),
+    deliverables: buildCloseoutDeliverables(estimate.categories, expenses),
+    costBaseline: buildCloseoutCostBaseline(estimate.summary.totalsByColumn, expenses, project.allocatedBudget),
+    equipmentAssignments,
+    record,
+    savedBy,
+    storageAvailable,
+    sheets,
+    sheetsAvailable,
+    punchItems: punchList.items,
+    punchListAvailable: punchList.available,
+    qualityInspections: qualityInspections.items,
+    qualityInspectionsAvailable: qualityInspections.available,
+    generatedBy: sessionProfile
+      ? `${sessionProfile.firstName} ${sessionProfile.lastName}`.trim() || sessionProfile.email || "Authorized user"
+      : "Authorized user",
     asOf: new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
   };
 }

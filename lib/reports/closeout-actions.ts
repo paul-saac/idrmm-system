@@ -13,9 +13,10 @@ export async function saveCloseoutReport(projectId: number, _previous: CloseoutS
   if (!Number.isSafeInteger(version) || version < 0) return { error: "Reload the report before saving." };
   const notes: CloseoutNotes = {};
   for (const field of CLOSEOUT_FIELDS) {
-    const value = form.get(field.key);
-    if (typeof value !== "string" || value.length > 10000) return { error: `${field.label} must be at most 10,000 characters.` };
-    notes[field.key] = value.trim();
+    const raw = form.get(field.key);
+    if (raw === null) continue;
+    if (typeof raw !== "string" || raw.length > 10000) return { error: `${field.label} must be at most 10,000 characters.` };
+    notes[field.key] = raw.trim();
   }
   const milestoneDates: Record<string, string> = {};
   for (const [key, value] of form.entries()) {

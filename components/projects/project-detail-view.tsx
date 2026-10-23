@@ -2,7 +2,7 @@
 import { SheetsSection } from "@/components/projects/sheets/sheets-section";
 import type { listSheets } from "@/lib/sheets/actions";
 
-import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -40,6 +40,12 @@ const GanttChartView = dynamic(
 import { DailyLogsView } from "@/components/projects/daily-logs/daily-logs-view";
 import { MaterialsOverviewView } from "@/components/projects/materials/materials-overview-view";
 import { MaterialPurchasesView } from "@/components/projects/materials/material-purchases-view";
+import {
+  computeMaterialStocks,
+  summarizeMaterialStocks,
+  type MaterialPurchase,
+  type MaterialStockItem,
+} from "@/lib/materials/purchases-model";
 import {
   MaterialsMonitoringView,
   type MaterialsRecordView,
@@ -260,6 +266,7 @@ export function ProjectDetailView({
   surveyQuestions,
   materials,
   materialsCounts,
+  materialPurchases = [],
   materialRecords,
   recentMaterialUsage,
   materialRequests,
@@ -297,6 +304,7 @@ export function ProjectDetailView({
   surveyQuestions: SurveyQuestion[];
   materials: ProjectMaterial[];
   materialsCounts: MaterialsOverviewCounts;
+  materialPurchases?: MaterialPurchase[];
   /** Every material the project has, each once — planned, used, in
    * stock (buildMaterialRecords) — the Materials tab's Material record. */
   materialRecords: MaterialRecord[];
@@ -434,6 +442,26 @@ export function ProjectDetailView({
     : undefined;
   const [materialsRecordView, setMaterialsRecordView] =
     useState<MaterialsRecordView>(landOnRequests ? "requests" : "materials");
+  const [liveStocks, setLiveStocks] = useState<MaterialStockItem[] | null>(null);
+
+  const currentMaterialStocks = useMemo(() => {
+    if (liveStocks && liveStocks.length > 0) return liveStocks;
+    return computeMaterialStocks(materialPurchases, recentMaterialUsage);
+  }, [liveStocks, materialPurchases, recentMaterialUsage]);
+
+  const effectiveMaterialsCounts = useMemo(() => {
+    if (!liveStocks || liveStocks.length === 0) {
+      return materialsCounts;
+    }
+    const summary = summarizeMaterialStocks(liveStocks);
+    return {
+      totalMaterials: Math.max(materialRecords.length, summary.totalMaterials),
+      availableMaterials: summary.availableMaterials,
+      lowStockMaterials: summary.lowStockMaterials,
+      consumedMaterials: summary.outOfStockMaterials,
+    };
+  }, [liveStocks, materialsCounts, materialRecords.length]);
+
   const materialsRecordRef = useRef<HTMLDivElement>(null);
   // The page's own scrolling area — everything here scrolls in it.
   const pageScrollRef = useRef<HTMLDivElement>(null);
@@ -733,7 +761,7 @@ export function ProjectDetailView({
           // every material in the project.
           <div className="flex flex-col gap-6">
             <MaterialsOverviewView
-              counts={materialsCounts}
+              counts={effectiveMaterialsCounts}
               requests={materialRequests}
               recentUsage={recentMaterialUsage.slice(0, 10)}
               onOpenRequest={openRequestInRecord}
@@ -744,7 +772,12 @@ export function ProjectDetailView({
                 }
               }}
             />
-            <MaterialPurchasesView projectId={project.id} usage={recentMaterialUsage} />
+            <MaterialPurchasesView
+              projectId={project.id}
+              usage={recentMaterialUsage}
+              initialPurchases={materialPurchases}
+              onStocksChange={setLiveStocks}
+            />
             {/* scroll-mt clears the sticky tabs bar when See all scrolls here. */}
             <div ref={materialsRecordRef} className="scroll-mt-16">
               <MaterialsMonitoringView
@@ -924,6 +957,7 @@ export function ProjectDetailView({
                 setImportBomModalOpen(true);
               }}
               onNavigateToCostEstimate={handleNavigateToCostEstimate}
+              materialStocks={currentMaterialStocks}
             />
           </div>
         )}
@@ -948,6 +982,7 @@ export function ProjectDetailView({
         target={equipmentProgressTarget}
         readOnly
         projectId={project.id}
+        materialStocks={currentMaterialStocks}
         categories={costEstimate.categories}
         workingDays={project.workingDays}
         holidays={project.holidays}

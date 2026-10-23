@@ -513,7 +513,7 @@ function WeightBreakdownContent({
                     key={t.id}
                     onClick={() => handleNavigate({ kind: "task", id: t.id })}
                     title={`Click to view "${t.name}" in Cost Estimate Breakdown`}
-                    className="group cursor-pointer transition hover:bg-zinc-900 hover:text-white"
+                    className="group cursor-pointer transition hover:bg-zinc-50 hover:text-zinc-900"
                   >
                     <td className="truncate py-2 pl-3 pr-2 font-medium">
                       <div className="flex items-center gap-1.5 truncate">

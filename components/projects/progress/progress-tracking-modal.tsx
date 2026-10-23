@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { Modal } from "@/components/ui/modal";
 import { usePortal } from "@/components/portal/portal-context";
 import { ProgressTrackingModalContent } from "./progress-tracking-modal-content";
+import type { MaterialStockItem } from "@/lib/materials/purchases-model";
 import type { CostCategory, CostTask } from "@/lib/cost-estimate/data";
 import type { ProjectOverrideHistory } from "@/lib/progress-logs/types";
 import type { TaskProgressToday } from "@/lib/task-progress/data";
@@ -48,11 +49,13 @@ export function ProgressTrackingModal({
   workers = [],
   taskWorkerAssignments = {},
   categoryWorkerAssignments = {},
+  materialStocks,
   onClose,
 }: {
   target: ProgressModalTarget | null;
   readOnly?: boolean;
   projectId: number;
+  materialStocks?: MaterialStockItem[];
   categories: CostCategory[];
   workingDays: number[];
   holidays: string[];
@@ -138,6 +141,8 @@ export function ProgressTrackingModal({
       {target && item && (
         <ProgressTrackingModalContent
           key={`${itemKey}:${target.highlightEntryDate ?? ""}`}
+          projectId={projectId}
+          materialStocks={materialStocks}
           readOnly={readOnly}
           estimatedQuantity={item.estimatedQuantity}
           unit={item.unit}
