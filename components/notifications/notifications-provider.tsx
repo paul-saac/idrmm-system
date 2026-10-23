@@ -14,6 +14,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   dismissNotification,
   listMyNotifications,
+  markNotificationUnread,
   markNotificationsRead,
   type AppNotification,
 } from "@/lib/notifications/actions";
@@ -24,6 +25,7 @@ type Notifications = {
   load: () => void;
   /** One notification read — or every one, with no id. */
   markRead: (id?: number) => Promise<void>;
+  markUnread: (id: number) => Promise<void>;
   /** Removes one notification for good (Dismiss). */
   dismiss: (notification: AppNotification) => Promise<void>;
 };
@@ -96,9 +98,15 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     await dismissNotification(notification.id);
   }, []);
 
+  const markUnread = useCallback(async (id: number) => {
+    setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: false } : n)));
+    setUnreadCount((count) => count + 1);
+    await markNotificationUnread(id);
+  }, []);
+
   const value = useMemo(
-    () => ({ items, unreadCount, load, markRead, dismiss }),
-    [items, unreadCount, load, markRead, dismiss]
+    () => ({ items, unreadCount, load, markRead, markUnread, dismiss }),
+    [items, unreadCount, load, markRead, markUnread, dismiss]
   );
 
   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;

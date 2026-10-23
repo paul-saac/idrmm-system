@@ -514,11 +514,10 @@ export function TeamBrowser({
             </p>
           ) : (
             <>
-              {/* Every member of the tab, scrolling within the card past
-                  about eight rows — its header row staying put on top
-                  (sticky, which also keeps the header's hidden label in
-                  its cell rather than placed against the page). */}
-              <div className="max-h-[34rem] overflow-auto">
+              {/* Keep the member list a consistent, comfortable size. The
+                  table scrolls inside this area when a category has more
+                  rows, while its header remains visible. */}
+              <div className="h-[40rem] overflow-auto">
                 {/* Fixed widths, so the columns stay put from tab to tab. */}
                 <table className="w-full min-w-5xl table-fixed text-left text-[13px] text-zinc-600">
                   <colgroup>

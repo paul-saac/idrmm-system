@@ -1,7 +1,8 @@
 ﻿import type { CloseoutReportData } from "./closeout-data";
 import { dayVariance, isDateOnly } from "./closeout-model";
 import { ISSUE_TYPE_LABELS, PUNCH_STATUS_LABELS } from "./punch-list-model";
-import { QUALITY_AUTHORITY_TYPE_LABELS, QUALITY_INSPECTION_TYPE_LABELS, QUALITY_RESULT_LABELS } from "./quality-inspection-model";
+import { QUALITY_INSPECTION_TYPE_LABELS, QUALITY_RESULT_LABELS } from "./quality-inspection-model";
+import { INCIDENT_SEVERITIES, INCIDENT_TYPES } from "../incidents/model";
 
 export const REPORT_SECTIONS = [
   { id: "summary", label: "General information & lifecycle summary" },
@@ -41,8 +42,20 @@ export const AS_BUILT_COLUMNS = [
 ] as const;
 export type AsBuiltReportOptions = { title: string; sections: AsBuiltSectionId[]; columns: string[]; from: string; to: string };
 export type PunchListReportOptions = { title: string; from: string; to: string };
-export type FinancialReportOptions = { title: string };
+export const FINANCIAL_REPORT_SECTIONS = [
+  { id: "summary", label: "Final cost summary" },
+  { id: "cost_type", label: "Planned vs. actual by cost type" },
+  { id: "materials", label: "Material cost breakdown" },
+  { id: "labor", label: "Labor cost breakdown" },
+  { id: "equipment", label: "Equipment cost breakdown" },
+  { id: "other", label: "Other cost breakdown" },
+  { id: "categories", label: "Job cost breakdown by category" },
+  { id: "tasks", label: "Job cost breakdown by task" },
+] as const;
+export type FinancialSectionId = typeof FINANCIAL_REPORT_SECTIONS[number]["id"];
+export type FinancialReportOptions = { title: string; sections: FinancialSectionId[]; from: string; to: string };
 export type QualityReportOptions = { title: string; from: string; to: string };
+export type SafetyReportOptions = { title: string; from: string; to: string };
 
 export type GeneratedReportMetadata = {
   projectTitle: string;
@@ -84,7 +97,7 @@ export type PunchReportItemDetail = {
 };
 
 export type GeneratedReport = {
-  reportType?: "closeout" | "punch" | "as-built" | "financial" | "quality";
+  reportType?: "closeout" | "punch" | "as-built" | "financial" | "quality" | "safety";
   title: string;
   project: string;
   asOf: string;
@@ -163,33 +176,168 @@ export function generateFinancialReport(
   options: FinancialReportOptions
 ): GeneratedReport {
   if (!options.title.trim()) throw new Error("Enter a report title.");
+  if (!options.sections.length) throw new Error("Select at least one section.");
+  if (options.sections.some(section => !FINANCIAL_REPORT_SECTIONS.some(item => item.id === section))) {
+    throw new Error("Select valid financial report sections.");
+  }
+  if ((options.from && !isDateOnly(options.from)) || (options.to && !isDateOnly(options.to)) || (options.from && options.to && options.from > options.to)) {
+    throw new Error("Enter a valid financial record date range.");
+  }
 
   const fallbackPlanned = data.work.reduce((sum, item) => sum + item.planned, 0);
   const fallbackActual = data.work.reduce((sum, item) => sum + item.logged, 0);
-  const costs = data.costBaseline ?? {
+  const baseline = data.costBaseline ?? {
     allocatedBudget: data.project.allocatedBudget ?? null,
     planned: { material: 0, labor: 0, equipment: 0, other: 0, total: fallbackPlanned },
     actual: { material: 0, labor: 0, equipment: 0, other: 0, total: fallbackActual },
   };
+  const expenses = (data.expenses ?? []).filter(entry =>
+    (!options.from || entry.entryDate >= options.from) && (!options.to || entry.entryDate <= options.to)
+  );
+  const hasDateFilter = Boolean(options.from || options.to);
+  const filteredActual = expenses.reduce((totals, entry) => {
+    totals.material += entry.costs.material;
+    totals.labor += entry.costs.labor;
+    totals.equipment += entry.costs.equipment;
+    totals.other += entry.costs.other;
+    return totals;
+  }, { material: 0, labor: 0, equipment: 0, other: 0 });
+  const costs = {
+    allocatedBudget: baseline.allocatedBudget,
+    planned: baseline.planned,
+    actual: hasDateFilter
+      ? { ...filteredActual, total: filteredActual.material + filteredActual.labor + filteredActual.equipment + filteredActual.other }
+      : baseline.actual,
+  };
+  const dateScope = hasDateFilter
+    ? `${options.from ? formatReportDate(options.from) : "Project start"} to ${options.to ? formatReportDate(options.to) : formatReportDate(data.asOf)}`
+    : "All recorded project dates";
   const totalVariance = costs.planned.total - costs.actual.total;
   const utilization = costs.planned.total > 0
     ? `${((costs.actual.total / costs.planned.total) * 100).toFixed(2)}%`
     : "Not applicable";
-  const categoryRows = data.deliverables.map(category => [
-    category.name,
-    fmtPhp(category.planned),
-    fmtPhp(category.logged),
-    fmtVariancePhp(category.planned, category.logged),
-    costStatusLabel(category.planned, category.logged),
-  ]);
-  const taskRows = data.work.map(item => [
-    item.name,
-    item.phase,
-    fmtPhp(item.planned),
-    fmtPhp(item.logged),
-    fmtVariancePhp(item.planned, item.logged),
-    costStatusLabel(item.planned, item.logged),
-  ]);
+  const actualByItem = new Map<string, number>();
+  for (const expense of expenses) {
+    const amount = expense.costs.material + expense.costs.labor + expense.costs.equipment + expense.costs.other;
+    actualByItem.set(expense.itemKey, (actualByItem.get(expense.itemKey) ?? 0) + amount);
+  }
+  const categoryRows = data.deliverables.map(category => {
+    const categoryWork = data.work.filter(item => item.phase === category.name);
+    const filteredLogged = categoryWork.reduce((sum, item) => sum + (actualByItem.get(item.key) ?? 0), 0) + (actualByItem.get(`category-${category.id}`) ?? 0);
+    const actual = hasDateFilter ? filteredLogged : category.logged;
+    return [category.name, fmtPhp(category.planned), fmtPhp(actual), fmtVariancePhp(category.planned, actual), costStatusLabel(category.planned, actual)];
+  });
+  const taskRows = data.work.map(item => {
+    const actual = hasDateFilter ? (actualByItem.get(item.key) ?? 0) : item.logged;
+    return [item.name, item.phase, fmtPhp(item.planned), fmtPhp(actual), fmtVariancePhp(item.planned, actual), costStatusLabel(item.planned, actual)];
+  });
+  const materialRows = expenses
+    .filter(entry => entry.costs.material > 0)
+    .map(entry => [
+      formatReportDate(entry.entryDate),
+      entry.itemName || "Material purchase",
+      entry.supplier || "Not recorded",
+      entry.invoiceNumber || "Not recorded",
+      entry.materialPurchase ? `${entry.materialPurchase.quantity.toLocaleString("en-US")} ${entry.materialPurchase.unit}` : "Not recorded",
+      entry.materialPurchase ? fmtPhp(entry.materialPurchase.unitPrice) : "Not recorded",
+      fmtPhp(entry.costs.material),
+    ]);
+  const laborRows = expenses.flatMap(entry => {
+    if (entry.costs.labor <= 0) return [];
+    if (entry.attendance?.length) {
+      return entry.attendance.map(worker => [
+        formatReportDate(entry.entryDate), worker.name, entry.itemName || "Project work",
+        worker.hours, fmtPhp(worker.rate), fmtPhp(worker.hours * worker.rate),
+      ]);
+    }
+    return [[formatReportDate(entry.entryDate), "Aggregate labor cost", entry.itemName || "Project work", "Not recorded", "Not recorded", fmtPhp(entry.costs.labor)]];
+  });
+  const equipmentRows = expenses.flatMap(entry => {
+    if (entry.costs.equipment <= 0) return [];
+    if (entry.equipmentItems?.length) {
+      return entry.equipmentItems.map(item => [
+        formatReportDate(entry.entryDate), item.name, entry.itemName || "Project work",
+        item.unplanned ? "Unplanned" : "Planned item", fmtPhp(item.amount),
+      ]);
+    }
+    return [[formatReportDate(entry.entryDate), entry.equipmentName || "Aggregate equipment cost", entry.itemName || "Project work", "Not itemized", fmtPhp(entry.costs.equipment)]];
+  });
+  const otherRows = expenses.flatMap(entry => {
+    if (entry.costs.other <= 0) return [];
+    if (entry.otherItems?.length) {
+      return entry.otherItems.map(item => [
+        formatReportDate(entry.entryDate), item.name, entry.itemName || "Project work",
+        item.unplanned ? "Unplanned" : "Planned item", fmtPhp(item.amount),
+      ]);
+    }
+    return [[formatReportDate(entry.entryDate), "Aggregate other cost", entry.itemName || "Project work", "Not itemized", fmtPhp(entry.costs.other)]];
+  });
+
+  const sectionById: Record<FinancialSectionId, GeneratedReportSection> = {
+    summary: {
+      title: "A. Final cost summary",
+      subtitle: "Planned figures use the full approved project estimate. Actual figures use saved expenditure records within the selected reporting period.",
+      paragraphs: [`Financial record period: ${dateScope}.`],
+      headers: ["Financial measure", "Amount / Result", "Basis"],
+      rows: [
+        ...(costs.allocatedBudget == null
+          ? []
+          : [["Allocated project budget", fmtPhp(costs.allocatedBudget), "Project record"]]),
+        ["Total planned job cost", fmtPhp(costs.planned.total), "Cost Estimate Breakdown"],
+        ["Total actual expenditure", fmtPhp(costs.actual.total), hasDateFilter ? "Saved entries within selected dates" : "All current saved project cost entries"],
+        ["Planned versus actual variance", fmtVariancePhp(costs.planned.total, costs.actual.total), totalVariance >= 0 ? "Within planned cost" : "Over planned cost"],
+        ["Cost utilization", utilization, "Actual expenditure divided by planned job cost"],
+      ],
+    },
+    cost_type: {
+      title: "B. Planned vs. actual by cost type",
+      paragraphs: [`Actual expenditure period: ${dateScope}. Planned values remain the full project baseline.`],
+      headers: ["Cost type", "Planned", "Actual", "Variance", "Status"],
+      rows: [
+        ["Labor", fmtPhp(costs.planned.labor), fmtPhp(costs.actual.labor), fmtVariancePhp(costs.planned.labor, costs.actual.labor), costStatusLabel(costs.planned.labor, costs.actual.labor)],
+        ["Materials", fmtPhp(costs.planned.material), fmtPhp(costs.actual.material), fmtVariancePhp(costs.planned.material, costs.actual.material), costStatusLabel(costs.planned.material, costs.actual.material)],
+        ["Tools & Equipment", fmtPhp(costs.planned.equipment), fmtPhp(costs.actual.equipment), fmtVariancePhp(costs.planned.equipment, costs.actual.equipment), costStatusLabel(costs.planned.equipment, costs.actual.equipment)],
+        ["Other Costs", fmtPhp(costs.planned.other), fmtPhp(costs.actual.other), fmtVariancePhp(costs.planned.other, costs.actual.other), costStatusLabel(costs.planned.other, costs.actual.other)],
+        ["Total Job Cost", fmtPhp(costs.planned.total), fmtPhp(costs.actual.total), fmtVariancePhp(costs.planned.total, costs.actual.total), costStatusLabel(costs.planned.total, costs.actual.total)],
+      ],
+    },
+    materials: {
+      title: "C. Material cost breakdown",
+      paragraphs: materialRows.length ? [] : ["No material purchase costs are recorded for this project."],
+      headers: materialRows.length ? ["Purchase date", "Material / Description", "Supplier", "Invoice", "Quantity", "Unit price", "Amount"] : [],
+      rows: materialRows,
+    },
+    labor: {
+      title: "D. Labor cost breakdown",
+      paragraphs: laborRows.length ? [] : ["No labor costs are recorded for this project."],
+      headers: laborRows.length ? ["Log date", "Worker", "Task / Category", "Hours worked", "Rate", "Amount"] : [],
+      rows: laborRows,
+    },
+    equipment: {
+      title: "E. Equipment cost breakdown",
+      paragraphs: equipmentRows.length ? [] : ["No equipment costs are recorded for this project."],
+      headers: equipmentRows.length ? ["Log date", "Equipment / Description", "Task / Category", "Cost basis", "Amount"] : [],
+      rows: equipmentRows,
+    },
+    other: {
+      title: "F. Other cost breakdown",
+      paragraphs: otherRows.length ? [] : ["No other costs are recorded for this project."],
+      headers: otherRows.length ? ["Log date", "Description", "Task / Category", "Cost basis", "Amount"] : [],
+      rows: otherRows,
+    },
+    categories: {
+      title: "G. Job cost breakdown by category",
+      paragraphs: categoryRows.length ? [`Actual expenditure period: ${dateScope}.`] : ["No cost-estimate categories are recorded for this project."],
+      headers: categoryRows.length ? ["Category", "Planned", "Actual", "Variance", "Status"] : [],
+      rows: categoryRows,
+    },
+    tasks: {
+      title: "H. Job cost breakdown by task",
+      paragraphs: taskRows.length ? [`Actual expenditure period: ${dateScope}.`] : ["No cost-estimate tasks are recorded for this project."],
+      headers: taskRows.length ? ["Task", "Category", "Planned", "Actual", "Variance", "Status"] : [],
+      rows: taskRows,
+    },
+  };
 
   return {
     reportType: "financial",
@@ -197,47 +345,9 @@ export function generateFinancialReport(
     project: data.project.name,
     asOf: data.asOf,
     metadata: buildReportMetadata(data, "FJC"),
-    sections: [
-      {
-        title: "A. Final cost summary",
-        subtitle: "Financial figures are based on the project cost estimate and current saved project expenditure records.",
-        paragraphs: [],
-        headers: ["Financial measure", "Amount / Result", "Basis"],
-        rows: [
-          ...(costs.allocatedBudget == null
-            ? []
-            : [["Allocated project budget", fmtPhp(costs.allocatedBudget), "Project record"]]),
-          ["Total planned job cost", fmtPhp(costs.planned.total), "Cost Estimate Breakdown"],
-          ["Total actual expenditure", fmtPhp(costs.actual.total), "Current saved project cost entries"],
-          ["Planned versus actual variance", fmtVariancePhp(costs.planned.total, costs.actual.total), totalVariance >= 0 ? "Within planned cost" : "Over planned cost"],
-          ["Cost utilization", utilization, "Actual expenditure divided by planned job cost"],
-        ],
-      },
-      {
-        title: "B. Cost breakdown by type",
-        paragraphs: [],
-        headers: ["Cost type", "Planned", "Actual", "Variance", "Status"],
-        rows: [
-          ["Labor", fmtPhp(costs.planned.labor), fmtPhp(costs.actual.labor), fmtVariancePhp(costs.planned.labor, costs.actual.labor), costStatusLabel(costs.planned.labor, costs.actual.labor)],
-          ["Materials", fmtPhp(costs.planned.material), fmtPhp(costs.actual.material), fmtVariancePhp(costs.planned.material, costs.actual.material), costStatusLabel(costs.planned.material, costs.actual.material)],
-          ["Tools & Equipment", fmtPhp(costs.planned.equipment), fmtPhp(costs.actual.equipment), fmtVariancePhp(costs.planned.equipment, costs.actual.equipment), costStatusLabel(costs.planned.equipment, costs.actual.equipment)],
-          ["Other Costs", fmtPhp(costs.planned.other), fmtPhp(costs.actual.other), fmtVariancePhp(costs.planned.other, costs.actual.other), costStatusLabel(costs.planned.other, costs.actual.other)],
-          ["Total Job Cost", fmtPhp(costs.planned.total), fmtPhp(costs.actual.total), fmtVariancePhp(costs.planned.total, costs.actual.total), costStatusLabel(costs.planned.total, costs.actual.total)],
-        ],
-      },
-      {
-        title: "C. Job cost breakdown by category",
-        paragraphs: categoryRows.length ? [] : ["No cost-estimate categories are recorded for this project."],
-        headers: categoryRows.length ? ["Category", "Planned", "Actual", "Variance", "Status"] : [],
-        rows: categoryRows,
-      },
-      {
-        title: "D. Job cost breakdown by task",
-        paragraphs: taskRows.length ? [] : ["No cost-estimate tasks are recorded for this project."],
-        headers: taskRows.length ? ["Task", "Category", "Planned", "Actual", "Variance", "Status"] : [],
-        rows: taskRows,
-      },
-    ],
+    sections: FINANCIAL_REPORT_SECTIONS
+      .filter(section => options.sections.includes(section.id))
+      .map(section => sectionById[section.id]),
   };
 }
 
@@ -250,65 +360,38 @@ export function generateQualityReport(data: CloseoutReportData, options: Quality
     (!options.from || item.inspected_on >= options.from) && (!options.to || item.inspected_on <= options.to)
   );
   const sheetById = new Map((data.sheets ?? []).map(sheet => [sheet.id, sheet]));
-  const punchById = new Map(data.punchItems.map(item => [item.id, item]));
   const missing = "Not recorded";
-  const evidenceStanding = (sheetId: number | null) => {
-    if (sheetId == null) return "Signed evidence not linked";
-    const sheet = sheetById.get(sheetId);
-    if (!sheet) return "Linked document unavailable";
-    return sheet.status === "accepted" ? "Accepted signed evidence linked" : `Document: ${STATUS_LABELS[sheet.status] ?? sheet.status}`;
-  };
   const inspectionRows = items.map(item => [
     `INS-${String(item.id).padStart(4, "0")}`,
     QUALITY_INSPECTION_TYPE_LABELS[item.inspection_type],
     item.inspection_scope || item.related_work_name || missing,
     item.area,
     formatReportDate(item.inspected_on),
-    item.certificate_number || missing,
-    item.issued_on ? formatReportDate(item.issued_on) : missing,
-    `${QUALITY_AUTHORITY_TYPE_LABELS[item.authority_type]} — ${item.inspector_name}`,
+    item.inspector_name,
+    item.inspector_organization || missing,
     QUALITY_RESULT_LABELS[item.result],
-    evidenceStanding(item.related_sheet_id),
+    item.remarks || missing,
   ]);
   const testItems = items.filter(item => item.test_name || item.acceptance_criteria || item.actual_result);
   const testRows = testItems.map(item => [
     `INS-${String(item.id).padStart(4, "0")}`,
     item.test_name || missing,
     item.inspection_scope || item.related_work_name || missing,
-    item.standard_reference || missing,
     item.acceptance_criteria || missing,
     `${item.actual_result || missing}${item.actual_result && item.result_unit ? ` ${item.result_unit}` : ""}`,
     QUALITY_RESULT_LABELS[item.result],
-    formatReportDate(item.inspected_on),
   ]);
   const evidenceItems = items.filter(item => item.related_sheet_id != null);
   const evidenceRows = evidenceItems.map(item => {
     const sheet = item.related_sheet_id == null ? undefined : sheetById.get(item.related_sheet_id);
     return [
       `INS-${String(item.id).padStart(4, "0")}`,
+      item.inspection_scope || item.related_work_name || missing,
       sheet ? `${sheet.sheet_number} — ${sheet.title}` : "Linked document unavailable",
       sheet ? (DOC_TYPE_LABELS[sheet.document_type] ?? sheet.document_type) : missing,
       sheet ? (STATUS_LABELS[sheet.status] ?? sheet.status) : missing,
       item.inspector_name,
-      QUALITY_AUTHORITY_TYPE_LABELS[item.authority_type],
-      item.license_number || missing,
-    ];
-  });
-  const correctiveItems = items.filter(item =>
-    item.nonconformance_description || item.corrective_action_required || item.punch_item_id != null || item.reinspection_reference
-  );
-  const correctiveRows = correctiveItems.map(item => {
-    const punchItem = item.punch_item_id == null ? undefined : punchById.get(item.punch_item_id);
-    return [
-      `INS-${String(item.id).padStart(4, "0")}`,
-      item.nonconformance_description || missing,
-      item.corrective_action_required || missing,
-      punchItem ? `PL-${String(punchItem.id).padStart(4, "0")}` : "Not linked",
-      punchItem?.assigned_to_name || punchItem?.responsible_trade || "Unassigned",
-      punchItem ? punchItem.priority.charAt(0).toUpperCase() + punchItem.priority.slice(1) : missing,
-      punchItem?.due_date ? formatReportDate(punchItem.due_date) : missing,
-      punchItem ? PUNCH_STATUS_LABELS[punchItem.status] : missing,
-      item.reinspection_reference || missing,
+      QUALITY_RESULT_LABELS[item.result],
     ];
   });
 
@@ -320,46 +403,131 @@ export function generateQualityReport(data: CloseoutReportData, options: Quality
     metadata: buildReportMetadata(data, "QAI"),
     sections: [
       {
-        title: "A. Final inspection certificates",
-        subtitle: "A technical decision is attributed to the named authority. Formal sign-off evidence is documented only when an accepted project document is linked.",
+        title: "A. Inspection summary",
         paragraphs: inspectionRows.length ? [] : ["No quality inspection records match this selection."],
-        headers: inspectionRows.length ? ["Reference", "Inspection type", "Scope / System", "Area", "Inspection date", "Certificate / Report No.", "Issue date", "Authority / Inspector", "Technical result", "Evidence"] : [],
+        headers: inspectionRows.length ? ["Reference", "Inspection type", "Work inspected", "Area / Location", "Inspection date", "Inspector", "Organization", "Result", "Findings / Remarks"] : [],
         rows: inspectionRows,
       },
       {
         title: "B. Test results",
         paragraphs: testRows.length ? [] : ["No structured test results match this selection."],
-        headers: testRows.length ? ["Inspection", "Test", "Scope / System", "Standard / Specification", "Acceptance criteria", "Actual result", "Technical decision", "Test date"] : [],
+        headers: testRows.length ? ["Inspection", "Test", "Work inspected", "Required result", "Actual result", "Result"] : [],
         rows: testRows,
       },
       {
-        title: "C. Certificate and compliance documents",
-        paragraphs: evidenceRows.length ? [] : ["No project document has been linked as inspection evidence."],
-        headers: evidenceRows.length ? ["Inspection", "Document", "Document type", "Document record status", "Inspector", "Authority type", "License / Accreditation"] : [],
+        title: "C. Supporting certificates and sign-offs",
+        paragraphs: evidenceRows.length ? [] : ["No supporting document is attached to the selected inspections."],
+        headers: evidenceRows.length ? ["Inspection", "Work inspected", "Supporting document", "Document type", "Document status", "Inspector", "Result"] : [],
+        rows: evidenceRows,
+      },
+    ],
+  };
+}
+
+export function generateSafetyReport(data: CloseoutReportData, options: SafetyReportOptions): GeneratedReport {
+  if (!options.title.trim()) throw new Error("Enter a report title.");
+  if ((options.from && !isDateOnly(options.from)) || (options.to && !isDateOnly(options.to)) || (options.from && options.to && options.from > options.to)) {
+    throw new Error("Enter a valid incident date range.");
+  }
+
+  const items = data.safetyIncidents.filter(item =>
+    (!options.from || item.occurred_on >= options.from) && (!options.to || item.occurred_on <= options.to)
+  );
+  const countType = (type: keyof typeof INCIDENT_TYPES) => items.filter(item => item.incident_type === type).length;
+  const countSeverity = (severity: keyof typeof INCIDENT_SEVERITIES) => items.filter(item => item.severity === severity).length;
+  const injuryCount = countType("injury");
+  const seriousCount = countSeverity("serious");
+  const evidenceCount = items.reduce((total, item) => total + item.attachments.length, 0);
+  const incidentDays = new Set(items.map(item => item.occurred_on)).size;
+  const selectedPeriod = options.from || options.to
+    ? `${options.from ? formatReportDate(options.from) : "Project start"} to ${options.to ? formatReportDate(options.to) : formatReportDate(data.asOf)}`
+    : "All recorded project dates";
+  const recordStatement = items.length === 0
+    ? "No safety incidents are recorded for the selected period. This statement reflects IDR M&M records only and is not an independent zero-accident certification."
+    : injuryCount === 0
+      ? `${items.length} incident${items.length === 1 ? " is" : "s are"} recorded for the selected period, with no injury incident recorded.`
+      : `${items.length} incident${items.length === 1 ? " is" : "s are"} recorded for the selected period, including ${injuryCount} injury record${injuryCount === 1 ? "" : "s"}.`;
+
+  const incidentRows = items.map(item => [
+    formatReportDate(item.occurred_on),
+    item.occurred_time?.slice(0, 5) || "Not recorded",
+    INCIDENT_TYPES[item.incident_type],
+    INCIDENT_SEVERITIES[item.severity],
+    item.context_name || "Project-wide",
+    item.location || "Not recorded",
+    item.reporter_name || "Project member",
+  ]);
+  const narrativeRows = items.map(item => [
+    formatReportDate(item.occurred_on),
+    INCIDENT_TYPES[item.incident_type],
+    INCIDENT_SEVERITIES[item.severity],
+    item.description,
+    item.reporter_name || "Project member",
+  ]);
+  const evidenceRows = items.flatMap(item => item.attachments.map(attachment => [
+    formatReportDate(item.occurred_on),
+    INCIDENT_TYPES[item.incident_type],
+    attachment.name,
+    attachment.type === "application/pdf" ? "PDF" : "Photo",
+    attachment.url ? "Available in system" : "Recorded; file unavailable",
+  ]));
+
+  return {
+    reportType: "safety",
+    title: options.title.trim(),
+    project: data.project.name,
+    asOf: data.asOf,
+    metadata: buildReportMetadata(data, "SIC"),
+    sections: [
+      {
+        title: "A. Safety performance summary",
+        paragraphs: [recordStatement, `Reporting period: ${selectedPeriod}.`],
+        headers: ["Measure", "Recorded count", "Review"],
+        rows: [
+          ["Total incidents", items.length, `${incidentDays} day${incidentDays === 1 ? "" : "s"} with a recorded incident`],
+          ["Injuries", injuryCount, injuryCount === 0 ? "No injury incident recorded" : "Review incident narratives"],
+          ["Near misses", countType("near_miss"), "Recorded near-miss events"],
+          ["Equipment damage", countType("equipment_damage"), "Recorded equipment events"],
+          ["Property damage", countType("property_damage"), "Recorded property events"],
+          ["Other incidents", countType("other"), "Other recorded safety events"],
+          ["Minor severity", countSeverity("minor"), "Recorded classification"],
+          ["Moderate severity", countSeverity("moderate"), "Recorded classification"],
+          ["Serious severity", seriousCount, seriousCount === 0 ? "No serious incident recorded" : "Requires management review"],
+        ],
+      },
+      {
+        title: "B. Incident register",
+        paragraphs: incidentRows.length ? [] : ["No incident records match this selection."],
+        headers: incidentRows.length ? ["Date", "Time", "Incident type", "Severity", "Task / Phase", "Location", "Reported by"] : [],
+        rows: incidentRows,
+      },
+      {
+        title: "C. Incident review details",
+        paragraphs: narrativeRows.length ? [] : ["No incident narratives match this selection."],
+        headers: narrativeRows.length ? ["Date", "Incident type", "Severity", "What happened", "Reported by"] : [],
+        rows: narrativeRows,
+      },
+      {
+        title: "D. Supporting evidence register",
+        paragraphs: evidenceRows.length
+          ? ["Files listed below are retained with their source incident records in IDR M&M."]
+          : ["No photos or supporting documents are attached to the selected incident records."],
+        headers: evidenceRows.length ? ["Incident date", "Incident type", "File", "Evidence type", "Availability"] : [],
         rows: evidenceRows,
       },
       {
-        title: "D. Code-compliance sign-offs",
-        paragraphs: items.length ? ["Administrative inclusion records the supplied authority decision. It does not replace the signed certificate or make project staff the technical approver."] : [],
-        headers: items.length ? ["Reference", "Scope / System", "Authority type", "Inspector", "Role / Organization", "Certificate / Report No.", "License / Accreditation", "Technical decision", "Issue date", "Signed evidence"] : [],
-        rows: items.map(item => [
-          `INS-${String(item.id).padStart(4, "0")}`,
-          item.inspection_scope || item.related_work_name || missing,
-          QUALITY_AUTHORITY_TYPE_LABELS[item.authority_type],
-          item.inspector_name,
-          [item.inspector_role, item.inspector_organization].filter(Boolean).join(" / ") || missing,
-          item.certificate_number || missing,
-          item.license_number || missing,
-          QUALITY_RESULT_LABELS[item.result],
-          item.issued_on ? formatReportDate(item.issued_on) : missing,
-          evidenceStanding(item.related_sheet_id),
-        ]),
-      },
-      {
-        title: "E. Nonconformance and corrective-action traceability",
-        paragraphs: correctiveRows.length ? [] : ["No nonconformance or corrective-action records match this selection."],
-        headers: correctiveRows.length ? ["Inspection", "Nonconformance", "Corrective action", "Punch item", "Responsible person / trade", "Priority", "Due date", "Resolution status", "Reinspection reference"] : [],
-        rows: correctiveRows,
+        title: "E. Closeout review",
+        paragraphs: [
+          "This report summarizes submitted incident records. The current incident form does not record corrective actions, resolution status, regulatory determinations, or final safety sign-off, so this document must not be treated as proof that every incident is closed.",
+        ],
+        headers: ["Review item", "Result"],
+        rows: [
+          ["Incident records reviewed", items.length],
+          ["Serious incidents requiring management review", seriousCount],
+          ["Supporting files recorded", evidenceCount],
+          ["Corrective action and resolution status", "Not recorded by the current incident feature"],
+          ["Final safety approval", "Signature: ______________________________    Date: ________________"],
+        ],
       },
     ],
   };

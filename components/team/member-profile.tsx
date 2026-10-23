@@ -110,13 +110,13 @@ export function MemberProfile({
                     return (
                       <span
                         key={day}
-                        className={`flex w-10 flex-col items-center rounded-sm border py-1 ${
-                          hours > 0 ? "border-zinc-200" : "border-zinc-100"
-                        }`}
+                        className="flex w-10 shrink-0 flex-col items-center gap-1"
                       >
                         <span className="text-[10px] font-medium text-zinc-400 uppercase">{day}</span>
                         <span
-                          className={`text-sm tabular-nums ${hours > 0 ? "text-zinc-900" : "text-zinc-300"}`}
+                          className={`w-full rounded-sm border bg-white px-1 py-2 text-center text-sm tabular-nums ${
+                            hours > 0 ? "border-zinc-200 text-zinc-900" : "border-zinc-100 text-zinc-300"
+                          }`}
                         >
                           {hours}
                         </span>

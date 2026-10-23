@@ -3,6 +3,7 @@ import type { MaterialPurchase } from "@/lib/materials/purchases-model";
 import type { CloseoutRecord } from "@/lib/reports/closeout-model";
 import type { PunchItem } from "@/lib/reports/punch-list-model";
 import type { QualityInspection } from "@/lib/reports/quality-inspection-model";
+import type { Incident } from "@/lib/incidents/model";
 import type { Sheet, SheetReview } from "@/lib/sheets/model";
 
 export type ProjectStatus = "planning" | "ongoing" | "completed";
@@ -72,11 +73,15 @@ export interface Database {
       };
       project_quality_inspections: {
         Row: Omit<QualityInspection, "recorded_by_name">;
-        Insert: Omit<QualityInspection, "id" | "recorded_by_name" | "created_at" | "updated_at"> & {
-          created_at?: string;
-          updated_at?: string;
-        };
+        Insert: Pick<QualityInspection, "project_id" | "inspection_type" | "area" | "inspected_on" | "inspector_name" | "result">
+          & Partial<Omit<QualityInspection, "id" | "recorded_by_name" | "project_id" | "inspection_type" | "area" | "inspected_on" | "inspector_name" | "result">>;
         Update: Partial<Omit<QualityInspection, "id" | "project_id" | "recorded_by" | "recorded_by_name" | "created_at">>;
+        Relationships: [];
+      };
+      project_safety_incidents: {
+        Row: Incident;
+        Insert: Omit<Incident, "id" | "created_at" | "context_name" | "reporter_name">;
+        Update: never;
         Relationships: [];
       };
       profiles: {
@@ -421,10 +426,10 @@ export interface Database {
           recipient_id: string;
           actor_id: string | null;
           actor_name: string | null;
-          kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted";
+          kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident";
           project_id: number;
           project_name: string;
-          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet";
+          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident";
           item_id: number;
           item_name: string;
           entry_date: string;
@@ -435,10 +440,10 @@ export interface Database {
           recipient_id: string;
           actor_id?: string | null;
           actor_name?: string | null;
-          kind?: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted";
+          kind?: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident";
           project_id: number;
           project_name: string;
-          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet";
+          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident";
           item_id: number;
           item_name: string;
           entry_date: string;

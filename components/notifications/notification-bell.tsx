@@ -31,7 +31,7 @@ const RANGES: { value: Range; label: string }[] = [
 export function NotificationBell() {
   const router = useRouter();
   const { basePath } = usePortal();
-  const { items, unreadCount, load, markRead, dismiss } = useNotifications();
+  const { items, unreadCount, load, markRead, markUnread, dismiss } = useNotifications();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("all");
   const [range, setRange] = useState<Range | null>(null);
@@ -110,7 +110,7 @@ export function NotificationBell() {
         <div className="absolute top-full right-0 z-50 mt-2 w-160 max-w-[calc(100vw-2rem)] rounded-md border border-zinc-200 bg-white p-6 shadow-xl">
           <h2 className="text-lg font-semibold tracking-tight text-zinc-900">Notifications</h2>
 
-          <div className="mt-5 flex items-center justify-between gap-3 border-b border-zinc-200 pb-5">
+          <div className="-mx-6 mt-5 flex items-center justify-between gap-3 border-b border-zinc-200 px-6 pb-5">
             <div className="flex rounded bg-zinc-100 p-1">
               {(["all", "unread"] as const).map((value) => (
                 <button
@@ -155,6 +155,8 @@ export function NotificationBell() {
             items={visible}
             onOpen={openNotification}
             onDismiss={dismiss}
+            onMarkRead={(id) => void markRead(id)}
+            onMarkUnread={(id) => void markUnread(id)}
             emptyText={
               tab === "unread"
                 ? "No unread notifications."
@@ -166,7 +168,7 @@ export function NotificationBell() {
             className="mt-5 max-h-160 overflow-y-auto pr-1"
           />
 
-          <div className="mt-5 flex items-center justify-between border-t border-zinc-200 pt-4 text-xs">
+          <div className="-mx-6 mt-5 flex items-center justify-between border-t border-zinc-200 px-6 pt-4 text-xs">
             <Link
               href={basePath}
               onClick={() => setOpen(false)}

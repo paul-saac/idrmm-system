@@ -7,11 +7,18 @@ import { ChevronLeft, MoreVertical, X } from "lucide-react";
 // The header's spot right after the title, for whatever a modal's own
 // content wants to show there (see ModalHeaderAddon).
 const HeaderSlotContext = createContext<HTMLElement | null>(null);
+const HeaderActionsSlotContext = createContext<HTMLElement | null>(null);
 
 /** Renders its children beside the modal's title — e.g. a live status
  * badge the content itself computes. */
 export function ModalHeaderAddon({ children }: { children: React.ReactNode }) {
   const slot = useContext(HeaderSlotContext);
+  return slot ? createPortal(children, slot) : null;
+}
+
+/** Renders an action immediately before the modal's close button. */
+export function ModalHeaderActions({ children }: { children: React.ReactNode }) {
+  const slot = useContext(HeaderActionsSlotContext);
   return slot ? createPortal(children, slot) : null;
 }
 
@@ -123,6 +130,7 @@ export function Modal({
   const [hasOpened, setHasOpened] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [headerActionsSlot, setHeaderActionsSlot] = useState<HTMLElement | null>(null);
   const [footerSlot, setFooterSlot] = useState<HTMLElement | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -230,10 +238,11 @@ export function Modal({
               <h2 className="text-lg font-semibold text-zinc-900">{title}</h2>
               <div ref={setHeaderSlot} className="ml-2 flex items-center empty:hidden" />
             </div>
-            {description && <p className="mt-0.5 text-sm text-zinc-500">{description}</p>}
+            {description && <p className="mt-0.5 whitespace-pre-line text-sm text-zinc-500">{description}</p>}
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <div ref={setHeaderActionsSlot} className="flex items-center empty:hidden" />
           {menuItems && menuItems.length > 0 && (
             <>
               <div ref={menuRef} className="relative">
@@ -292,9 +301,11 @@ export function Modal({
           otherwise run off the top/bottom of the viewport. */}
       <div className={bare ? "min-h-0 flex-1" : "min-h-0 flex-1 overflow-y-auto px-6 py-5"}>
         <HeaderSlotContext.Provider value={headerSlot}>
-          <FooterSlotContext.Provider value={footerSlot}>
-            {hasOpened && children}
-          </FooterSlotContext.Provider>
+          <HeaderActionsSlotContext.Provider value={headerActionsSlot}>
+            <FooterSlotContext.Provider value={footerSlot}>
+              {hasOpened && children}
+            </FooterSlotContext.Provider>
+          </HeaderActionsSlotContext.Provider>
         </HeaderSlotContext.Provider>
       </div>
       <div

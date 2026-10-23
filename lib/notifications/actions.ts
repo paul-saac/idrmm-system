@@ -6,11 +6,11 @@ import { getSessionProfile } from "@/lib/auth/session";
 /** One notification in the bell — see 0061_notifications.sql. */
 export type AppNotification = {
   id: number;
-  kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted";
+  kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident";
   actorName: string | null;
   projectId: number;
   projectName: string;
-  itemKind: "task" | "category" | "material_request" | "equipment_request" | "sheet";
+  itemKind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident";
   itemId: number;
   itemName: string;
   /** The day whose progress was overridden, YYYY-MM-DD. */
@@ -80,6 +80,26 @@ export async function markNotificationsRead(id?: number): Promise<void> {
   const { error } = await query;
   if (error) {
     console.error("[markNotificationsRead] Supabase update failed", {
+      message: error.message,
+      code: error.code,
+    });
+  }
+}
+
+/** Marks one of the user's notifications unread. RLS and recipient_id keep
+ * the update scoped to the signed-in user's own notification. */
+export async function markNotificationUnread(id: number): Promise<void> {
+  const profile = await getSessionProfile();
+  if (!profile) return;
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("notifications")
+    .update({ read_at: null })
+    .eq("id", id)
+    .eq("recipient_id", profile.id);
+  if (error) {
+    console.error("[markNotificationUnread] Supabase update failed", {
       message: error.message,
       code: error.code,
     });

@@ -8,11 +8,26 @@ export type ProgressExpense = {
   savedByName: string | null;
   supplier?: string;
   invoiceNumber?: string;
+  materialPurchase?: {
+    quantity: number;
+    unit: string;
+    unitPrice: number;
+  };
   costs: CostAmounts;
   equipmentItems?: {
     name: string;
     amount: number;
     unplanned: boolean;
+  }[];
+  otherItems?: {
+    name: string;
+    amount: number;
+    unplanned: boolean;
+  }[];
+  attendance?: {
+    name: string;
+    hours: number;
+    rate: number;
   }[];
   isUnplanned?: boolean;
   equipmentName?: string;

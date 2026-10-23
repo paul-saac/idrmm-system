@@ -12,13 +12,16 @@ import {
   generatePunchListReport,
   generateFinancialReport,
   generateQualityReport,
+  generateSafetyReport,
   REPORT_SECTIONS,
   MILESTONE_COLUMNS,
   AS_BUILT_SECTIONS,
   AS_BUILT_COLUMNS,
+  FINANCIAL_REPORT_SECTIONS,
   type GeneratedReport,
   type ReportSectionId,
   type AsBuiltSectionId,
+  type FinancialSectionId,
 } from "@/lib/reports/generated-report";
 import { exportGeneratedReport } from "@/lib/reports/generated-report-export";
 import { CloseoutEditor, ReportDocumentSheet } from "./closeout-report";
@@ -43,12 +46,13 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
   const [switchingProject, startProjectTransition] = useTransition();
   const [type, setType] = useState<string>("full");
   const selectedType = types.find(item => item.id === type) ?? types[0];
-  const available = type === "full" || type === "as-built" || type === "financial" || (type === "quality" && data.qualityInspectionsAvailable) || (type === "punch" && data.punchListAvailable);
+  const available = type === "full" || type === "as-built" || type === "financial" || (type === "quality" && data.qualityInspectionsAvailable) || (type === "punch" && data.punchListAvailable) || (type === "safety" && data.safetyIncidentsAvailable);
   const [title, setTitle] = useState("Project closeout report");
   const [sections, setSections] = useState<ReportSectionId[]>(REPORT_SECTIONS.map(s => s.id));
   const [columns, setColumns] = useState<string[]>([...MILESTONE_COLUMNS]);
   const [asBuiltSections, setAsBuiltSections] = useState<AsBuiltSectionId[]>(AS_BUILT_SECTIONS.map(s => s.id));
   const [asBuiltColumns, setAsBuiltColumns] = useState<string[]>([...AS_BUILT_COLUMNS]);
+  const [financialSections, setFinancialSections] = useState<FinancialSectionId[]>(FINANCIAL_REPORT_SECTIONS.map(s => s.id));
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [generating, setBusy] = useState(false);
@@ -82,9 +86,11 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
         : type === "punch"
           ? generatePunchListReport(data, { title: title.trim() || "Punch list report", from: "", to: "" })
         : type === "financial"
-          ? generateFinancialReport(data, { title: title.trim() || "Final financial & job cost report" })
+          ? generateFinancialReport(data, { title: title.trim() || "Final financial & job cost report", sections: financialSections, from, to })
         : type === "quality"
           ? generateQualityReport(data, { title: title.trim() || "Quality assurance and inspection sign-off report", from, to })
+        : type === "safety"
+          ? generateSafetyReport(data, { title: title.trim() || "Safety and incident closeout report", from, to })
         : generateReport(data, { title: title.trim() || "Project closeout report", sections, columns, from, to });
 
       if (format === "view") {
@@ -116,6 +122,7 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
               setTitle(item.label);
               if (item.id === "full") setSections(REPORT_SECTIONS.map(s => s.id));
               if (item.id === "as-built") setAsBuiltSections(AS_BUILT_SECTIONS.map(s => s.id));
+              if (item.id === "financial") setFinancialSections(FINANCIAL_REPORT_SECTIONS.map(s => s.id));
               setError("");
             }}
             className={`block w-full px-6 py-3 text-left text-sm ${type === item.id ? "bg-zinc-100 font-medium text-zinc-900" : "text-zinc-500 hover:bg-zinc-50"}`}
@@ -174,6 +181,11 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
               Quality inspection storage is not enabled yet. Apply migration 0093 in Supabase to record and generate inspection reports.
             </p>
           )}
+          {type === "safety" && !data.safetyIncidentsAvailable && (
+            <p className="mt-3 text-sm text-amber-700">
+              Incident storage is not enabled yet. Apply migration 0096 in Supabase to record and generate safety closeout reports.
+            </p>
+          )}
         </div>
 
         <fieldset disabled={busy} className="grid disabled:opacity-60 xl:grid-cols-2">
@@ -199,7 +211,7 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
               </span>
             </label>
 
-            {available && type !== "punch" && type !== "financial" && (
+            {available && type !== "punch" && (
               <div className="flex items-center gap-3 text-sm text-zinc-500">
                 <span className="w-14 shrink-0">Dates</span>
                 <div className="flex w-full max-w-sm items-center gap-2">
@@ -277,6 +289,30 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
               </fieldset>
             )}
 
+            {type === "financial" && (
+              <fieldset>
+                <legend className="mb-3 text-sm text-zinc-500">Include sections</legend>
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {FINANCIAL_REPORT_SECTIONS.map(section => (
+                    <label key={section.id} className="flex items-center gap-2 text-xs text-zinc-800 sm:text-sm">
+                      <span className="relative inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center">
+                        <input
+                          type="checkbox"
+                          className="peer m-0 block h-[14px] w-[14px] shrink-0 cursor-pointer appearance-none rounded-[2px] border border-zinc-300 bg-white p-0 transition-colors checked:border-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:outline-none"
+                          checked={financialSections.includes(section.id)}
+                          onChange={event => setFinancialSections(current => event.target.checked
+                            ? [...current, section.id]
+                            : current.filter(id => id !== section.id))}
+                        />
+                        <span className="pointer-events-none absolute left-[4px] top-[4px] block h-[6px] w-[6px] rounded-[1px] bg-zinc-900 opacity-0 peer-checked:opacity-100" />
+                      </span>
+                      <span>{section.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+
             <p className="text-xs text-zinc-400">
               {type === "as-built"
                 ? `Connected to project Sheets (${uniqueSheetCount} reference${uniqueSheetCount === 1 ? "" : "s"}, ${(data.sheets ?? []).length} total version${(data.sheets ?? []).length === 1 ? "" : "s"} as of ${data.asOf}).`
@@ -286,6 +322,8 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
                   ? `Uses the Cost Estimate Breakdown and current saved project expenditures as of ${data.asOf}. Billing, revenue, profit, and subcontractor payout figures are not included because they are not recorded by the system.`
                 : type === "quality"
                   ? `${data.qualityInspections.length} inspection record${data.qualityInspections.length === 1 ? "" : "s"} stored for this project. Only recorded inspector decisions and linked project documents are reported.`
+                : type === "safety"
+                  ? `${data.safetyIncidents.length} incident record${data.safetyIncidents.length === 1 ? "" : "s"} stored for this project. The report summarizes submitted incidents and does not assume unrecorded closure or corrective-action details.`
                 : `Project snapshot as of ${data.asOf}. Baseline and logged figures are reconciled directly from project data.`}
             </p>
           </div>

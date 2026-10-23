@@ -634,6 +634,7 @@ function usePendingOverrides<T>(categories: CostCategory[]) {
  */
 export function GanttChartView({
   projectId,
+  projectName,
   categories,
   projectStartDate,
   workingDays,
@@ -657,6 +658,7 @@ export function GanttChartView({
   materialStocks,
 }: {
   projectId: number;
+  projectName: string;
   /** Each task's own percentComplete (see CostTask's own doc comment)
    * is the sole source of progress here — deliberately not fed by
    * lib/progress/data.ts's own ProjectProgress (still used elsewhere,
@@ -4446,6 +4448,7 @@ export function GanttChartView({
       <ProgressTrackingModal
         target={progressModal}
         projectId={projectId}
+        projectName={projectName}
         materialStocks={materialStocks}
         categories={categoriesForDisplay}
         workingDays={workingDays}

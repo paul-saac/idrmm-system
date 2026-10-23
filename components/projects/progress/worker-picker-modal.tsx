@@ -9,13 +9,13 @@ import type { Worker } from "@/lib/workers/data";
 const formatPeso = (n: number) =>
   "₱" + n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-type WorkerTab = "all" | "skilled" | "subcontractors" | "professional" | "management";
+type WorkerTab = "skilled" | "subcontractors";
 
 export function WorkerPickerModal({
   open,
   workers,
-  title = "Add someone who helped",
-  description = "Select a team member who worked on this task today.",
+  title = "Add workforce",
+  description = "Select a skilled worker or subcontractor who worked on this task today.",
   icon = <Users className="size-5" />,
   variant = "centered",
   onSelect,
@@ -30,59 +30,37 @@ export function WorkerPickerModal({
   onSelect: (worker: Worker) => void;
   onClose: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<WorkerTab>("all");
+  const [activeTab, setActiveTab] = useState<WorkerTab>("skilled");
   const [search, setSearch] = useState("");
 
   const tabCounts = useMemo(() => {
     let skilled = 0;
     let subcontractors = 0;
-    let professional = 0;
-    let management = 0;
-
     for (const w of workers) {
       if (w.employmentType === "subcontractor") {
         subcontractors++;
       } else if (w.category === "skilled") {
         skilled++;
-      } else if (w.category === "professional") {
-        professional++;
-      } else if (w.category === "management") {
-        management++;
       }
     }
 
-    return {
-      all: workers.length,
-      skilled,
-      subcontractors,
-      professional,
-      management,
-    };
+    return { skilled, subcontractors };
   }, [workers]);
 
   const tabs: { key: WorkerTab; label: string; count: number }[] = useMemo(
     () => [
-      { key: "all", label: "All Members", count: tabCounts.all },
       { key: "skilled", label: "Skilled Workers", count: tabCounts.skilled },
       { key: "subcontractors", label: "Subcontractors", count: tabCounts.subcontractors },
-      { key: "professional", label: "Engineers & Architects", count: tabCounts.professional },
-      { key: "management", label: "Management", count: tabCounts.management },
     ],
     [tabCounts]
   );
 
   const filteredWorkers = useMemo(() => {
-    let list = workers;
-
-    if (activeTab === "subcontractors") {
-      list = list.filter((w) => w.employmentType === "subcontractor");
-    } else if (activeTab === "skilled") {
-      list = list.filter((w) => w.employmentType !== "subcontractor" && w.category === "skilled");
-    } else if (activeTab === "professional") {
-      list = list.filter((w) => w.employmentType !== "subcontractor" && w.category === "professional");
-    } else if (activeTab === "management") {
-      list = list.filter((w) => w.employmentType !== "subcontractor" && w.category === "management");
-    }
+    const list = workers.filter((w) =>
+      activeTab === "subcontractors"
+        ? w.employmentType === "subcontractor"
+        : w.employmentType !== "subcontractor" && w.category === "skilled"
+    );
 
     const q = search.trim().toLowerCase();
     if (!q) return list;
@@ -106,7 +84,7 @@ export function WorkerPickerModal({
       size="wide"
       onClose={onClose}
     >
-      <div className="flex flex-col gap-4">
+      <div className="flex h-[32rem] min-h-0 flex-col gap-4">
         {/* Search input */}
         <div className="relative w-full">
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
@@ -159,9 +137,9 @@ export function WorkerPickerModal({
         </div>
 
         {/* Member list / table without Action column */}
-        <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+        <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-200 bg-white">
           {filteredWorkers.length === 0 ? (
-            <div className="py-10 text-center text-sm text-zinc-400">
+            <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
               {workers.length === 0 ? (
                 <p>All available team members have already been added to this task.</p>
               ) : (
@@ -169,7 +147,7 @@ export function WorkerPickerModal({
               )}
             </div>
           ) : (
-            <div className="max-h-[50vh] overflow-x-auto overflow-y-auto">
+            <div className="h-full overflow-auto">
               <table className="w-full min-w-[32rem] text-left text-sm">
                 <thead className="sticky top-0 z-10 border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500">
                   <tr>

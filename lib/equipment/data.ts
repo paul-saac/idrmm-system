@@ -289,9 +289,13 @@ async function readExpensePages<T>(fetchPage: (from: number, to: number) => Prom
   }
 }
 
-async function fetchEquipmentEntries(
+async function fetchCostEntries(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  tableName: "task_progress_equipment_cost_entries" | "category_progress_equipment_cost_entries",
+  tableName:
+    | "task_progress_equipment_cost_entries"
+    | "category_progress_equipment_cost_entries"
+    | "task_progress_other_cost_entries"
+    | "category_progress_other_cost_entries",
   entryIds: number[]
 ) {
   if (entryIds.length === 0) return [];
@@ -321,6 +325,28 @@ async function fetchEquipmentEntries(
     if (data) {
       allRows.push(...data);
     }
+  }
+  return allRows;
+}
+
+async function fetchAttendanceEntries(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tableName: "task_progress_attendance" | "category_progress_attendance",
+  entryIds: number[]
+) {
+  if (entryIds.length === 0) return [];
+  const chunkSize = 200;
+  const allRows: { progress_entry_id: number; worker_name: string; hours: number; hourly_rate: number }[] = [];
+  for (let i = 0; i < entryIds.length; i += chunkSize) {
+    const chunk = entryIds.slice(i, i + chunkSize);
+    const { data, error } = await supabase
+      .from(tableName)
+      .select("progress_entry_id, worker_name, hours, hourly_rate")
+      .in("progress_entry_id", chunk);
+    if (error && error.code !== "PGRST205" && error.code !== "42P01") {
+      console.error(`[listProgressExpenses] ${tableName} query failed:`, error.message);
+    }
+    if (data) allRows.push(...data);
   }
   return allRows;
 }
@@ -362,9 +388,13 @@ export async function listProgressExpenses(
   const taskEntryIds = (taskEntries ?? []).map((row) => row.id);
   const categoryEntryIds = (categoryEntries ?? []).map((row) => row.id);
 
-  const [taskEquipmentRows, categoryEquipmentRows] = await Promise.all([
-    fetchEquipmentEntries(supabase, "task_progress_equipment_cost_entries", taskEntryIds),
-    fetchEquipmentEntries(supabase, "category_progress_equipment_cost_entries", categoryEntryIds),
+  const [taskEquipmentRows, categoryEquipmentRows, taskOtherRows, categoryOtherRows, taskAttendanceRows, categoryAttendanceRows] = await Promise.all([
+    fetchCostEntries(supabase, "task_progress_equipment_cost_entries", taskEntryIds),
+    fetchCostEntries(supabase, "category_progress_equipment_cost_entries", categoryEntryIds),
+    fetchCostEntries(supabase, "task_progress_other_cost_entries", taskEntryIds),
+    fetchCostEntries(supabase, "category_progress_other_cost_entries", categoryEntryIds),
+    fetchAttendanceEntries(supabase, "task_progress_attendance", taskEntryIds),
+    fetchAttendanceEntries(supabase, "category_progress_attendance", categoryEntryIds),
   ]);
 
   const taskEquipmentMap = new Map<number, ProgressEquipmentCostItem[]>();
@@ -389,11 +419,36 @@ export async function listProgressExpenses(
     categoryEquipmentMap.set(row.progress_entry_id, list);
   }
 
+  const makeCostMap = (rows: typeof taskOtherRows) => {
+    const map = new Map<number, ProgressEquipmentCostItem[]>();
+    for (const row of rows) {
+      const list = map.get(row.progress_entry_id) ?? [];
+      list.push({ name: row.cost_name, amount: Number(row.amount) || 0, unplanned: Boolean(row.unplanned) });
+      map.set(row.progress_entry_id, list);
+    }
+    return map;
+  };
+  const taskOtherMap = makeCostMap(taskOtherRows);
+  const categoryOtherMap = makeCostMap(categoryOtherRows);
+
+  const makeAttendanceMap = (rows: typeof taskAttendanceRows) => {
+    const map = new Map<number, { name: string; hours: number; rate: number }[]>();
+    for (const row of rows) {
+      const list = map.get(row.progress_entry_id) ?? [];
+      list.push({ name: row.worker_name, hours: Number(row.hours) || 0, rate: Number(row.hourly_rate) || 0 });
+      map.set(row.progress_entry_id, list);
+    }
+    return map;
+  };
+  const taskAttendanceMap = makeAttendanceMap(taskAttendanceRows);
+  const categoryAttendanceMap = makeAttendanceMap(categoryAttendanceRows);
+
   const costs: (ProgressExpense & { createdAt: string; recordedBy: string | null })[] = [];
   for (const purchase of await listMaterialPurchases(projectId)) {
     costs.push({id:`purchase-${purchase.id}`,entryDate:purchase.purchase_date,
       itemName:purchase.material_name,itemKey:`purchase-${purchase.id}`,
       supplier:purchase.supplier,invoiceNumber:purchase.invoice_number,
+      materialPurchase:{quantity:Number(purchase.quantity)||0,unit:purchase.unit,unitPrice:Number(purchase.unit_price)||0},
       costs:{material:Number(purchase.amount),equipment:0,labor:0,other:0},
       savedByName:null,createdAt:purchase.created_at,recordedBy:purchase.recorded_by});
   }
@@ -408,6 +463,8 @@ export async function listProgressExpenses(
       costs: amounts,
       savedByName: null,
       equipmentItems: taskEquipmentMap.get(row.id),
+      otherItems: taskOtherMap.get(row.id),
+      attendance: taskAttendanceMap.get(row.id),
       createdAt: row.created_at,
       recordedBy: row.recorded_by ?? null,
     });
@@ -423,6 +480,8 @@ export async function listProgressExpenses(
       costs: amounts,
       savedByName: null,
       equipmentItems: categoryEquipmentMap.get(row.id),
+      otherItems: categoryOtherMap.get(row.id),
+      attendance: categoryAttendanceMap.get(row.id),
       createdAt: row.created_at,
       recordedBy: row.recorded_by ?? null,
     });

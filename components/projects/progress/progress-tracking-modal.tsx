@@ -40,6 +40,7 @@ export function ProgressTrackingModal({
   target,
   readOnly = false,
   projectId,
+  projectName,
   categories,
   workingDays,
   holidays,
@@ -55,6 +56,7 @@ export function ProgressTrackingModal({
   target: ProgressModalTarget | null;
   readOnly?: boolean;
   projectId: number;
+  projectName: string;
   materialStocks?: MaterialStockItem[];
   categories: CostCategory[];
   workingDays: number[];
@@ -142,6 +144,8 @@ export function ProgressTrackingModal({
         <ProgressTrackingModalContent
           key={`${itemKey}:${target.highlightEntryDate ?? ""}`}
           projectId={projectId}
+          projectName={projectName}
+          incidentContext={{ kind: target.kind, id: item.id, name: item.name }}
           materialStocks={materialStocks}
           readOnly={readOnly}
           estimatedQuantity={item.estimatedQuantity}

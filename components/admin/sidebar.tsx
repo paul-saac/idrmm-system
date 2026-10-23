@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutGrid, Folder, HardHat, Users, BarChart3, Wrench } from "lucide-react";
+import { LayoutGrid, Folder, HardHat, Users, FileText, Wrench } from "lucide-react";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 
 // Paths are relative to the portal's own base path, each item in the
@@ -20,8 +20,8 @@ const NAV_ITEMS: {
   { path: "/projects", label: "Projects", icon: Folder, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/team", label: "Team", icon: HardHat, portals: ["/admin", "/project-manager"] },
   { path: "/accounts", label: "Accounts", icon: Users, portals: ["/admin"] },
-  { path: "/reports", label: "Reports", icon: BarChart3, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/inventory", label: "Inventory", icon: Wrench, portals: ["/admin", "/foreman", "/project-manager"] },
+  { path: "/reports", label: "Reports", icon: FileText, portals: ["/admin", "/foreman", "/project-manager"] },
 ];
 
 export function PortalSidebar({ basePath }: { basePath: PortalBasePath }) {

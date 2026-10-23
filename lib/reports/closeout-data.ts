@@ -8,6 +8,7 @@ import { listProgressExpenses, listProjectEquipmentAssignments } from "@/lib/equ
 import type { Sheet } from "@/lib/sheets/model";
 import { listPunchItems } from "./punch-list-data";
 import { listQualityInspections } from "./quality-inspection-data";
+import { listProjectIncidents } from "@/lib/incidents/data";
 import {
   buildCloseoutWork,
   buildCloseoutDeliverables,
@@ -19,7 +20,7 @@ export async function getCloseoutReport(projectId: number) {
   const project = await getProjectById(projectId);
   if (!project) return null;
   const supabase = await createClient();
-  const [estimate, saved, sheetsResult, expenses, equipmentAssignments, punchList, qualityInspections, sessionProfile] = await Promise.all([
+  const [estimate, saved, sheetsResult, expenses, equipmentAssignments, punchList, qualityInspections, safetyIncidents, sessionProfile] = await Promise.all([
     getCostEstimate(projectId),
     supabase.from("project_closeout_reports").select("*").eq("project_id", projectId).maybeSingle(),
     supabase.from("project_sheets").select("*").eq("project_id", projectId).order("sheet_number", { ascending: true }).order("revision", { ascending: true }),
@@ -27,6 +28,7 @@ export async function getCloseoutReport(projectId: number) {
     listProjectEquipmentAssignments(projectId),
     listPunchItems(projectId),
     listQualityInspections(projectId),
+    listProjectIncidents(projectId),
     getSessionProfile(),
   ]);
   // Only a missing migration is tolerated; other failures must not look like a blank draft.
@@ -48,6 +50,7 @@ export async function getCloseoutReport(projectId: number) {
     work: buildCloseoutWork(estimate.categories, expenses),
     deliverables: buildCloseoutDeliverables(estimate.categories, expenses),
     costBaseline: buildCloseoutCostBaseline(estimate.summary.totalsByColumn, expenses, project.allocatedBudget),
+    expenses,
     equipmentAssignments,
     record,
     savedBy,
@@ -58,6 +61,8 @@ export async function getCloseoutReport(projectId: number) {
     punchListAvailable: punchList.available,
     qualityInspections: qualityInspections.items,
     qualityInspectionsAvailable: qualityInspections.available,
+    safetyIncidents: safetyIncidents.items,
+    safetyIncidentsAvailable: safetyIncidents.available,
     generatedBy: sessionProfile
       ? `${sessionProfile.firstName} ${sessionProfile.lastName}`.trim() || sessionProfile.email || "Authorized user"
       : "Authorized user",

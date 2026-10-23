@@ -21,6 +21,7 @@ import {
 } from "@/components/projects/cost-estimate/import-bom-modal-content";
 import { ProgressView } from "@/components/projects/progress/progress-view";
 import { ProgressTrackingModal, type ProgressModalTarget } from "@/components/projects/progress/progress-tracking-modal";
+import { IncidentDetailModal } from "@/components/projects/progress/incident-detail-modal";
 // gantt-task-react renders its timeline as an SVG sized from
 // client-measured container layout, computed post-mount — loaded with
 // ssr:false so that mismatch never reaches hydration at all, instead of
@@ -380,6 +381,13 @@ export function ProjectDetailView({
   // otherwise a fully client-state tabbed view with no URL sync per tab
   // click, so this is only ever read once, on mount.
   const searchParams = useSearchParams();
+  const incidentParam = searchParams.get("incident");
+  const incidentId = incidentParam && Number.isSafeInteger(Number(incidentParam)) && Number(incidentParam) > 0 ? Number(incidentParam) : null;
+  function closeIncident() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("incident");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
   const tabParam = searchParams.get("tab");
   const subtabParam = searchParams.get("subtab");
   const initialTab: MainTab = MAIN_TABS.some((tab) => tab.value === tabParam)
@@ -934,6 +942,7 @@ export function ProjectDetailView({
 
             <GanttChartView
               projectId={project.id}
+              projectName={project.name}
               categories={costEstimate.categories}
               projectStartDate={project.startDate}
               workingDays={project.workingDays}
@@ -982,6 +991,7 @@ export function ProjectDetailView({
         target={equipmentProgressTarget}
         readOnly
         projectId={project.id}
+        projectName={project.name}
         materialStocks={currentMaterialStocks}
         categories={costEstimate.categories}
         workingDays={project.workingDays}
@@ -991,6 +1001,7 @@ export function ProjectDetailView({
         overrideHistory={overrideHistory}
         onClose={() => setEquipmentProgressTarget(null)}
       />
+      <IncidentDetailModal projectId={project.id} id={incidentId} onClose={closeIncident} />
 
       {isAdmin && (
         <>
