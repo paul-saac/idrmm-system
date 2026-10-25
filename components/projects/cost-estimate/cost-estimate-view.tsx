@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ArrowDown, ChevronDown, ChevronRight, FolderPlus, Sparkles } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import {
   MaterialBreakdownModalContent,
@@ -123,6 +123,163 @@ const _COLUMN_COUNT = 9;
  * LaborBreakdownModalContent) since nothing has asked for that one to
  * be editable here yet.
  */
+/** Illustrated graphic for when no cost estimate / work breakdown items exist yet.
+ * Follows the project's vector illustration style with soft organic backdrop,
+ * breakdown sheet with task hierarchy lines, currency badge, and AI sparkle accent. */
+function CostEstimateEmptyIllustration() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 220 160"
+      className="h-32 w-44 sm:h-36 sm:w-48 text-zinc-400"
+    >
+      {/* Soft organic backdrop */}
+      <path
+        className="fill-zinc-100"
+        d="M36 78C30 46 62 26 102 30c38 4 72-4 82 28 9 32-14 58-50 62-36 4-68 12-88-8-12-12-10-24-10-34Z"
+      />
+      {/* Base shadow */}
+      <ellipse className="fill-zinc-100" cx="110" cy="148" rx="58" ry="4" />
+
+      {/* Main Document / Breakdown Sheet */}
+      <rect
+        className="fill-white stroke-zinc-400"
+        x="66"
+        y="26"
+        width="76"
+        height="98"
+        rx="6"
+        strokeWidth="2"
+      />
+      {/* Top Header Strip */}
+      <path
+        className="fill-zinc-100 stroke-zinc-400"
+        d="M66 32a6 6 0 0 1 6-6h64a6 6 0 0 1 6 6v12H66z"
+        strokeWidth="2"
+      />
+      <line
+        x1="76"
+        y1="32"
+        x2="96"
+        y2="32"
+        className="stroke-zinc-400"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      {/* Top Clip Tab */}
+      <rect
+        className="fill-white stroke-zinc-400"
+        x="92"
+        y="21"
+        width="24"
+        height="10"
+        rx="3"
+        strokeWidth="2"
+      />
+
+      {/* Phase Row */}
+      <rect className="fill-zinc-300" x="76" y="47" width="30" height="5" rx="1.5" />
+      <rect className="fill-zinc-200" x="120" y="47" width="12" height="5" rx="1.5" />
+
+      {/* Task Rows with Tree Indentation */}
+      <g className="stroke-zinc-300" strokeWidth="1.5" strokeLinecap="round">
+        <line x1="79" y1="57" x2="79" y2="63" />
+        <line x1="79" y1="63" x2="85" y2="63" />
+      </g>
+      <rect className="fill-zinc-100 stroke-zinc-300" x="88" y="60" width="24" height="5" rx="1" strokeWidth="1" />
+      <rect className="fill-zinc-200" x="122" y="60" width="10" height="5" rx="1" />
+
+      <g className="stroke-zinc-300" strokeWidth="1.5" strokeLinecap="round">
+        <line x1="79" y1="63" x2="79" y2="75" />
+        <line x1="79" y1="75" x2="85" y2="75" />
+      </g>
+      <rect className="fill-zinc-100 stroke-zinc-300" x="88" y="72" width="20" height="5" rx="1" strokeWidth="1" />
+      <rect className="fill-zinc-200" x="122" y="72" width="10" height="5" rx="1" />
+
+      <g className="stroke-zinc-300" strokeWidth="1.5" strokeLinecap="round">
+        <line x1="79" y1="75" x2="79" y2="87" />
+        <line x1="79" y1="87" x2="85" y2="87" />
+      </g>
+      <rect className="fill-zinc-100 stroke-zinc-300" x="88" y="84" width="26" height="5" rx="1" strokeWidth="1" />
+      <rect className="fill-zinc-200" x="122" y="84" width="10" height="5" rx="1" />
+
+      {/* Dashed Total Line */}
+      <line
+        x1="76"
+        y1="98"
+        x2="132"
+        y2="98"
+        className="stroke-zinc-200"
+        strokeWidth="1.5"
+        strokeDasharray="3 2"
+      />
+      {/* Total Row */}
+      <rect className="fill-zinc-400" x="76" y="105" width="22" height="5" rx="1.5" />
+      <rect className="fill-zinc-900" x="114" y="105" width="18" height="6" rx="1.5" />
+
+      {/* Floating Currency Coin Badge (bottom-right) */}
+      <circle
+        className="fill-white stroke-zinc-400"
+        cx="154"
+        cy="104"
+        r="19"
+        strokeWidth="2"
+      />
+      <circle
+        className="fill-zinc-50 stroke-zinc-200"
+        cx="154"
+        cy="104"
+        r="15"
+        strokeWidth="1.5"
+      />
+      <text
+        x="154"
+        y="110"
+        textAnchor="middle"
+        className="fill-zinc-700 font-sans font-bold text-sm select-none"
+      >
+        ₱
+      </text>
+
+      {/* Floating AI Sparkle Badge (top-right) */}
+      <circle
+        className="fill-white stroke-zinc-400"
+        cx="158"
+        cy="38"
+        r="14"
+        strokeWidth="2"
+      />
+      <circle
+        className="fill-emerald-50 stroke-emerald-200"
+        cx="158"
+        cy="38"
+        r="11"
+        strokeWidth="1"
+      />
+      {/* 4-point sparkle star */}
+      <path
+        d="M158 31c0 2.8 1.4 4.5 3.8 4.8-2.4.3-3.8 2-3.8 4.8 0-2.8-1.4-4.5-3.8-4.8 2.4-.3 3.8-2 3.8-4.8z"
+        className="fill-emerald-600"
+      />
+
+      {/* Subtle Floating Sparkles */}
+      <g className="stroke-zinc-400" strokeWidth="1.5" strokeLinecap="round">
+        <path d="M48 44v7M44.5 47.5h7" />
+        <path d="M184 70v6M181 73h6" />
+      </g>
+
+      {/* Mini Blueprint Measurement Ticks */}
+      <g className="stroke-zinc-300" strokeWidth="1.5" strokeLinecap="round">
+        <line x1="44" y1="94" x2="50" y2="94" />
+        <line x1="44" y1="100" x2="48" y2="100" />
+        <line x1="44" y1="106" x2="52" y2="106" />
+        <line x1="44" y1="112" x2="48" y2="112" />
+        <line x1="44" y1="118" x2="50" y2="118" />
+      </g>
+    </svg>
+  );
+}
+
 export function CostEstimateView({
   projectId,
   estimate,
@@ -363,15 +520,44 @@ export function CostEstimateView({
     // reads as white against it rather than picking up the same tint.
     <div className="border-t border-zinc-200 bg-white">
       {categories.length === 0 ? (
-        <div className="mx-5 mb-5 flex flex-col items-center justify-center rounded-lg border border-dashed border-zinc-300 bg-white py-16 text-center">
-          <p className="text-sm font-medium text-zinc-700">
+        <div className="mx-5 mb-5 flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-gradient-to-b from-zinc-50/60 via-white to-zinc-50/30 px-6 py-12 text-center">
+          <CostEstimateEmptyIllustration />
+          <p className="mt-4 text-base font-semibold text-zinc-900">
             No cost estimate yet
           </p>
-          <p className="mt-1 text-sm text-zinc-400">
+          <p className="mt-1.5 max-w-md text-sm text-zinc-500">
             Add a phase and task items, or import a document with AI, from
             the Gantt Chart below to start building the cost breakdown
             structure.
           </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+            {onImportBom && (
+              <button
+                type="button"
+                onClick={onImportBom}
+                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-zinc-900 px-3.5 py-2 text-xs font-medium text-white shadow-xs transition hover:bg-zinc-800"
+              >
+                <Sparkles className="size-3.5 text-emerald-400" />
+                Import with AI
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById("project-schedule-section");
+                if (el) {
+                  el.scrollIntoView({ behavior: "smooth" });
+                } else {
+                  window.scrollBy({ top: 350, behavior: "smooth" });
+                }
+              }}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3.5 py-2 text-xs font-medium text-zinc-700 shadow-xs transition hover:bg-zinc-50 hover:text-zinc-900"
+            >
+              <FolderPlus className="size-3.5 text-zinc-400" />
+              Build in Gantt Chart
+              <ArrowDown className="size-3 text-zinc-400" />
+            </button>
+          </div>
         </div>
       ) : (
         <div className="overflow-x-auto">

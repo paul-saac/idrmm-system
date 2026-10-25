@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Building2, CircleCheck, Diamond, MapPin, TriangleAlert } from "lucide-react";
+import { Building2, Diamond, MapPin } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { InitialsAvatar } from "@/components/ui/list-table";
 import type { CostCategory } from "@/lib/cost-estimate/data";
@@ -50,8 +50,7 @@ function Person({ role, name }: { role: string; name: string | null }) {
 /**
  * The project's own header, over its tabs: what it is and where, who runs
  * it and who's on its crew, then a strip of four figures — overall
- * progress, the schedule, the next milestone, and planning health (any
- * task past its End and not done).
+ * progress, the schedule, the next milestone, and the number of tasks.
  */
 export function ProjectHeader({
   project,
@@ -106,10 +105,9 @@ export function ProjectHeader({
     .filter((item): item is { name: string; date: string } => !!item.date && item.date >= today)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
 
-  // Planning health: any task past its End and not done.
-  const overdue = items.filter(
-    (item) => !item.milestone && item.end && item.end < today && item.percent < 99.995
-  ).length;
+  // Match the Gantt header's count: normal tasks and task-less phases count;
+  // milestones are reported separately and are not included here.
+  const taskCount = items.filter((item) => !item.milestone).length;
 
   // The crew: everyone on one of its tasks or phases.
   const crewIds = new Set(
@@ -217,20 +215,8 @@ export function ProjectHeader({
           }
         />
         <Stat
-          label="Planning health"
-          value={
-            overdue === 0 ? (
-              <>
-                On track
-                <CircleCheck aria-hidden className="size-4 shrink-0 text-emerald-600" />
-              </>
-            ) : (
-              <>
-                {overdue} overdue
-                <TriangleAlert aria-hidden className="size-4 shrink-0 text-amber-500" />
-              </>
-            )
-          }
+          label="Project tasks"
+          value={`${taskCount} ${taskCount === 1 ? "task" : "tasks"}`}
         />
       </div>
     </div>

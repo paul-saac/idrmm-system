@@ -21,7 +21,7 @@ import { applyBomImport } from "@/lib/cost-estimate/actions";
  * "Import with AI" — upload a document (a Bill of Materials is the
  * common case, but nothing here actually requires that specific format —
  * any quotation/estimate laid out as phases/tasks/materials works the
- * same way), Gemini extracts it into an editable draft of categories ->
+ * same way), Groq extracts it into an editable draft of categories ->
  * tasks -> material line items (mirroring the Cost Estimate Breakdown's
  * own structure, since this kind of document is essentially a cost
  * estimate authored outside this system), the admin reviews/corrects
@@ -32,14 +32,10 @@ import { applyBomImport } from "@/lib/cost-estimate/actions";
  * calls it that anymore.
  *
  * "Process with AI" below calls extractBomFromFile (lib/bom-import/
- * actions.ts), which sends the uploaded file straight to Gemini — a
- * PDF/photo as multimodal input (no separate PDF-text-extraction step,
- * so it reads table layout directly and works on a scanned/photographed
- * document the same way it works on a typed one), or a CSV/.xlsx as
- * plain text instead (see extractBomFromFile's own doc comment for why
- * those need different handling). "Confirm & Create Tasks" then calls
+ * actions.ts), which sends locally extracted PDF/spreadsheet text or an
+ * uploaded photo to Groq. "Confirm & Create Tasks" then calls
  * applyBomImport (lib/cost-estimate/actions.ts), which writes exactly
- * what's in the draft at that point (Gemini's own extraction, corrected
+ * what's in the draft at that point (Groq's extraction, corrected
  * by hand as needed) to the project as real categories/tasks/material
  * assignments — nothing before that click ever touches the database.
  *

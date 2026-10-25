@@ -13,7 +13,7 @@ async function generateWorkbooks() {
 
   for (const line of lines) {
     const secMatch = line.match(/^###?\s+([0-9\.]+\s+.*)$/);
-    if (secMatch) {
+    if (secMatch) {             
       currentSection = secMatch[1].trim();
     }
     const reqMatch = line.match(/^(REQ\d{3})\.\s+(.+)$/);

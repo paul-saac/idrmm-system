@@ -1042,13 +1042,14 @@ function SavedProgressLogModal({
       <Modal
         open={log !== null}
         onClose={onClose}
-        title="Daily Progress Log Report"
+        title={log ? formatDay(log.entryDate) : "Progress log"}
         description={
           log
-            ? `${formatDay(log.entryDate)}\nLogged by ${log.savedByName ?? "an unknown account"}`
+            ? `Logged by ${log.savedByName ?? "an unknown account"}`
             : undefined
         }
         icon={<HistoryIcon className="size-4" />}
+        bareIcon
         variant="centered"
         size="wide"
       >

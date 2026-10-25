@@ -82,6 +82,7 @@ export function Modal({
   title,
   description,
   icon,
+  bareIcon = false,
   size = "default",
   variant = "panel",
   menuItems,
@@ -100,6 +101,8 @@ export function Modal({
   description?: string;
   /** A tile before the title holding this icon. */
   icon?: React.ReactNode;
+  /** Removes the icon tile while retaining the icon and its alignment. */
+  bareIcon?: boolean;
   size?: keyof typeof SIZE_CLASS;
   /** See VARIANT_CLASS's own doc comment above. Defaults to "panel" so
    * every existing call site keeps its current look unchanged. */
@@ -229,7 +232,11 @@ export function Modal({
             </button>
           )}
           {icon && (
-            <span className="mr-3 flex size-10 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
+            <span
+              className={`mr-3 flex size-10 shrink-0 items-center justify-center text-zinc-700 ${
+                bareIcon ? "" : "rounded-md bg-zinc-100"
+              }`}
+            >
               {icon}
             </span>
           )}

@@ -33,6 +33,12 @@ export function CreateProjectForm({
     initialState
   );
   const formRef = useRef<HTMLFormElement>(null);
+  const eligibleProjectManagers = projectManagers.filter(
+    (account) => account.status === "active" && !account.invitationPending
+  );
+  const eligibleForemen = foremen.filter(
+    (account) => account.status === "active" && !account.invitationPending
+  );
 
   useEffect(() => {
     if (state.success) {
@@ -141,31 +147,27 @@ export function CreateProjectForm({
             id="projectManagerId"
             name="projectManagerId"
             required
-            defaultValue=""
             className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
-            <option value="" disabled>
-              Select a Project Manager
-            </option>
             {/* Someone already on an unfinished project can't be picked
                 (see projectElsewhere). */}
-            {projectManagers.map((pm) => {
+            {eligibleProjectManagers.map((pm) => {
               const elsewhere = projectElsewhere(pm);
               return (
                 <option key={pm.id} value={pm.id} disabled={elsewhere !== null}>
-                  {`${personLabel(pm)}${elsewhere ? ` — on ${elsewhere.name}` : ""}`}
+                  {personLabel(pm)}
                 </option>
               );
             })}
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
         </div>
-        {projectManagers.length === 0 ? (
+        {eligibleProjectManagers.length === 0 ? (
           <p className="text-xs text-amber-600">
-            No Project Manager accounts yet — create one in Accounts first.
+            No active Project Manager has accepted an invitation yet.
           </p>
         ) : (
-          projectManagers.every((pm) => projectElsewhere(pm)) && (
+          eligibleProjectManagers.every((pm) => projectElsewhere(pm)) && (
             <p className="text-xs text-amber-600">
               Every Project Manager is already on a project — they&apos;re free again once
               it&apos;s completed.
@@ -183,29 +185,25 @@ export function CreateProjectForm({
             id="foremanId"
             name="foremanId"
             required
-            defaultValue=""
             className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
-            <option value="" disabled>
-              Select a Foreman
-            </option>
-            {foremen.map((f) => {
+            {eligibleForemen.map((f) => {
               const elsewhere = projectElsewhere(f);
               return (
                 <option key={f.id} value={f.id} disabled={elsewhere !== null}>
-                  {`${personLabel(f)}${elsewhere ? ` — on ${elsewhere.name}` : ""}`}
+                  {personLabel(f)}
                 </option>
               );
             })}
           </select>
           <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
         </div>
-        {foremen.length === 0 ? (
+        {eligibleForemen.length === 0 ? (
           <p className="text-xs text-amber-600">
-            No Foreman accounts yet — create one in Accounts first.
+            No active Foreman has accepted an invitation yet.
           </p>
         ) : (
-          foremen.every((f) => projectElsewhere(f)) && (
+          eligibleForemen.every((f) => projectElsewhere(f)) && (
             <p className="text-xs text-amber-600">
               Every Foreman is already on a project — they&apos;re free again once it&apos;s
               completed.

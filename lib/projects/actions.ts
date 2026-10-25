@@ -72,6 +72,37 @@ async function assignmentClash(
   return null;
 }
 
+/** Prevents a crafted form submission from assigning an inactive account,
+ * a pending invitation, or an account with the wrong project role. */
+async function validateProjectLeads(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectManagerId: string,
+  foremanId: string
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, role, status, invitation_pending")
+    .in("id", [projectManagerId, foremanId]);
+
+  if (error) {
+    console.error("[validateProjectLeads] Supabase read failed:", error);
+    return "Could not verify the selected project team. Please try again.";
+  }
+
+  const projectManager = data?.find((account) => account.id === projectManagerId);
+  const foreman = data?.find((account) => account.id === foremanId);
+  const isEligible = (account: typeof projectManager, role: "project_manager" | "foreman") =>
+    account?.role === role && account.status === "active" && !account.invitation_pending;
+
+  if (!isEligible(projectManager, "project_manager")) {
+    return "Select an active Project Manager who has accepted their invitation.";
+  }
+  if (!isEligible(foreman, "foreman")) {
+    return "Select an active Foreman who has accepted their invitation.";
+  }
+  return null;
+}
+
 export async function createProject(
   _prevState: ProjectActionState,
   formData: FormData
@@ -98,6 +129,11 @@ export async function createProject(
   }
 
   const supabase = await createClient();
+
+  const leadError = await validateProjectLeads(supabase, projectManagerId, foremanId);
+  if (leadError) {
+    return { error: leadError };
+  }
 
   const clash = await assignmentClash(supabase, [
     { id: projectManagerId, role: "Project Manager" },

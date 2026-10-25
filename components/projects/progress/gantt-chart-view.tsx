@@ -3015,7 +3015,7 @@ export function GanttChartView({
           // a plain task row — ticked, not expanded.
           const isGroup = isProject && (category?.hasTasks ?? true);
           // A milestone task, or a task-less category marked as one.
-          const isMilestoneRow = row.type === "milestone";
+          const isMilestoneRow = !isFiller && row.type === "milestone";
 
           return (
             <div
@@ -3968,7 +3968,7 @@ export function GanttChartView({
   return (
     // Inset in the page's own padding, on the gray content area under
     // the Cost overview card (project-detail-view.tsx).
-    <div className="flex flex-col gap-3">
+    <div id="project-schedule-section" className="flex flex-col gap-3">
       {/* The section's header: its name and counts, and Import with AI. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-baseline gap-3">

@@ -36,32 +36,13 @@ export type BomExtractionState = {
   categories?: ExtractedCategory[];
 };
 
-// gemini-2.5-flash (this file's original choice) turned out to be
-// restricted-access now — Google limits the 2.x generation to accounts
-// that already used it before, so a freshly-created API key gets
-// rejected outright (confirmed directly against Google's own current
-// docs). gemini-3.8-flash (the next choice) has free-tier access but is
-// also the newest, most in-demand model, so it hit real 503 "high
-// demand" errors in practice — confirmed directly against a real key.
-// gemini-3.5-flash is one generation back: still free-tier and still
-// strong at document/table extraction, but far less contended since
-// default traffic goes to 3.8 first.
-//
-// Still at capacity sometimes, so 3.8 is the fallback: when one model
-// keeps answering 503 through all of its retries, the other is
-// provisioned separately and is often free.
-const GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.8-flash"];
+const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_TEXT_MODEL = "openai/gpt-oss-20b";
+const GROQ_VISION_MODEL = "qwen/qwen3.8-27b";
 
-function geminiEndpoint(model: string) {
-  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-}
-
-// Sent as inline base64 in the request body, not Google's separate Files
-// API (this app has no infrastructure for that yet) — inline_data has a
-// real ceiling around Gemini's own ~20MB total-request-size limit, and
-// base64 itself inflates the raw file by ~4/3, so this stays comfortably
-// under both. Covers the modal's own upload hint ("PDF or image, up to
-// a few pages") without needing a second upload path for anything larger.
+// Images are sent to Groq Vision as base64 data URLs. Base64 inflates the
+// raw file by roughly 4/3, so this remains below Groq's 20MB image-request
+// limit. PDFs are converted to text locally and never sent as raw files.
 // Doesn't apply to a CSV/Excel upload — see MAX_SPREADSHEET_BYTES/
 // isCsvFile/isExcelFile below, a wholly separate, non-multimodal path.
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
@@ -74,6 +55,7 @@ const MAX_FILE_BYTES = 15 * 1024 * 1024;
 // accidental upload from burning through the free tier's own
 // per-request token ceiling.
 const MAX_SPREADSHEET_BYTES = 2 * 1024 * 1024;
+const MAX_DOCUMENT_TEXT_CHARS = 60_000;
 
 const ACCEPTED_MIME_TYPES = new Set([
   "application/pdf",
@@ -172,14 +154,44 @@ async function excelToText(file: File): Promise<string> {
   return sheetTexts.join("\n\n");
 }
 
-// A 503 from Gemini means its own servers are at capacity, not that
+/** Extracts the text layer from a PDF before sending it to Groq. This keeps
+ * the API key and document processing on the server and avoids pretending
+ * Groq's image endpoint accepts a raw PDF. */
+async function pdfToText(file: File): Promise<string> {
+  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const loadingTask = getDocument({
+    data: new Uint8Array(await file.arrayBuffer()),
+    useSystemFonts: true,
+  });
+  const pdf = await loadingTask.promise;
+  const pages: string[] = [];
+
+  try {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      const page = await pdf.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (text) pages.push(`Page ${pageNumber}:\n${text}`);
+    }
+  } finally {
+    await loadingTask.destroy();
+  }
+
+  return pages.join("\n\n");
+}
+
+// A 503 from Groq means its own servers are temporarily unavailable, not that
 // anything about this request was wrong — confirmed directly the first
 // time this ran end-to-end against a real key ("This model is currently
 // experiencing high demand..."). That kind of spike is near-always gone
 // within a few seconds, so retrying here beats surfacing a scary error
 // for something that would usually already be resolved by the time an
 // admin re-clicked "Process with AI" themselves. Only 503 gets this
-// treatment — 429 (this project's own quota, not Gemini's capacity) and
+// treatment — 429 (this project's own quota, not provider capacity) and
 // 4xx (a real request problem) retrying blindly wouldn't help either.
 const MAX_ATTEMPTS = 3;
 
@@ -193,7 +205,7 @@ const REQUEST_TIMEOUT_MS = 90_000;
 const TOTAL_BUDGET_MS = 180_000;
 
 const BUSY_MESSAGE =
-  "Google's AI service is busy right now (high demand) — nothing's wrong with your file. Please try again in a few minutes.";
+  "Groq is busy right now — nothing's wrong with your file. Please try again in a few minutes.";
 
 /** Whether a failed fetch was a timeout — ours (AbortSignal.timeout) or
  * Node's own header/body wait. */
@@ -209,12 +221,9 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-// Sent as the model's own text instructions alongside the file itself
-// (inline_data) — Gemini reads the PDF/photo directly, no separate
-// text-extraction library in front of it, so it can still see table
-// layout a flattened text dump would lose, and it works on a scanned/
-// photographed document (no text layer at all) the same way it works on
-// a typed one. Deliberately not framed as "a BOM" specifically — a Bill
+// Sent as the model's system instructions alongside locally extracted
+// PDF/spreadsheet text or a base64 image. Deliberately not framed as "a
+// BOM" specifically — a Bill
 // of Materials is the common case, but a quotation or any similar
 // construction cost estimate laid out as phases/tasks/materials works
 // the same way, and the modal itself no longer calls this a BOM import.
@@ -229,53 +238,64 @@ Rules:
 - A task sometimes has its own overall quantity/unit (e.g. "12 cu.m excavation") and no material lines; other times it's just a group header, with all quantity/cost living on its own material lines instead (e.g. "Concrete Footings" listing Cement, Sand, Gravel, Rebar underneath it). Both are valid — reproduce whichever shape the source document actually uses, per task.
 - If a task or material's quantity, unit, or unit cost is not stated in the document, leave that field as an empty string rather than guessing a value.
 - Skip generic equipment/tool provisioning or miscellaneous overhead line items (e.g. "Power Tools," "Hand Tools," a general equipment allowance) — these aren't schedulable construction work or a real material, so leave them out of the output entirely rather than turning them into a category, task, or material line.
-- Respond with JSON only, matching the provided schema exactly.`;
+- Respond with JSON only, matching the provided schema exactly.
+- The top-level value must be an object with a categories array. Every category must contain string name, string amount, and array tasks. Every task must contain string name, string quantity, string unit, and array materials. Every material must contain string name, string quantity, string unit, and string unitCost.`;
 
 const RESPONSE_SCHEMA = {
-  type: "ARRAY",
-  items: {
-    type: "OBJECT",
-    properties: {
-      name: { type: "STRING" },
-      amount: { type: "STRING" },
-      tasks: {
-        type: "ARRAY",
-        items: {
-          type: "OBJECT",
-          properties: {
-            name: { type: "STRING" },
-            quantity: { type: "STRING" },
-            unit: { type: "STRING" },
-            materials: {
-              type: "ARRAY",
-              items: {
-                type: "OBJECT",
-                properties: {
-                  name: { type: "STRING" },
-                  quantity: { type: "STRING" },
-                  unit: { type: "STRING" },
-                  unitCost: { type: "STRING" },
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    categories: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string" },
+          amount: { type: "string" },
+          tasks: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                name: { type: "string" },
+                quantity: { type: "string" },
+                unit: { type: "string" },
+                materials: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      name: { type: "string" },
+                      quantity: { type: "string" },
+                      unit: { type: "string" },
+                      unitCost: { type: "string" },
+                    },
+                    required: ["name", "quantity", "unit", "unitCost"],
+                  },
                 },
-                required: ["name", "quantity", "unit", "unitCost"],
               },
+              required: ["name", "quantity", "unit", "materials"],
             },
           },
-          required: ["name", "quantity", "unit", "materials"],
         },
+        required: ["name", "amount", "tasks"],
       },
     },
-    required: ["name", "amount", "tasks"],
   },
-};
+  required: ["categories"],
+} as const;
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
 /**
- * Defensive runtime validation/coercion of Gemini's own JSON response —
- * response_schema constrains the model's output, but this still isn't a
- * compiler guarantee (a truncated response, a schema Gemini quietly
+ * Defensive runtime validation/coercion of Groq's JSON response — the
+ * response schema constrains the model's output, but this still isn't a
+ * compiler guarantee (a truncated response, a schema the model quietly
  * didn't fully honor, etc.), so nothing downstream trusts the parsed
  * JSON's shape without this passing first. Drops a category/task/
  * material with no name (never a valid row in the review draft either)
@@ -333,49 +353,61 @@ function normalizeCategories(value: unknown): ExtractedCategory[] | null {
   return categories;
 }
 
-/**
- * Uploads a cost estimate document (PDF, photo, CSV, or .xlsx — a Bill
- * of Materials is the common case, but see EXTRACTION_PROMPT's own doc
- * comment for why that's not the only shape accepted) straight to
- * Gemini — a PDF/photo as multimodal inline_data input, a CSV/.xlsx as
- * a plain text part instead (see the requestParts block below for why
- * those need different handling) — no separate PDF-parsing step in
- * front of any of them, and asks for the extracted phases/tasks/
- * materials back as schema-constrained JSON. Returns plain data
- * (ExtractedCategory[]), not the review draft's own DraftCategory[]
- * shape (which also carries client-generated ids for React keys/edits)
- * — ImportBomModalContent maps one onto the other once this resolves.
- *
- * Nothing is written to the project here — this only ever reads the
- * uploaded file and returns what Gemini extracted from it, for the admin
- * to review/correct in the draft UI before anything is created.
- */
+/** Groq may place an otherwise usable JSON result in `failed_generation`
+ * when its response validator rejects surrounding text or a minor wrapper
+ * mismatch. Parse only the JSON object and still apply our full local shape
+ * validation before accepting it. */
+function categoriesFromJsonText(text: string): ExtractedCategory[] | null {
+  const trimmed = text.trim();
+  const candidates = [trimmed];
+  const objectStart = trimmed.indexOf("{");
+  const objectEnd = trimmed.lastIndexOf("}");
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    candidates.push(trimmed.slice(objectStart, objectEnd + 1));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const value =
+        typeof parsed === "object" && parsed !== null
+          ? (parsed as Record<string, unknown>).categories
+          : null;
+      const categories = normalizeCategories(value);
+      if (categories) return categories;
+    } catch {
+      // Try the next candidate (for example, JSON inside a fenced block).
+    }
+  }
+  return null;
+}
+
+/** Reads a cost estimate document and asks Groq for phases, tasks, and
+ * materials as strict JSON. This action never writes to the project; the
+ * user reviews the returned draft before applyBomImport creates anything. */
 export async function extractBomFromFile(
   formData: FormData
 ): Promise<BomExtractionState> {
-  // No project data is read or written here (applyBomImport does that,
-  // with its own project check), so a role check is enough.
   const profile = await requireAdminOrForeman();
-  if (!profile) {
-    return { error: "You are not authorized to use this feature." };
-  }
+  if (!profile) return { error: "You are not authorized to use this feature." };
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GROQ_API_KEY?.trim();
   if (!apiKey) {
     return {
       error:
-        "The Gemini API key isn't configured yet. Add GEMINI_API_KEY to your .env file and restart the dev server.",
+        "The Groq API key isn't configured yet. Add GROQ_API_KEY to your .env file and restart the dev server.",
     };
   }
 
   const file = formData.get("file");
-  if (!(file instanceof File)) {
-    return { error: "No file was uploaded." };
-  }
+  if (!(file instanceof File)) return { error: "No file was uploaded." };
 
   const isCsv = isCsvFile(file);
   const isExcel = !isCsv && isExcelFile(file);
   const isSpreadsheet = isCsv || isExcel;
+  const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+  const isImage = !isSpreadsheet && !isPdf;
+
   if (!isSpreadsheet && !ACCEPTED_MIME_TYPES.has(file.type)) {
     return {
       error: "Upload a PDF, image (PNG, JPG, WEBP, HEIC), CSV, or Excel (.xlsx) file.",
@@ -385,175 +417,192 @@ export async function extractBomFromFile(
     return { error: "That file is too large — try a smaller export." };
   }
   if (!isSpreadsheet && file.size > MAX_FILE_BYTES) {
-    return {
-      error: "That file is too large — try a smaller PDF or fewer pages.",
-    };
+    return { error: "That file is too large — try a smaller PDF or image." };
   }
 
-  // A CSV is already plain text, and an .xlsx gets read into the same
-  // kind of plain text by excelToText above — either way it's sent as a
-  // second text part instead of inline_data, since Gemini's own document
-  // vision only meaningfully understands PDFs/images; anything else
-  // handed to inline_data just gets extracted back to pure text anyway
-  // (confirmed directly against Google's own docs), so there's nothing
-  // gained by routing either through that path, and it saves the
-  // base64-encoding overhead entirely.
-  const requestParts: (
-    | { text: string }
-    | { inline_data: { mime_type: string; data: string } }
-  )[] = [{ text: EXTRACTION_PROMPT }];
-  if (isCsv) {
-    const csvText = await file.text();
-    requestParts.push({
-      text: `Here is the CSV file's own contents:\n\n${csvText}`,
-    });
-  } else if (isExcel) {
-    let excelText: string;
+  let model = GROQ_TEXT_MODEL;
+  let userContent: string | Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } }
+  >;
+
+  if (isImage) {
+    model = GROQ_VISION_MODEL;
+    const base64Data = Buffer.from(await file.arrayBuffer()).toString("base64");
+    userContent = [
+      { type: "text", text: "Extract the construction estimate from this image." },
+      {
+        type: "image_url",
+        image_url: { url: `data:${file.type};base64,${base64Data}` },
+      },
+    ];
+  } else {
+    let documentText: string;
     try {
-      excelText = await excelToText(file);
+      if (isCsv) {
+        documentText = await file.text();
+      } else if (isExcel) {
+        documentText = await excelToText(file);
+      } else {
+        documentText = await pdfToText(file);
+      }
     } catch (error) {
-      console.error("[extractBomFromFile] Could not read Excel file:", error);
+      console.error("[extractBomFromFile] Could not read uploaded file:", error);
       return {
-        error: "Couldn't read that Excel file — make sure it's a valid .xlsx file.",
+        error: isExcel
+          ? "Couldn't read that Excel file — make sure it's a valid .xlsx file."
+          : "Couldn't read that PDF — make sure it is a valid, unprotected PDF.",
       };
     }
-    requestParts.push({
-      text: `Here is the Excel file's own contents (each sheet, one row per line, columns separated by " | "):\n\n${excelText}`,
-    });
-  } else {
-    const bytes = await file.arrayBuffer();
-    const base64Data = Buffer.from(bytes).toString("base64");
-    requestParts.push({
-      inline_data: { mime_type: file.type, data: base64Data },
-    });
+
+    if (!documentText.trim()) {
+      return {
+        error:
+          "No readable text was found in that PDF. For a scanned document, upload its pages as PNG or JPG images.",
+      };
+    }
+    if (documentText.length > MAX_DOCUMENT_TEXT_CHARS) {
+      return {
+        error: "That document contains too much text for one AI import. Upload a smaller document or split it into sections.",
+      };
+    }
+    userContent = `Extract the construction estimate from this document:\n\n${documentText}`;
   }
 
-  // Each model gets MAX_ATTEMPTS tries on a 503 (see above), then the
-  // next model; a timeout moves straight on to the next model; anything
-  // else ends it right there. All within TOTAL_BUDGET_MS.
+  const requestBody = {
+    model,
+    messages: [
+      { role: "system", content: EXTRACTION_PROMPT },
+      { role: "user", content: userContent },
+    ],
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: "construction_cost_estimate",
+        strict: true,
+        schema: RESPONSE_SCHEMA,
+      },
+    },
+    temperature: 0.1,
+    max_completion_tokens: 8_192,
+  };
+
   const startedAt = Date.now();
   let response: Response | undefined;
-  let timedOut = false;
-  tryModels: for (const model of GEMINI_MODELS) {
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
-      if (remaining < 5_000) break tryModels;
-      try {
-        response = await fetch(`${geminiEndpoint(model)}?key=${apiKey}`, {
-          signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, remaining)),
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: requestParts,
-              },
-            ],
-            generationConfig: {
-              response_mime_type: "application/json",
-              response_schema: RESPONSE_SCHEMA,
-            },
-          }),
-        });
-      } catch (error) {
-        if (isTimeout(error)) {
-          console.error(`[extractBomFromFile] ${model} didn't answer in time — trying the next model`);
-          timedOut = true;
-          response = undefined;
-          continue tryModels;
-        }
-        console.error("[extractBomFromFile] Gemini request failed:", error);
-        return {
-          error: "Could not reach Gemini. Check your connection and try again.",
-        };
-      }
-
-      if (response.status !== 503) break tryModels;
-      console.error(
-        `[extractBomFromFile] ${model} returned 503 (attempt ${attempt}/${MAX_ATTEMPTS})`
-      );
-      if (attempt < MAX_ATTEMPTS) await sleep(1000 * attempt);
-    }
-  }
-
-  if (!response) {
-    return {
-      error: timedOut
-        ? BUSY_MESSAGE
-        : "Could not reach Gemini. Check your connection and try again.",
-    };
-  }
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => "");
-    console.error(
-      "[extractBomFromFile] Gemini API error",
-      response.status,
-      bodyText
-    );
-    // Gemini's own error body is {"error":{"code","message","status"}} —
-    // surfaced directly (not just logged server-side) so a wrong model
-    // id/API key/quota issue is diagnosable from the modal itself, not
-    // just the dev server terminal. This is exactly what caught
-    // gemini-2.5-flash's own access restriction above, the first time
-    // this ran against a real key.
-    let geminiMessage: string | null = null;
+  let responseMode: "strict" | "best_effort" | "json_object" = "strict";
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+    if (remaining < 5_000) break;
     try {
-      const parsedBody = JSON.parse(bodyText);
-      geminiMessage =
-        typeof parsedBody?.error?.message === "string"
-          ? parsedBody.error.message
-          : null;
-    } catch {
-      // bodyText wasn't JSON — geminiMessage stays null, fall through
-      // to the generic per-status message below.
-    }
-
-    if (response.status === 429) {
+      response = await fetch(GROQ_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ...requestBody,
+          response_format:
+            responseMode === "json_object"
+              ? { type: "json_object" }
+              : {
+                  ...requestBody.response_format,
+                  json_schema: {
+                    ...requestBody.response_format.json_schema,
+                    strict: responseMode === "strict",
+                  },
+                },
+        }),
+        signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, remaining)),
+      });
+    } catch (error) {
+      console.error("[extractBomFromFile] Groq request failed:", error);
       return {
-        error: "Gemini's free-tier rate limit was hit — wait a moment and try again.",
+        error: isTimeout(error)
+          ? BUSY_MESSAGE
+          : "Could not reach Groq. Check your connection and try again.",
       };
     }
-    if (response.status === 503) {
-      return { error: BUSY_MESSAGE };
+
+    // Real documents occasionally make Groq's constrained decoder return
+    // `Failed to generate JSON` even though the same model can produce a
+    // valid JSON object. Retry once in JSON-object mode, then run the same
+    // local shape validation below before trusting the result.
+    if (response.status === 400) {
+      const errorBody = await response.clone().json().catch(() => null);
+      const message =
+        typeof errorBody?.error?.message === "string" ? errorBody.error.message : "";
+      if (message.toLowerCase().includes("failed to generate json")) {
+        const failedGeneration = errorBody?.error?.failed_generation;
+        if (typeof failedGeneration === "string") {
+          const recovered = categoriesFromJsonText(failedGeneration);
+          if (recovered && recovered.length > 0) return { categories: recovered };
+        }
+
+        const nextMode: "best_effort" | "json_object" | null =
+          responseMode === "strict"
+            ? "best_effort"
+            : responseMode === "best_effort"
+              ? "json_object"
+              : null;
+        if (!nextMode) break;
+        console.warn(
+          `[extractBomFromFile] ${responseMode} JSON generation failed; retrying with ${nextMode}`
+        );
+        responseMode = nextMode;
+        response = undefined;
+        continue;
+      }
     }
+
+    if (response.status !== 503 || attempt === MAX_ATTEMPTS) break;
+    await sleep(1_000 * attempt);
+  }
+
+  if (!response) return { error: BUSY_MESSAGE };
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => "");
+    let groqMessage: string | null = null;
+    try {
+      const parsedBody = JSON.parse(bodyText);
+      groqMessage =
+        typeof parsedBody?.error?.message === "string" ? parsedBody.error.message : null;
+    } catch {
+      // Groq returned a non-JSON error body; use the status-specific message below.
+    }
+    console.error("[extractBomFromFile] Groq API error", response.status, groqMessage);
+
+    if (response.status === 429) {
+      return { error: "Groq's free-tier rate limit was reached — wait a moment and try again." };
+    }
+    if (response.status === 503) return { error: BUSY_MESSAGE };
     return {
-      error: geminiMessage
-        ? `Gemini error (${response.status}): ${geminiMessage}`
-        : `Gemini couldn't process this document (HTTP ${response.status}). Check the server terminal for details.`,
+      error: groqMessage
+        ? `Groq error (${response.status}): ${groqMessage}`
+        : `Groq couldn't process this document (HTTP ${response.status}).`,
     };
   }
 
-  let payload;
+  let payload: unknown;
   try {
     payload = await response.json();
   } catch (error) {
-    console.error("[extractBomFromFile] Reading Gemini's response failed:", error);
-    return { error: isTimeout(error) ? BUSY_MESSAGE : "Gemini returned an unreadable response. Please try again." };
-  }
-  const text = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (typeof text !== "string") {
-    console.error("[extractBomFromFile] Unexpected Gemini response shape", payload);
-    return { error: "Gemini returned an unexpected response. Please try again." };
+    console.error("[extractBomFromFile] Could not read Groq response:", error);
+    return { error: "Groq returned an unreadable response. Please try again." };
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    console.error("[extractBomFromFile] Gemini response wasn't valid JSON:", text);
-    return { error: "Gemini's response couldn't be read. Please try again." };
+  const content = (payload as {
+    choices?: { message?: { content?: unknown; refusal?: unknown } }[];
+  })?.choices?.[0]?.message?.content;
+  if (typeof content !== "string") {
+    console.error("[extractBomFromFile] Unexpected Groq response shape");
+    return { error: "Groq returned an unexpected response. Please try again." };
   }
 
-  const categories = normalizeCategories(parsed);
+  const categories = categoriesFromJsonText(content);
   if (!categories) {
-    console.error(
-      "[extractBomFromFile] Gemini response didn't match the expected shape",
-      parsed
-    );
-    return {
-      error: "Gemini's response didn't match the expected format. Please try again.",
-    };
+    console.error("[extractBomFromFile] Groq response did not match the expected shape");
+    return { error: "Groq's response didn't match the expected format. Please try again." };
   }
   if (categories.length === 0) {
     return { error: "No phases, tasks, or materials were found in that document." };

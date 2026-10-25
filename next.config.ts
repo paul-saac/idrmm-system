@@ -12,7 +12,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["192.168.254.104"],
   // Server Actions default to a 1MB request body — the Import Bill of
   // Materials modal (extractBomFromFile, lib/bom-import/actions.ts)
-  // uploads the raw PDF/photo straight through a Server Action call, so
+  // uploads a PDF/photo through a Server Action call, so
   // anything past a tiny file trips that default. Set comfortably above
   // that action's own MAX_FILE_BYTES (15mb) to leave room for
   // multipart/form-data's own boundary/header overhead — see this
