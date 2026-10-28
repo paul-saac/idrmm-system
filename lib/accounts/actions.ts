@@ -795,7 +795,7 @@ export async function getAccountDetail(
       supabase
         .from("projects")
         .select(
-          "id, project_name, status, start_date, target_end_date, actual_end_date, project_manager_id, foreman_id"
+          "id, project_name, location, status, start_date, target_end_date, actual_end_date, project_manager_id, foreman_id"
         )
         .or(`project_manager_id.eq.${id},foreman_id.eq.${id}`),
       supabase
@@ -828,6 +828,7 @@ export async function getAccountDetail(
     .map((project) => ({
       id: project.id,
       name: project.project_name,
+      location: project.location,
       status: project.status,
       as: (project.project_manager_id === id ? "Project Manager" : "Foreman") as AccountProject["as"],
       startDate: project.start_date,

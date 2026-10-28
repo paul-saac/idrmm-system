@@ -647,6 +647,29 @@ export async function applyBomImport(
 
     const supabase = await createClient();
 
+    const { data: project, error: projectError } = await supabase
+      .from("projects")
+      .select("start_date")
+      .eq("id", projectId)
+      .single();
+
+    if (projectError || !project) {
+      return { error: "Could not load the project's start date. Please try again." };
+    }
+    if (!project.start_date) {
+      return { error: "Set the project's start date before importing tasks." };
+    }
+    if (!isPlannedYearInRange(project.start_date)) {
+      return { error: INVALID_DATE_RANGE_ERROR };
+    }
+
+    // Imported drafts have no schedule: start each item on the project start
+    // date until its duration is planned in the Gantt chart.
+    const initialSchedule = {
+      planned_start_date: project.start_date,
+      planned_end_date: project.start_date,
+    };
+
     for (const category of cleanCategories) {
       const isStandalone = category.tasks.length === 0 && category.amount > 0;
 
@@ -655,6 +678,7 @@ export async function applyBomImport(
         .insert({
           project_id: projectId,
           category_name: category.name,
+          ...initialSchedule,
           ...(isStandalone && {
             material_direct_amount: category.amount,
             category_material_estimate: category.amount,
@@ -689,6 +713,7 @@ export async function applyBomImport(
             project_id: projectId,
             category_id: categoryRow.id,
             task_name: task.name,
+            ...initialSchedule,
             estimated_quantity: task.quantity,
             unit: task.unit || null,
             material_estimate: materialEstimate,

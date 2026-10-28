@@ -2,7 +2,8 @@
 
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
+import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import {
   updateTaskMaterialAssignments,
   updateCategoryMaterialAssignments,
@@ -1025,10 +1026,10 @@ export function MaterialBreakdownModalContent({
             <button
               type="button"
               onClick={onImportBom}
-              className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-900 bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800"
+              className="ai-rainbow-button flex cursor-pointer items-center gap-2 rounded px-4 py-2 text-sm font-semibold text-white transition"
             >
-              <Sparkles className="size-3.5" />
-              Import
+              <AiSparklesIcon variant="white" className="size-5 shrink-0" />
+              <span>Import</span>
             </button>
             <button
               type="button"

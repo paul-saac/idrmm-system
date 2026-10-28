@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { LayoutGrid, Folder, HardHat, Users, FileText, Wrench } from "lucide-react";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 
@@ -26,7 +26,11 @@ const NAV_ITEMS: {
 
 export function PortalSidebar({ basePath }: { basePath: PortalBasePath }) {
   const pathname = usePathname();
-  const navItems = NAV_ITEMS.filter((item) => item.portals.includes(basePath));
+  const router = useRouter();
+  const navItems = useMemo(
+    () => NAV_ITEMS.filter((item) => item.portals.includes(basePath)),
+    [basePath]
+  );
 
   // Sits collapsed (icon rail) at rest, expands on hover. No
   // localStorage here — unlike a click-to-toggle preference, "currently
@@ -35,6 +39,13 @@ export function PortalSidebar({ basePath }: { basePath: PortalBasePath }) {
   // server/client hydration mismatch a stored preference would need to
   // account for).
   const [collapsed, setCollapsed] = useState(true);
+
+  // These are the few primary destinations this user can reach from the
+  // sidebar. Warming them once makes subsequent switches start immediately;
+  // each portal's loading.tsx is also prefetched as the instant fallback.
+  useEffect(() => {
+    for (const item of navItems) router.prefetch(`${basePath}${item.path}`);
+  }, [basePath, navItems, router]);
 
   return (
     // A normal flex item (not absolutely positioned) — its width
@@ -86,6 +97,7 @@ export function PortalSidebar({ basePath }: { basePath: PortalBasePath }) {
             <Link
               key={href}
               href={href}
+              prefetch
               title={collapsed ? label : undefined}
               className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm transition ${
                 collapsed ? "justify-center px-0" : ""

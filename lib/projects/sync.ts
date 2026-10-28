@@ -1,57 +1,61 @@
+import "server-only";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireProjectAccess } from "@/lib/auth/project-access";
+import { getCostEstimate } from "@/lib/cost-estimate/data";
+import type { ProjectLifecycle } from "./lifecycle";
 import { deriveProjectStatusFromProgress } from "@/lib/projects/status";
 import type { ProjectStatus } from "@/lib/supabase/types";
 
 /**
- * Recomputes what projects.status should be for a given progress % and
- * writes it if it's changed (see deriveProjectStatusFromProgress).
+ * Reconciles status from saved work and every leaf item's completion.
  * Returns the resolved status either way, so a caller that already has
  * a project row in hand can patch it in-memory instead of re-fetching.
  *
- * Called from two places, for two different reasons:
- *  - lib/daily-logs/actions.ts, right after the two events that can
- *    move progress going forward (approving a daily log, resolving a
- *    flag on a work_item entry) — keeps status fresh immediately.
- *  - app/admin/projects/[id]/page.tsx, on every page load — progress
- *    can also shift from something that isn't a daily-log event at all
- *    (editing the Cost Estimate Breakdown changes a task's weight/
- *    estimated_quantity, which changes overallPercent with the exact
- *    same logged quantities), and this is also what retroactively
- *    corrects any project whose status went stale before this feature
- *    existed — there's no migration that could "replay" those old
- *    approvals, so self-healing on the next view is the fix.
+ * Runs after saved progress changes and while reading projects, so old
+ * automatic completion statuses and changed task scope are corrected.
+ * Only trusted server callers may supply a freshly fetched lifecycle.
  */
 export async function syncProjectStatusFromProgress(
   projectId: number,
-  progressPercent: number
+  lifecycle?: ProjectLifecycle
 ): Promise<ProjectStatus | null> {
-  const supabase = await createClient();
+  if (!await requireProjectAccess(projectId)) return null;
+  try {
+    const supabase = await createClient();
 
-  const { data: project } = await supabase
-    .from("projects")
-    .select("status")
-    .eq("id", projectId)
-    .maybeSingle();
-  if (!project) return null;
+    const { data: project, error: readError } = await supabase
+      .from("projects")
+      .select("status, actual_end_date")
+      .eq("id", projectId)
+      .maybeSingle();
+    if (readError || !project) return null;
 
-  const nextStatus = deriveProjectStatusFromProgress(
-    project.status,
-    progressPercent
-  );
-  if (nextStatus === project.status) return project.status;
+    const current = lifecycle ?? (await getCostEstimate(projectId, true)).lifecycle;
+    const nextStatus = deriveProjectStatusFromProgress(current, project.actual_end_date);
+    const actualEndDate = nextStatus === "completed" ? project.actual_end_date : null;
+    if (nextStatus === project.status && actualEndDate === project.actual_end_date) return nextStatus;
 
-  const { error } = await supabase
-    .from("projects")
-    .update({ status: nextStatus })
-    .eq("id", projectId);
+    // Not a client-callable action: authorization and authoritative RLS reads
+    // above precede this narrow derived-status write. Foremen cannot confirm
+    // completion here; only an admin can set its date in updateProject.
+    let update = createAdminClient().from("projects")
+      .update({ status: nextStatus, actual_end_date: actualEndDate })
+      .eq("id", projectId)
+      .eq("status", project.status);
+    // Do not overwrite a confirmation changed since this project was read.
+    update = project.actual_end_date === null
+      ? update.is("actual_end_date", null)
+      : update.eq("actual_end_date", project.actual_end_date);
+    const { error } = await update;
 
-  if (error) {
-    console.error(
-      "[syncProjectStatusFromProgress] projects status sync failed:",
-      error.message
-    );
-    return project.status;
+    if (error) {
+      console.error("[syncProjectStatusFromProgress] projects status sync failed:", error.message);
+    }
+
+    return nextStatus;
+  } catch (error) {
+    console.error("[project-status] Could not verify current progress:", error);
+    return null;
   }
-
-  return nextStatus;
 }

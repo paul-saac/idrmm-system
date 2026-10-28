@@ -77,8 +77,16 @@ export function ProjectsBrowser({
             </select>
             <ChevronDown aria-hidden className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
           </div>
-          <div className="flex rounded border border-zinc-200 bg-white p-1">
-            {(["grid", "list"] as const).map(mode => <button key={mode} aria-label={`${mode === "grid" ? "Grid" : "List"} view`} aria-pressed={view === mode} onClick={() => setView(mode)} className={`rounded p-1.5 ${view === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:bg-zinc-50"}`}>{mode === "grid" ? <LayoutGrid className="size-4" /> : <List className="size-4" />}</button>)}
+          <div
+            role="group"
+            aria-label="Project view"
+            className="relative grid grid-cols-2 rounded border border-zinc-200 bg-white p-1"
+          >
+            <span
+              aria-hidden
+              className={`pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded bg-zinc-100 transition-transform duration-200 ease-out ${view === "list" ? "translate-x-full" : "translate-x-0"}`}
+            />
+            {(["grid", "list"] as const).map(mode => <button key={mode} type="button" aria-label={`${mode === "grid" ? "Grid" : "List"} view`} aria-pressed={view === mode} onClick={() => setView(mode)} className={`relative z-10 cursor-pointer rounded p-1.5 transition-colors duration-150 ${view === mode ? "text-zinc-900" : "text-zinc-400 hover:text-zinc-700"}`}>{mode === "grid" ? <LayoutGrid className="size-4" /> : <List className="size-4" />}</button>)}
           </div>
         </div>
         {isAdmin && (
@@ -102,7 +110,7 @@ export function ProjectsBrowser({
             : "No projects match your search/filter."}
         </p>
       ) : (
-        <div className={`grid grid-cols-1 gap-5 ${view === "grid" ? "lg:grid-cols-2" : ""}`}>
+        <div key={view} className={`tab-content-enter grid grid-cols-1 gap-5 ${view === "grid" ? "lg:grid-cols-2" : ""}`}>
           {filtered.map((project) => (
             <ProjectCard key={project.id} project={project} basePath={basePath} />
           ))}

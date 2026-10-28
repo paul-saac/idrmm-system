@@ -109,12 +109,14 @@ export function WorkerPickerModal({
         </div>
 
         {/* Category Tabs */}
-        <div className="flex gap-4 overflow-x-auto border-b border-zinc-200 px-1 pt-1 pb-0">
+        <div role="tablist" aria-label="Worker categories" className="flex gap-4 overflow-x-auto border-b border-zinc-200 px-1 pt-1 pb-0">
           {tabs.map((tab) => {
             const active = activeTab === tab.key;
             return (
               <button
                 key={tab.key}
+                role="tab"
+                aria-selected={active}
                 type="button"
                 onClick={() => setActiveTab(tab.key)}
                 className={`flex shrink-0 cursor-pointer items-center gap-1.5 border-b-2 pb-2.5 text-xs sm:text-sm font-medium whitespace-nowrap transition ${
@@ -137,7 +139,7 @@ export function WorkerPickerModal({
         </div>
 
         {/* Member list / table without Action column */}
-        <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+        <div key={activeTab} className="tab-content-enter min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-200 bg-white">
           {filteredWorkers.length === 0 ? (
             <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
               {workers.length === 0 ? (
@@ -169,7 +171,7 @@ export function WorkerPickerModal({
                     >
                       <td className="px-5 py-3 font-medium text-zinc-900">
                         <div className="flex items-center gap-2.5">
-                          <InitialsAvatar name={worker.fullName} neutral />
+                          <InitialsAvatar name={worker.fullName} />
                           <span className="truncate">{worker.fullName}</span>
                         </div>
                       </td>

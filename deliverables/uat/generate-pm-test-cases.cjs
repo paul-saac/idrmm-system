@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports -- This standalone generator intentionally uses CommonJS. */
 const fs = require('fs');
 const path = require('path');
 const ExcelJS = require('exceljs');

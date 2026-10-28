@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   createEquipmentRequest,
   updateEquipmentRequest,
@@ -388,12 +389,12 @@ export function EquipmentRequestEditForm({
               <label htmlFor="erf-dateRequired" className={fieldLabel}>
                 Date Required
               </label>
-              <input
+              <DatePicker
                 id="erf-dateRequired"
-                type="date"
                 name="dateRequired"
+                ariaLabel="Date required"
                 value={dateRequired}
-                onChange={(e) => setDateRequired(e.target.value)}
+                onChange={setDateRequired}
                 className={`${fieldInput} bg-white px-2.5 py-1.5`}
               />
             </div>

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, ChevronDown, ChevronRight, ClipboardCheck, Clock3, FileText, History, Info, LayoutGrid, List, Plus, Search, ShieldCheck, Upload } from "lucide-react";
 import { DocumentThumbnail, DocumentViewer, documentFileUrl, type ThumbnailCache } from "./document-preview";
 import { Modal, ModalFooter, ModalHeaderAddon } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import { listSheets, submitSheet, sheetDetails, reviewSheet } from "@/lib/sheets/actions";
 import { DISCIPLINES, DOCUMENT_TYPES, SHEET_STATUS, formatVersion, type DocumentType, type Sheet } from "@/lib/sheets/model";
 
@@ -52,8 +53,9 @@ export function SheetsSection({
   const [group, setGroup] = useState<"drawings" | "documents">("drawings");
   const [documentType, setDocumentType] = useState<DocumentType>("drawing");
   const [signedDocument, setSignedDocument] = useState(true);
-  const [views, setViews] = useState<Record<"drawings" | "documents", "list" | "grid">>({ drawings: "list", documents: "list" });
-  const view = views[group];
+  // One shared display switch: changing document categories keeps the user's
+  // chosen List/Grid presentation instead of silently reverting per category.
+  const [view, setView] = useState<"list" | "grid">("list");
   const [thumbnailCache] = useState<ThumbnailCache>(() => new Map());
   const [upload, setUpload] = useState<{ previous?: Sheet } | null>(null);
   const [selected, setSelected] = useState<Detail | null>(null);
@@ -128,18 +130,31 @@ export function SheetsSection({
     </button>
     {open && <div className="border-t border-zinc-200">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
-      <div role="tablist" aria-label="Document section" className="inline-flex rounded border border-zinc-200 bg-zinc-100 p-1">
-        {(["drawings", "documents"] as const).map(value => <button key={value} role="tab" type="button" aria-selected={group === value} onClick={() => setGroup(value)} className={`cursor-pointer rounded px-3.5 py-1.5 text-xs font-medium transition ${group === value ? "bg-white text-zinc-900 shadow-2xs" : "text-zinc-500 hover:text-zinc-900"}`}>{value === "drawings" ? "Construction Drawings" : "Project Documents"}</button>)}
+      <div role="tablist" aria-label="Document section" className="relative inline-grid grid-cols-2 rounded border border-zinc-200 bg-zinc-100 p-1">
+        <span
+          aria-hidden
+          className={`pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded bg-white shadow-2xs transition-transform duration-250 ease-out ${group === "documents" ? "translate-x-full" : "translate-x-0"}`}
+        />
+        {(["drawings", "documents"] as const).map(value => <button key={value} role="tab" type="button" aria-selected={group === value} onClick={() => setGroup(value)} className={`relative z-10 cursor-pointer rounded px-3.5 py-1.5 text-xs font-medium transition-colors duration-200 ${group === value ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-900"}`}>{value === "drawings" ? "Construction Drawings" : "Project Documents"}</button>)}
       </div>
       <div className="ml-auto flex flex-wrap items-center gap-3">
         <div className="relative"><Search className="pointer-events-none absolute left-3 top-3 size-4 text-zinc-400" /><input aria-label="Search sheets" placeholder="Search reference or document" className={`${input} !w-64 pl-9`} value={query} onChange={e => setQuery(e.target.value)} /></div>
         {group === "drawings" && <span className="relative inline-block "><select aria-label="Drawing discipline" className={`${input} !w-auto appearance-none pr-9`} value={discipline} onChange={e => setDiscipline(e.target.value)}><option value="">All disciplines</option>{DISCIPLINES.map(d => <option key={d}>{d}</option>)}</select><ChevronDown aria-hidden className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" /></span>}
-        <div role="group" aria-label="Document view" className="flex rounded border border-zinc-200 p-1">
-          {(["list", "grid"] as const).map(mode => <button key={mode} type="button" aria-label={mode === "list" ? "List view" : "Grid view"} aria-pressed={view === mode} onClick={() => setViews(current => ({ ...current, [group]: mode }))} className={`rounded p-1.5 ${view === mode ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:bg-zinc-50"}`}>{mode === "list" ? <List className="size-4" /> : <LayoutGrid className="size-4" />}</button>)}
+        <div
+          role="group"
+          aria-label="Document view"
+          className="relative grid grid-cols-2 rounded border border-zinc-200 bg-white p-1"
+        >
+          <span
+            aria-hidden
+            className={`pointer-events-none absolute top-1 bottom-1 left-1 w-[calc(50%-4px)] rounded bg-zinc-100 transition-transform duration-200 ease-out ${view === "grid" ? "translate-x-full" : "translate-x-0"}`}
+          />
+          {(["list", "grid"] as const).map(mode => <button key={mode} type="button" aria-label={mode === "list" ? "List view" : "Grid view"} aria-pressed={view === mode} onClick={() => setView(mode)} className={`relative z-10 cursor-pointer rounded p-1.5 transition-colors duration-150 ${view === mode ? "text-zinc-900" : "text-zinc-400 hover:text-zinc-700"}`}>{mode === "list" ? <List className="size-4" /> : <LayoutGrid className="size-4" />}</button>)}
         </div>
         <button className={`${button} flex items-center gap-2 bg-zinc-900 text-white`} onClick={() => { setUpload({}); setDocumentType(group === "drawings" ? "drawing" : "bom"); setSignedDocument(true); setFormError(null); }}><Plus className="size-4" />Add document</button>
       </div>
       </div>
+      <div key={`${group}-${view}`} className="tab-content-enter">
       {error ? <div role="alert" className="p-5 text-sm text-red-600">{error} <button onClick={load} className="underline">Retry</button></div> : loading ? <p role="status" className="p-5 text-sm text-zinc-500">Loading sheets...</p> : view === "grid" ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 border-t border-zinc-200 p-5">
           {visible.map(s => <button key={s.id} type="button" onClick={() => inspect(s.id)} className="flex flex-col gap-2 rounded border border-zinc-200 p-3 text-left transition hover:border-zinc-400 hover:bg-zinc-50">
@@ -153,6 +168,7 @@ export function SheetsSection({
           {!visible.length && <p className="col-span-full p-8 text-center text-sm text-zinc-400">{sheets.length ? "No documents match this category or search." : "No documents uploaded yet."}</p>}
         </div>
       ) : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-y border-zinc-200 bg-zinc-50 text-xs text-zinc-500"><tr>{["Reference / Document", "Version", group === "drawings" ? "Discipline" : "Document category", "Stage", "Status", "Submitted by", "Date"].map(h => <th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr></thead><tbody className="divide-y divide-zinc-100">{visible.map(s => <tr key={s.id} className="hover:bg-zinc-50"><td className="px-5 py-4"><button onClick={() => inspect(s.id)} className="flex items-center gap-3 text-left"><DocumentThumbnail key={`${s.id}-list`} url={documentFileUrl(projectId, s.id)} pdf={s.file_path.endsWith(".pdf")} title={s.title} cache={thumbnailCache} /><span><span className="block font-medium">{s.sheet_number}</span><span className="block text-xs text-zinc-500">{s.title}</span></span></button></td><td className="px-5 py-4">{formatVersion(s.revision)}</td><td className="px-5 py-4">{group === "drawings" ? s.discipline : DOCUMENT_TYPES[s.document_type]}</td><td className="px-5 py-4">{s.stage === "as_built" ? "As-built" : s.stage === "original" ? "Original" : "Revision"}</td><td className="px-5 py-4"><span className={`rounded px-2 py-1 text-xs ${s.status === "accepted" ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>{SHEET_STATUS[s.status]}</span></td><td className="px-5 py-4">{s.submitted_name}</td><td className="whitespace-nowrap px-5 py-4 text-xs text-zinc-500">{date(s.created_at)}</td></tr>)}{!visible.length && <tr><td colSpan={7} className="p-8 text-center text-zinc-400">{sheets.length ? "No documents match this category or search." : "No documents uploaded yet."}</td></tr>}</tbody></table></div>}
+      </div>
     </div>}
     <Modal open={!!upload} onClose={() => { if (!pending) setUpload(null); }} title={upload?.previous ? `New revision — ${upload.previous.sheet_number}` : "Add document"} size="wide">
       <form id="upload-sheet" onSubmit={save}><fieldset disabled={pending} className="-mx-6 -my-5 divide-y divide-zinc-200">
@@ -182,7 +198,7 @@ export function SheetsSection({
           <div className="grid gap-4 sm:grid-cols-2">
             <label className={field}><span className={fieldLabel}>Professional name</span><input name="external_name" maxLength={200} className={input} /></label>
             <label className={field}><span className={fieldLabel}>Professional role</span><input name="external_role" maxLength={200} placeholder="Architect / Civil Engineer" className={input} /></label>
-            <label className={field}><span className={fieldLabel}>Approval / verification date</span><input type="date" name="approval_date" className={input} /></label>
+            <label className={field}><span className={fieldLabel}>Approval / verification date</span><DatePicker name="approval_date" ariaLabel="Approval or verification date" className={input} /></label>
             {!signedDocument && <div className={field}><span className={fieldLabel}>Separate signed approval evidence</span><FilePicker name="evidence" label="Separate signed approval evidence" /></div>}
           </div>
           <label className="flex items-center gap-2 text-sm text-zinc-700"><input type="checkbox" name="signed_document" checked={signedDocument} onChange={e => setSignedDocument(e.target.checked)} className="size-4 rounded accent-zinc-900" />The uploaded document already contains the professional&apos;s signature / approval</label>
@@ -207,7 +223,7 @@ export function SheetsSection({
         <section><h4 className="text-sm font-medium">Field changes / revision notes</h4><p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">{detail.change_notes || "No change notes recorded."}</p></section>
         </div>
         <aside className="min-w-0 border-t border-zinc-200 lg:border-t-0 lg:border-l">
-          <section className="px-6 py-5"><h4 className="mb-3 text-sm font-medium">External approval / verification</h4>
+          <section className="px-6 py-5"><h4 className="mb-3 text-sm font-medium">Verification</h4>
             <div className="flex items-start justify-between gap-3 rounded border border-emerald-100 bg-emerald-50/80 p-4">
               <div className="flex min-w-0 items-start gap-3">
                 <span className="shrink-0 rounded border border-emerald-100 bg-emerald-100 p-2 text-emerald-700"><ShieldCheck className="size-4" /></span>

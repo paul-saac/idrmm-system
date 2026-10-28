@@ -11,7 +11,6 @@ import {
 } from "react";
 import {
   Boxes,
-  Calendar,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -28,6 +27,7 @@ import {
 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   createDailyLog,
   updateDailyLog,
@@ -926,7 +926,6 @@ function MainScreen({
   );
   const today = todayIso();
   const dateTaken = !isEditing && takenDates.has(selectedDate);
-  const dateInputRef = useRef<HTMLInputElement>(null);
 
   // Which month the grid displays. Kept separate from `selectedDate` so the
   // ‹ › arrows can browse other months without moving the selection (and
@@ -942,19 +941,6 @@ function MainScreen({
   }
 
   const matrix = useMemo(() => monthMatrix(viewMonth), [viewMonth]);
-
-  function openCalendar() {
-    const input = dateInputRef.current;
-    if (!input) return;
-    // showPicker() is broadly supported (Chrome/Edge, Firefox 116+, Safari
-    // 17+) but not guaranteed everywhere — .click() is the fallback for a
-    // native <input type="date">, which still opens its picker on click.
-    try {
-      input.showPicker();
-    } catch {
-      input.click();
-    }
-  }
 
   return (
     <div className="flex flex-col gap-5">
@@ -993,31 +979,15 @@ function MainScreen({
               >
                 Today
               </button>
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={openCalendar}
-                  className="flex cursor-pointer items-center gap-1 rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-900"
-                >
-                  <Calendar className="size-3.5" />
-                  Jump to date
-                </button>
-                {/* Programmatic picker host only — pointer-events-none so
-                    clicks fall through to the button above, whose onClick
-                    calls showPicker(). A bare <input type="date"> doesn't
-                    open its picker on a plain click anyway. */}
-                <input
-                  ref={dateInputRef}
-                  type="date"
-                  tabIndex={-1}
-                  value={selectedDate}
-                  onChange={(e) => {
-                    if (e.target.value) onSelectDate(e.target.value);
-                  }}
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 size-full opacity-0"
-                />
-              </div>
+              <DatePicker
+                ariaLabel="Jump to date"
+                buttonLabel="Jump to date"
+                value={selectedDate}
+                onChange={(value) => {
+                  if (value) onSelectDate(value);
+                }}
+                className="rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-600 outline-none transition hover:bg-zinc-200 hover:text-zinc-900"
+              />
               <button
                 type="button"
                 onClick={() => setViewMonth(shiftMonth(viewMonth, -1))}

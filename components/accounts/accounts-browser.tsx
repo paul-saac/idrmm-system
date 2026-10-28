@@ -199,11 +199,8 @@ export function AccountsBrowser({
       <Modal
         open={openAccount !== undefined}
         onClose={() => setOpenId(null)}
-        title={
-          openAccount
-            ? `${openAccount.firstName} ${openAccount.lastName}`.trim() || openAccount.email
-            : ""
-        }
+        title="Manage account"
+        size="wide"
       >
         {openAccount && (
           <AccountDetail
@@ -212,6 +209,7 @@ export function AccountsBrowser({
             accounts={accounts}
             roleOptions={roleOptions}
             isSuperAdmin={isSuperAdmin}
+            onClose={() => setOpenId(null)}
           />
         )}
       </Modal>

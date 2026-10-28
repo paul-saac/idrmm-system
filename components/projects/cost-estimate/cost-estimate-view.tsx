@@ -1,8 +1,9 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import { ArrowDown, ChevronDown, ChevronRight, FolderPlus, Sparkles } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import {
   MaterialBreakdownModalContent,
   type MaterialBreakdownHighlightTarget,
@@ -256,11 +257,17 @@ function CostEstimateEmptyIllustration() {
         r="11"
         strokeWidth="1"
       />
-      {/* 4-point sparkle star */}
-      <path
-        d="M158 31c0 2.8 1.4 4.5 3.8 4.8-2.4.3-3.8 2-3.8 4.8 0-2.8-1.4-4.5-3.8-4.8 2.4-.3 3.8-2 3.8-4.8z"
-        className="fill-emerald-600"
-      />
+      {/* 2-star AI sparkle (Option 1 Slender Astroid) */}
+      <svg
+        x="148"
+        y="28"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        className="text-emerald-600"
+      >
+        <AiSparklesIcon />
+      </svg>
 
       {/* Subtle Floating Sparkles */}
       <g className="stroke-zinc-400" strokeWidth="1.5" strokeLinecap="round">
@@ -530,34 +537,6 @@ export function CostEstimateView({
             the Gantt Chart below to start building the cost breakdown
             structure.
           </p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
-            {onImportBom && (
-              <button
-                type="button"
-                onClick={onImportBom}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-zinc-900 px-3.5 py-2 text-xs font-medium text-white shadow-xs transition hover:bg-zinc-800"
-              >
-                <Sparkles className="size-3.5 text-emerald-400" />
-                Import with AI
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                const el = document.getElementById("project-schedule-section");
-                if (el) {
-                  el.scrollIntoView({ behavior: "smooth" });
-                } else {
-                  window.scrollBy({ top: 350, behavior: "smooth" });
-                }
-              }}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3.5 py-2 text-xs font-medium text-zinc-700 shadow-xs transition hover:bg-zinc-50 hover:text-zinc-900"
-            >
-              <FolderPlus className="size-3.5 text-zinc-400" />
-              Build in Gantt Chart
-              <ArrowDown className="size-3 text-zinc-400" />
-            </button>
-          </div>
         </div>
       ) : (
         <div className="overflow-x-auto">

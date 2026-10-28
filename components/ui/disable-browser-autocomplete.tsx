@@ -3,16 +3,18 @@
 import { useEffect } from "react";
 
 /**
- * Globally disables browser input history and autofill suggestion popups
- * across all inputs, textareas, and forms in the application.
+ * Disables autofill helpers when a text field is actually used. Avoid an
+ * eager document scan/observer here: streamed Client Components can exist in
+ * the DOM before React hydrates them, and mutating their attributes during
+ * that window causes hydration mismatches.
  */
 export function DisableBrowserAutocomplete() {
   useEffect(() => {
     function disable(el: Element) {
-      if (
-        (el instanceof HTMLInputElement && el.type !== "password") ||
-        el instanceof HTMLTextAreaElement
-      ) {
+      const textInput =
+        el instanceof HTMLInputElement &&
+        ["text", "search", "email", "tel", "url"].includes(el.type);
+      if (textInput || el instanceof HTMLTextAreaElement) {
         if (el.getAttribute("autocomplete") !== "off") {
           el.setAttribute("autocomplete", "off");
         }
@@ -25,40 +27,10 @@ export function DisableBrowserAutocomplete() {
         if (el.getAttribute("data-1p-ignore") !== "true") {
           el.setAttribute("data-1p-ignore", "true");
         }
-      } else if (el instanceof HTMLFormElement) {
-        if (el.getAttribute("autocomplete") !== "off") {
-          el.setAttribute("autocomplete", "off");
-        }
       }
     }
 
-    // 1. Initial pass over all existing elements in the document
-    document.querySelectorAll("input, textarea, form").forEach(disable);
-
-    // 2. Observe any dynamically mounted elements or attribute updates
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type === "childList") {
-          for (const node of mutation.addedNodes) {
-            if (node instanceof Element) {
-              disable(node);
-              node.querySelectorAll("input, textarea, form").forEach(disable);
-            }
-          }
-        } else if (mutation.type === "attributes" && mutation.target instanceof Element) {
-          disable(mutation.target);
-        }
-      }
-    });
-
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ["autocomplete"],
-    });
-
-    // 3. Capture-phase events to intercept focus before browser suggestion triggers
+    // Event-only mutation keeps server/client markup untouched during hydration.
     function handleEvent(e: Event) {
       const target = e.target;
       if (target instanceof Element) {
@@ -70,7 +42,6 @@ export function DisableBrowserAutocomplete() {
     document.addEventListener("pointerdown", handleEvent, true);
 
     return () => {
-      observer.disconnect();
       document.removeEventListener("focusin", handleEvent, true);
       document.removeEventListener("pointerdown", handleEvent, true);
     };

@@ -11,6 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import {
   createMaterialRequest,
   updateMaterialRequest,
@@ -265,12 +266,12 @@ export function MaterialRequestEditForm({
               </div>
             </Field>
             <Field htmlFor={`${formId}-dateRequired`} label="Date Required" required>
-              <input
+              <DatePicker
                 id={`${formId}-dateRequired`}
-                type="date"
                 name="dateRequired"
+                ariaLabel="Date required"
                 value={dateRequired}
-                onChange={(e) => setDateRequired(e.target.value)}
+                onChange={setDateRequired}
                 className={fieldInput}
               />
             </Field>

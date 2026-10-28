@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   CalendarDays,
@@ -11,11 +11,12 @@ import {
   ClipboardCheck,
   ClipboardList,
   FileDown,
-  FileText,
   HistoryIcon,
   Loader2,
   Flag,
   Package,
+  Paperclip,
+  PanelRight,
   Plus,
   Receipt,
   Trash2,
@@ -28,10 +29,10 @@ import { InitialsAvatar } from "@/components/ui/list-table";
 import { MaterialStockPickerModal } from "@/components/projects/materials/material-stock-picker-modal";
 import { WorkerPickerModal } from "./worker-picker-modal";
 import { IncidentReportPanel } from "./incident-report-panel";
-import { IncidentDetailModal, type LoadedIncident } from "./incident-detail-modal";
+import { IncidentDetailModal } from "./incident-detail-modal";
 import type { IncidentContext } from "@/lib/incidents/model";
 import { INCIDENT_SEVERITIES, INCIDENT_TYPES, type Incident } from "@/lib/incidents/model";
-import { listTodayIncidents, loadIncident } from "@/lib/incidents/actions";
+import { listTodayIncidents } from "@/lib/incidents/actions";
 import { loadMaterialPurchases } from "@/lib/materials/purchase-actions";
 import {
   computeMaterialStocks,
@@ -244,7 +245,7 @@ function LaborToday({
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <h3 className="text-base font-semibold text-zinc-900">Today&apos;s workforce</h3>
+        <h3 className="text-base font-semibold text-zinc-900">Labor costs</h3>
         <span className="text-base font-semibold text-zinc-900 tabular-nums">
           Labor {formatPeso(laborToday)}
         </span>
@@ -271,7 +272,7 @@ function LaborToday({
               return (
                 <li key={worker.id} className={`${LABOR_COLUMNS} py-2.5 text-sm`}>
                   <div className="flex min-w-0 items-center gap-2.5">
-                    <InitialsAvatar name={worker.fullName} neutral />
+                    <InitialsAvatar name={worker.fullName} />
                     <div className="min-w-0">
                       <p className="truncate text-zinc-900" title={worker.fullName}>
                         {worker.fullName}
@@ -498,6 +499,12 @@ function deleteOverrideMessage(entryDate: string) {
   return `${update} will be removed, with everything logged on it, and taken off the override history. That day goes back to counting its planned share automatically.`;
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 // How many of the newest history entries show before "Show all".
 const HISTORY_PREVIEW = 5;
 
@@ -513,57 +520,18 @@ const HISTORY_COST_LABEL: Record<CostComponent, string> = {
 const HISTORY_COST_ORDER: CostComponent[] = ["material", "labor", "other", "equipment"];
 const EMPTY_INCIDENTS: Incident[] = [];
 
-type IncidentEvidenceFile = { path: string; name: string; type: string; size: number; url: string | null };
-
-function IncidentAttachmentGallery({ files }: { files: IncidentEvidenceFile[] }) {
-  const [page, setPage] = useState(0);
-  const pageSize = 2;
-  const pageCount = Math.max(1, Math.ceil(files.length / pageSize));
-  const visible = files.slice(page * pageSize, page * pageSize + pageSize);
-
-  return (
-    <div className="mt-3 border-t border-zinc-100 pt-3">
-      <p className="font-semibold text-zinc-700">Attachments</p>
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        {visible.map(file => {
-          const image = file.type.startsWith("image/");
-          const preview = image && file.url ? (
-            <span className="relative block aspect-[4/3] overflow-hidden bg-zinc-100">
-              <Image src={file.url} alt={file.name} fill unoptimized sizes="(max-width: 768px) 45vw, 360px" className="object-cover" />
-            </span>
-          ) : (
-            <span className="flex aspect-[4/3] flex-col items-center justify-center gap-2 bg-zinc-50 px-3 text-center text-zinc-500">
-              <FileText className="size-7 text-zinc-400" />
-              <span className="max-w-full truncate">{file.name}</span>
-            </span>
-          );
-          return file.url ? <a key={file.path} href={file.url} target="_blank" rel="noopener noreferrer" title={file.name} className="overflow-hidden rounded border border-zinc-200 hover:border-zinc-400">{preview}</a>
-            : <div key={file.path} title={file.name} className="overflow-hidden rounded border border-zinc-200">{preview}</div>;
-        })}
-      </div>
-      <div className="mt-2 flex items-center gap-3 text-[11px] font-medium text-zinc-700">
-        <span>Page {page + 1} of {pageCount}</span>
-        {page > 0 && <button type="button" onClick={() => setPage(value => value - 1)} className="cursor-pointer hover:underline">Previous</button>}
-        <button type="button" onClick={() => setPage(value => Math.min(pageCount - 1, value + 1))} disabled={page >= pageCount - 1} className="cursor-pointer hover:underline disabled:cursor-default disabled:text-zinc-300 disabled:no-underline">Next</button>
-      </div>
-    </div>
-  );
-}
-
 /** One override in full, under its opened card — who worked (their hours
  * and cost then), what was used, and the day's total, for review. */
 function OverrideLogDetails({ log }: { log: OverrideLog }) {
-  const sections: { title: string; empty: string; headers: string[]; rows: string[][] }[] = [
+  const sections: { title: string; empty: string; rows: [string, string][] }[] = [
     // Only for a day labor was logged as hours.
     ...((log.attendance ?? []).length > 0
       ? [
           {
             title: "Labor",
             empty: "",
-            headers: ["Worker", "Hours worked", "Amount"],
-            rows: (log.attendance ?? []).map((worker) => [
-              worker.name,
-              formatHours(worker.hours),
+            rows: (log.attendance ?? []).map((worker): [string, string] => [
+              `${worker.name} · ${formatHours(worker.hours)}`,
               formatPeso(worker.hours * worker.rate),
             ]),
           },
@@ -572,8 +540,7 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
     {
       title: "Materials used",
       empty: "None logged",
-      headers: ["Material", "Quantity"],
-      rows: log.materialsUsed.map((material) => {
+      rows: log.materialsUsed.map((material): [string, string] => {
         const amount = `${formatQuantity(material.quantity)}${material.unit ? ` ${material.unit}` : ""}`;
         // One not on the task's own lines, with what it came to at its
         // own unit cost.
@@ -590,8 +557,7 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
           {
             title: "Equipment costs",
             empty: "",
-            headers: ["Description", "Amount"],
-            rows: (log.equipmentCosts ?? []).map((item) => [
+            rows: (log.equipmentCosts ?? []).map((item): [string, string] => [
               item.unplanned ? `${item.name} (unplanned)` : item.name,
               formatPeso(item.amount),
             ]),
@@ -603,8 +569,7 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
           {
             title: "Other costs",
             empty: "",
-            headers: ["Description", "Amount"],
-            rows: (log.otherCosts ?? []).map((item) => [
+            rows: (log.otherCosts ?? []).map((item): [string, string] => [
               item.unplanned ? `${item.name} (unplanned)` : item.name,
               formatPeso(item.amount),
             ]),
@@ -614,23 +579,31 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
   ];
 
   return (
-    <div className="flex flex-col gap-3 text-[13px]">
+    <div className="flex flex-col gap-3 text-xs">
       {sections.map((section) => (
         <section key={section.title} className="overflow-hidden rounded border border-zinc-200">
           <h4 className="bg-zinc-100 px-3 py-2 font-semibold text-zinc-800">{section.title}</h4>
-          {section.rows.length === 0 ? (
+          {section.title === "Labor" ? (
+            <table className="w-full text-left">
+              <thead className="border-b border-zinc-100 text-zinc-500"><tr><th className="px-3 py-2 font-medium">Worker</th><th className="px-3 py-2 text-right font-medium">Hours worked</th><th className="px-3 py-2 text-right font-medium">Amount</th></tr></thead>
+              <tbody className="divide-y divide-zinc-100">{log.attendance.map((worker, index) => <tr key={index}><td className="px-3 py-2 text-zinc-600">{worker.name}</td><td className="px-3 py-2 text-right tabular-nums">{formatHours(worker.hours)}</td><td className="px-3 py-2 text-right tabular-nums">{formatPeso(worker.hours * worker.rate)}</td></tr>)}</tbody>
+            </table>
+          ) : section.rows.length === 0 ? (
             <p className="px-3 py-2 text-zinc-400">{section.empty}</p>
           ) : (
-            <table className="w-full table-fixed">
-              <thead className="border-y border-zinc-200 bg-zinc-50 text-[11px] text-zinc-500">
-                <tr>{section.headers.map((header, index) => <th key={header} className={`px-3 py-1.5 font-medium ${index === 0 ? "text-left" : "text-right"}`}>{header}</th>)}</tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100">
-                {section.rows.map((row, rowIndex) => (
-                  <tr key={rowIndex}>{row.map((value, columnIndex) => <td key={columnIndex} title={value} className={`truncate px-3 py-2 ${columnIndex === 0 ? "text-left text-zinc-600" : "text-right text-zinc-900 tabular-nums"}`}>{value}</td>)}</tr>
-                ))}
-              </tbody>
-            </table>
+            <div>
+            <div className="flex justify-between border-b border-zinc-100 px-3 py-2 text-zinc-500"><span>Description</span><span>{section.title === "Materials used" ? "Quantity / cost" : "Amount"}</span></div>
+            <ul className="divide-y divide-zinc-100">
+              {section.rows.map(([label, value], index) => (
+                <li key={index} className="flex justify-between gap-3 px-3 py-2">
+                  <span className="min-w-0 truncate text-zinc-600" title={label}>
+                    {label}
+                  </span>
+                  <span className="shrink-0 text-zinc-900 tabular-nums">{value}</span>
+                </li>
+              ))}
+            </ul>
+            </div>
           )}
         </section>
       ))}
@@ -655,7 +628,7 @@ function StandingBreakdownDetails({
       {sections.map((section) => (
         <div key={section.title} className="flex flex-col gap-1">
           <p className="font-medium text-zinc-700">{section.title}</p>
-          <div className="ml-1 py-0.5 pl-2.5">
+          <div className="py-0.5">
             {section.rows.length === 0 ? (
               <p className="text-zinc-400">{section.empty}</p>
             ) : (
@@ -799,6 +772,19 @@ function OverrideHistory({
   const targetNeedsReveal = targetIndex >= HISTORY_PREVIEW;
   const [showAll, setShowAll] = useState(false);
   const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
+  const [historyIncidents, setHistoryIncidents] = useState<Record<string, Incident[]>>({});
+  const historyDates = [...new Set(logs.map(log => log.entryDate))].sort().join(",");
+  const historyContextKind = incidentContext?.kind;
+  const historyContextId = incidentContext?.id;
+  useEffect(() => {
+    if (!projectId || !historyContextKind || !historyContextId || !historyDates) return;
+    let cancelled = false;
+    Promise.all(historyDates.split(",").map(async date => {
+      const result = await listTodayIncidents(projectId, { kind: historyContextKind, id: historyContextId }, date);
+      return [date, result.items] as const;
+    })).then(entries => { if (!cancelled) setHistoryIncidents(Object.fromEntries(entries)); }).catch(() => { /* Opening a record retries with a visible error if needed. */ });
+    return () => { cancelled = true; };
+  }, [projectId, historyContextKind, historyContextId, historyDates, currentIncidents]);
   const [highlightedId, setHighlightedId] = useState<number | null>(targetLogId);
   const targetRef = useRef<HTMLLIElement>(null);
   useLayoutEffect(() => {
@@ -915,7 +901,7 @@ function OverrideHistory({
                       ))}
                     </span>
                     <span className="mt-3 flex items-center gap-2.5 border-t border-zinc-100 pt-3">
-                      <InitialsAvatar name={log.savedByName ?? "?"} neutral />
+                      <InitialsAvatar name={log.savedByName ?? "?"} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs text-zinc-500">
                           Saved by{" "}
@@ -954,7 +940,7 @@ function OverrideHistory({
         projectId={projectId}
         projectName={projectName}
         incidentContext={incidentContext}
-        fallbackIncidents={selectedLog?.id === logs[0]?.id ? currentIncidents : EMPTY_INCIDENTS}
+        fallbackIncidents={selectedLog ? historyIncidents[selectedLog.entryDate] ?? currentIncidents.filter(incident => incident.log_date === selectedLog.entryDate) : EMPTY_INCIDENTS}
         onClose={() => setSelectedLogId(null)}
       />
     </section>
@@ -980,7 +966,6 @@ function SavedProgressLogModal({
 }) {
   const [incidents, setIncidents] = useState<Incident[]>(fallbackIncidents);
   const [error, setError] = useState("");
-  const [evidence, setEvidence] = useState<Record<number, { path: string; name: string; type: string; size: number; url: string | null }[]>>({});
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
 
@@ -995,7 +980,7 @@ function SavedProgressLogModal({
     listTodayIncidents(projectId, { kind: contextKind, id: contextId }, entryDate)
       .then((result) => {
         if (cancelled) return;
-        setIncidents(result.items.length > 0 ? result.items : fallbackIncidents);
+        if (!result.error) setIncidents(result.items);
         setError(result.error ?? "");
       })
       .catch(() => {
@@ -1007,15 +992,6 @@ function SavedProgressLogModal({
     };
   }, [entryDate, projectId, contextKind, contextId, fallbackIncidents]);
 
-  useEffect(() => {
-    if (!projectId || incidents.length === 0) return;
-    let cancelled = false;
-    Promise.all(incidents.map(async incident => {
-      const result = await loadIncident(projectId, incident.id);
-      return [incident.id, result.evidence ?? []] as const;
-    })).then(entries => { if (!cancelled) setEvidence(Object.fromEntries(entries)); });
-    return () => { cancelled = true; };
-  }, [projectId, incidents]);
 
   async function downloadReport() {
     if (!log || pdfBusy) return;
@@ -1042,10 +1018,10 @@ function SavedProgressLogModal({
       <Modal
         open={log !== null}
         onClose={onClose}
-        title={log ? formatDay(log.entryDate) : "Progress log"}
+        title={log ? formatDay(log.entryDate) : "Log history"}
         description={
           log
-            ? `Logged by ${log.savedByName ?? "an unknown account"}`
+            ? `Logged by ${log.savedByName ?? "Unknown account"}`
             : undefined
         }
         icon={<HistoryIcon className="size-4" />}
@@ -1093,14 +1069,14 @@ function SavedProgressLogModal({
               ) : (
                 <div className="space-y-3 p-3">
                   {incidents.map((incident) => {
-                    const files: IncidentEvidenceFile[] = evidence[incident.id] ?? incident.attachments.map(file => ({ ...file, url: null }));
+                    const files = incident.attachments;
                     return (
                       <article
                         key={incident.id}
                         className="rounded-md border border-zinc-200 bg-white px-4 py-3 text-xs"
                       >
                         <span className="flex items-center gap-2">
-                          <span className="min-w-0 flex-1 truncate font-semibold text-zinc-900">{INCIDENT_TYPES[incident.incident_type]}</span>
+                          <span className="min-w-0 flex-1 truncate font-medium text-zinc-700">{INCIDENT_TYPES[incident.incident_type]}</span>
                           <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600">{INCIDENT_SEVERITIES[incident.severity]}</span>
                         </span>
                         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
@@ -1111,7 +1087,30 @@ function SavedProgressLogModal({
                           <dt className="font-medium text-zinc-500">Submitted</dt><dd>{formatDateTime(incident.created_at)}</dd>
                         </dl>
                         {files.length > 0 && (
-                          <IncidentAttachmentGallery files={files} />
+                          <div className="mt-3 border-t border-zinc-100 pt-3">
+                            <p className="font-semibold text-zinc-700">Attachments ({files.length})</p>
+                            <ul className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                              {files.map((file) => (
+                                <li key={file.path} className="min-w-0 overflow-hidden rounded border border-zinc-200 bg-zinc-50/50 text-xs">
+                                  {file.url && file.type.startsWith("image/") ? <a href={file.url} target="_blank" rel="noopener noreferrer" className="relative block aspect-[4/3]"><Image src={file.url} alt={file.name} fill unoptimized sizes="260px" className="object-cover" /></a> : file.url && file.type === "application/pdf" ? <iframe src={file.url} title={file.name} className="h-40 w-full bg-white" /> : <div className="flex h-40 items-center justify-center"><Paperclip className="size-6 text-zinc-400" /></div>}
+                                  <div className="flex items-center gap-2 px-2.5 py-2">
+                                  {file.url ? (
+                                    <a href={file.url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-zinc-700 underline underline-offset-4 hover:text-blue-600 font-medium">
+                                      {file.name}
+                                    </a>
+                                  ) : (
+                                    <span className="min-w-0 flex-1 truncate text-zinc-500">{file.name}</span>
+                                  )}
+                                  {file.size ? (
+                                    <span className="ml-auto shrink-0 text-[11px] text-zinc-400 tabular-nums">
+                                      {formatFileSize(file.size)}
+                                    </span>
+                                  ) : null}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         )}
                       </article>
                     );
@@ -1123,9 +1122,9 @@ function SavedProgressLogModal({
           </article>
         )}
         <ModalFooter>
-          <button type="button" onClick={downloadReport} disabled={!log || pdfBusy} className="mr-auto inline-flex items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50">
+          <button type="button" onClick={downloadReport} disabled={!log || pdfBusy} className="ml-auto inline-flex items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-50">
             {pdfBusy ? <Loader2 className="size-4 animate-spin" /> : <FileDown className="size-4" />}
-            {pdfBusy ? "Creating PDF…" : "Download report"}
+            {pdfBusy ? "Creating PDF…" : "Download as a report"}
           </button>
           <button
             type="button"
@@ -1246,15 +1245,13 @@ export function ProgressTrackingModalContent({
   const router = useRouter();
   const savedToday = progressToday.today;
   const [reportingIncident, setReportingIncident] = useState(false);
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false);
   const [incidentsOpen, setIncidentsOpen] = useState(false);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [incidentsLoading, setIncidentsLoading] = useState(true);
   const [incidentsError, setIncidentsError] = useState("");
   const [incidentRefresh, setIncidentRefresh] = useState(0);
   const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null);
-  const [selectedIncidentResult, setSelectedIncidentResult] = useState<LoadedIncident | null>(null);
-  const [loadedIncidents, setLoadedIncidents] = useState<Record<number, LoadedIncident>>({});
-  const incidentButtonRef = useRef<HTMLButtonElement>(null);
   const incidentOpen = reportingIncident && !readOnly && !!projectId && !!incidentContext;
   const incidentContextKind = incidentContext?.kind;
   const incidentContextId = incidentContext?.id;
@@ -1272,28 +1269,6 @@ export function ProgressTrackingModalContent({
       .finally(() => { if (!cancelled) setIncidentsLoading(false); });
     return () => { cancelled = true; };
   }, [readOnly, projectId, incidentContextKind, incidentContextId, incidentRefresh]);
-
-  useEffect(() => {
-    if (!projectId || incidents.length === 0) return;
-    let cancelled = false;
-    Promise.all(incidents.map(async (incident) => [incident.id, await loadIncident(projectId, incident.id)] as const))
-      .then((entries) => {
-        if (!cancelled) setLoadedIncidents(Object.fromEntries(entries));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, incidents]);
-
-  async function openIncidentDetails(incident: Incident) {
-    if (!projectId) return;
-    const cached = loadedIncidents[incident.id];
-    const result = cached ?? await loadIncident(projectId, incident.id);
-    setLoadedIncidents((current) => ({ ...current, [incident.id]: result }));
-    setSelectedIncidentResult(result);
-    setSelectedIncidentId(incident.id);
-  }
 
   const [stockModalRowId, setStockModalRowId] = useState<number | null>(null);
   const [fetchedStocks, setFetchedStocks] = useState<MaterialStockItem[] | null>(null);
@@ -1381,8 +1356,8 @@ export function ProgressTrackingModalContent({
   const schedule = { plannedStartDate, plannedEndDate, workingDays, holidays };
 
   // Where the task stands as saved, before anything typed here — every
-  // saved log (today's too, once saved), each day without one counting its
-  // planned share: the standing the Gantt chart shows. The Actual box reads
+  // saved log (today's too, once saved), with nothing added for unlogged
+  // days: the standing the Gantt chart shows. The Actual box reads
   // it, so it holds still while today's log is typed.
   const [savedStanding] = useState(() =>
     computeProgressBreakdown({
@@ -1752,7 +1727,7 @@ export function ProgressTrackingModalContent({
   };
 
   // Saved totals with today's saved amounts swapped for what's typed now
-  // — today counts as logged, so it's never also counted automatically.
+  // — a local preview only, until the user saves.
   const anchor: ProgressAnchor = {
     cumulativeQuantityCompleted:
       progressToday.cumulativeQuantityCompleted -
@@ -1811,8 +1786,8 @@ export function ProgressTrackingModalContent({
     today: new Date(),
   });
 
-  // The listed materials so far (logged days, plus each unlogged day's
-  // planned share), each at its unit cost — and what's gone on materials
+  // The listed materials recorded so far, each at its unit cost,
+  // and what's gone on materials
   // not on the list, today's included.
 
   // Check if any override progress has been entered (either saved in history
@@ -2234,7 +2209,13 @@ export function ProgressTrackingModalContent({
   return (
     // Equipment records use one scrolling column; editing keeps the
     // form and history side by side on wide screens.
-    <div className={`compact-text h-full overflow-y-auto ${readOnly ? "" : "lg:grid lg:grid-cols-[minmax(0,1fr)_28rem] lg:overflow-hidden"}`}>
+    <div data-progress-summary-collapsed={readOnly ? undefined : summaryCollapsed && !incidentOpen ? "true" : "false"} className={[
+      "compact-text relative h-full overflow-y-auto",
+      !readOnly && "lg:grid lg:overflow-hidden",
+      !readOnly && (summaryCollapsed && !incidentOpen
+        ? "lg:grid-cols-1"
+        : "lg:grid-cols-[minmax(0,1fr)_28rem]"),
+    ].filter(Boolean).join(" ")}>
       {/* Live — follows what's typed below, beside the modal's own title. */}
       {breakdown.scheduleStatus && (
         <ModalHeaderAddon>
@@ -2247,14 +2228,23 @@ export function ProgressTrackingModalContent({
           )}
         </ModalHeaderAddon>
       )}
-      {!readOnly && projectId && incidentContext && (
+      {!readOnly && (
         <ModalHeaderActions>
-          <button ref={incidentButtonRef} type="button" aria-pressed={incidentOpen} onClick={() => setReportingIncident((open) => !open)} className={`mr-1 inline-flex items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs font-medium transition ${incidentOpen ? "border-amber-300 bg-amber-100 text-amber-800" : "border-amber-200 bg-amber-50/60 text-amber-700 hover:bg-amber-100"}`}><Flag className="size-3.5" />Report incident</button>
+          <button
+            type="button"
+            aria-expanded={incidentOpen ? undefined : !summaryCollapsed}
+            aria-controls={incidentOpen ? undefined : "progress-summary-panel"}
+            aria-label={incidentOpen ? "Close" : summaryCollapsed ? "Show Planned, Actual, and Log history" : "Hide Planned, Actual, and Log history"}
+            onClick={incidentOpen ? onClose : () => setSummaryCollapsed((collapsed) => !collapsed)}
+            className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+          >
+            {incidentOpen ? <X aria-hidden className="size-5" /> : <PanelRight aria-hidden className="size-5" />}
+          </button>
         </ModalHeaderActions>
       )}
 
       {!readOnly && (
-        <div className="flex flex-col divide-y divide-zinc-200 lg:overflow-y-auto">
+        <div className="flex min-w-0 flex-col divide-y divide-zinc-200 lg:overflow-y-auto">
           {/* Today's own record — an override of today. Each field's figure
               is the total with today over planned, live. */}
           <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
@@ -2298,7 +2288,7 @@ export function ProgressTrackingModalContent({
                   >
                     <div
                       id="progress-labor"
-                      title="Hours worked × each worker's hourly rate — from today's workforce below."
+                      title="Hours worked × each worker's hourly rate — from Labor costs below."
                       className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums"
                     >
                       <span className="flex items-center gap-1.5">
@@ -2323,7 +2313,7 @@ export function ProgressTrackingModalContent({
                   >
                     <div
                       id="progress-equipment"
-                      title="Sum of today's itemized equipment costs — from today's equipment costs below."
+                      title="Sum of today's itemized equipment costs — from Equipment costs below."
                       className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums"
                     >
                       <span className="flex items-center gap-1.5">
@@ -2348,7 +2338,7 @@ export function ProgressTrackingModalContent({
                   >
                     <div
                       id="progress-other"
-                      title="Sum of today's itemized other costs — from today's other costs below."
+                      title="Sum of today's itemized other costs — from Other costs below."
                       className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums"
                     >
                       <span className="flex items-center gap-1.5">
@@ -2430,7 +2420,7 @@ export function ProgressTrackingModalContent({
             etc.) — their sum reflects on Today's log Equipment cost field. */}
         <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <h3 className="text-base font-semibold text-zinc-900">Today&apos;s equipment costs</h3>
+            <h3 className="text-base font-semibold text-zinc-900">Equipment costs</h3>
             <span className="text-base font-semibold text-zinc-900 tabular-nums">
               Equipment {formatPeso(costs.equipment ?? 0)}
             </span>
@@ -2561,7 +2551,6 @@ export function ProgressTrackingModalContent({
             <button
               type="button"
               onClick={addUnplannedEquipment}
-              aria-label="Add equipment cost"
               className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
             >
               <Plus className="size-4" />
@@ -2587,7 +2576,7 @@ export function ProgressTrackingModalContent({
         {(
           <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <h3 className="text-base font-semibold text-zinc-900">Today&apos;s material usage</h3>
+              <h3 className="text-base font-semibold text-zinc-900">Materials used</h3>
             </div>
 
             <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
@@ -2726,7 +2715,6 @@ export function ProgressTrackingModalContent({
                 <button
                   type="button"
                   onClick={addUnplanned}
-                  aria-label="Add unplanned material"
                   className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
                 >
                   <Plus className="size-4" />
@@ -2741,7 +2729,7 @@ export function ProgressTrackingModalContent({
             spot — their sum reflects on Today's log Other cost field. */}
         <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <h3 className="text-base font-semibold text-zinc-900">Today&apos;s other costs</h3>
+            <h3 className="text-base font-semibold text-zinc-900">Other costs</h3>
             <span className="text-base font-semibold text-zinc-900 tabular-nums">
               Other {formatPeso(costs.other ?? 0)}
             </span>
@@ -2872,7 +2860,6 @@ export function ProgressTrackingModalContent({
             <button
               type="button"
               onClick={addUnplannedOther}
-              aria-label="Add other cost"
               className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
             >
               <Plus className="size-4" />
@@ -2895,9 +2882,12 @@ export function ProgressTrackingModalContent({
         <section className={`${nextLogSectionBg()}`}>
           <button
             type="button"
-            aria-expanded={incidentsOpen}
-            aria-controls="today-incidents"
-            onClick={() => setIncidentsOpen((open) => !open)}
+            aria-expanded={incidentOpen}
+            aria-controls="progress-incident-form"
+            onClick={() => {
+              setReportingIncident((open) => !open);
+              setIncidentsOpen(!incidentOpen);
+            }}
             className="flex w-full cursor-pointer items-center justify-between gap-3 bg-amber-50/60 px-6 py-5 text-left text-amber-900 transition hover:bg-amber-100"
           >
             <span className="flex items-center gap-2">
@@ -2905,18 +2895,16 @@ export function ProgressTrackingModalContent({
               <span className="text-base font-semibold">Incidents</span>
               {!incidentsLoading && incidents.length > 0 && <span className="text-[11px] font-medium text-zinc-900 tabular-nums">{incidents.length}</span>}
             </span>
-            <ChevronDown className={`size-4 text-amber-700 transition ${incidentsOpen ? "rotate-180" : ""}`} />
+            <ChevronDown className={`size-4 text-amber-700 transition ${incidentOpen ? "rotate-180" : ""}`} />
           </button>
           {incidentsOpen && (incidentsError || incidents.length > 0) && (
             <div id="today-incidents" className="border-t border-zinc-200 px-6 py-4">
               {incidentsError ? <p className="text-sm text-red-600">{incidentsError}</p>
                 : <div className="space-y-2">{incidents.map((incident) => (
-                  <button key={incident.id} type="button" onClick={() => void openIncidentDetails(incident)} className="flex w-full cursor-pointer items-center gap-3 rounded-md border border-zinc-200 bg-white px-4 py-3 text-left text-sm transition hover:bg-zinc-50">
-                      <span className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className="truncate font-semibold text-zinc-900">{INCIDENT_TYPES[incident.incident_type]}</span>
-                        <span className="shrink-0 rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">{INCIDENT_SEVERITIES[incident.severity]}</span>
-                      </span>
-                      <ChevronRight className="size-4 shrink-0 text-zinc-400" />
+                  <button key={incident.id} type="button" onClick={() => setSelectedIncidentId(incident.id)} className="flex w-full cursor-pointer items-center gap-3 rounded-md border border-zinc-200 bg-white px-4 py-3 text-left text-sm transition hover:bg-zinc-50">
+                      <span className="min-w-0 truncate text-zinc-700">{INCIDENT_TYPES[incident.incident_type]}</span>
+                      <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">{INCIDENT_SEVERITIES[incident.severity]}</span>
+                      <ChevronRight className="ml-auto size-4 shrink-0 text-zinc-400" />
                   </button>
                 ))}</div>}
             </div>
@@ -2927,7 +2915,7 @@ export function ProgressTrackingModalContent({
 
       {/* The right section: Planned and Actual status cards above,
           followed by the override history below. */}
-      <aside className={`history-text ${incidentOpen ? "hidden" : "flex"} flex-col gap-4 px-6 ${readOnly ? "py-5" : "border-t border-zinc-200 py-5 lg:overflow-y-auto lg:border-t-0 lg:border-l"}`}>
+      <aside id="progress-summary-panel" inert={!readOnly && summaryCollapsed && !incidentOpen} className={`history-text progress-summary ${incidentOpen ? "hidden" : !readOnly && summaryCollapsed ? "hidden lg:flex" : "flex"} flex-col gap-4 px-6 ${readOnly ? "py-5" : "border-t border-zinc-200 py-5 lg:overflow-y-auto lg:border-t-0 lg:border-l"}`}>
         {/* The plan so far over where the task actually stands — the same
             parts in the same columns, to read one against the other. */}
         <div className="-mx-6 -mt-5 flex flex-col border-b border-zinc-200">
@@ -3094,7 +3082,7 @@ export function ProgressTrackingModalContent({
 
       {!readOnly && projectId && incidentContext && <IncidentReportPanel projectId={projectId} context={incidentContext} active={incidentOpen} onSubmitted={() => { setReportingIncident(false); setIncidentsLoading(true); setIncidentRefresh((value) => value + 1); setIncidentsOpen(true); }} />}
 
-      {projectId && <IncidentDetailModal projectId={projectId} id={selectedIncidentId} result={selectedIncidentResult} onClose={() => { setSelectedIncidentId(null); setSelectedIncidentResult(null); }} onDeleted={() => { setSelectedIncidentId(null); setSelectedIncidentResult(null); setIncidentsLoading(true); setIncidentRefresh((value) => value + 1); }} />}
+      {projectId && <IncidentDetailModal projectId={projectId} id={selectedIncidentId} result={selectedIncidentId === null ? null : (() => { const incident = incidents.find(item => item.id === selectedIncidentId); return incident ? { incident, evidence: incident.attachments.map(file => ({ ...file, url: file.url ?? null })) } : null; })()} onClose={() => setSelectedIncidentId(null)} onDeleted={() => { setIncidents(current => current.filter(item => item.id !== selectedIncidentId)); setSelectedIncidentId(null); setIncidentsLoading(true); setIncidentRefresh((value) => value + 1); }} />}
 
       {/* Asks before deleting an override (admins only) — a centered
           dialog of its own, above this one. */}

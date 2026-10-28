@@ -32,7 +32,7 @@ type Supabase = Awaited<ReturnType<typeof createClient>>;
  * day's material usage attached (keyed by materialKey). "*" rather than a
  * column list, so a DB missing a newer column (e.g. 0057's costs) still
  * loads; a DB without 0070 yet just reads no materials used. */
-async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
+async function fetchEntries(supabase: Supabase, categoryIds: number[], strict = false) {
   const { data, error } = await supabase
     .from("category_progress_entries")
     .select("*")
@@ -40,6 +40,7 @@ async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
     .order("entry_date", { ascending: true });
 
   if (error) {
+    if (strict) throw new Error("Could not verify saved category progress.");
     console.error("[category-progress] entries query failed:", error.message);
   }
   const rows = data ?? [];
@@ -59,6 +60,7 @@ async function fetchEntries(supabase: Supabase, categoryIds: number[]) {
       .in("progress_entry_id", entryIds);
 
     if (materialsError) {
+      if (strict) throw new Error("Could not verify saved category material usage.");
       console.error(
         "[category-progress] material entries query failed:",
         materialsError.message
@@ -241,11 +243,12 @@ function addRow(
 }
 
 export async function listCategoryProgressAnchors(
-  categoryIds: number[]
+  categoryIds: number[],
+  strict = false,
 ): Promise<CategoryProgressAnchors> {
   if (categoryIds.length === 0) return {};
   const supabase = await createClient();
-  const rows = await fetchEntries(supabase, categoryIds);
+  const rows = await fetchEntries(supabase, categoryIds, strict);
 
   const result: Record<number, ReturnType<typeof emptyAnchor>> = {};
   for (const row of rows) {

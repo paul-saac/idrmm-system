@@ -70,13 +70,13 @@ export function GroupsPanel({
 
   return (
     // Group header separated from its cards, like the member table.
-    <div className="min-w-0">
-      <aside className="flex flex-col py-5">
-        <div className="flex items-baseline gap-2 border-b border-zinc-200 px-6 pb-4">
-          <h2 className="text-base font-semibold text-zinc-900">Groups</h2>
+    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-zinc-900">
+      <aside className="flex min-h-0 flex-1 flex-col py-5">
+        <div className="flex shrink-0 items-baseline gap-2 border-b border-zinc-500 px-6 pb-4">
+          <h2 className="text-base font-semibold text-zinc-50">Groups</h2>
           <span className="text-xs text-zinc-400 tabular-nums">{groups.length}</span>
         </div>
-        <div className="flex flex-col gap-3 px-6 py-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 py-4">
           {groups.map((group) => {
             const people = group.memberIds.flatMap((id) => {
               const member = memberById.get(id);
@@ -96,12 +96,12 @@ export function GroupsPanel({
                     setPanel({ mode: "view", groupId: group.id });
                   }
                 }}
-                className="flex w-full cursor-pointer flex-col items-start gap-2.5 rounded border border-zinc-200 bg-white px-3 py-4 text-left transition hover:border-zinc-300 hover:bg-zinc-50"
+                className="flex w-full shrink-0 cursor-pointer flex-col items-start gap-2.5 rounded border border-zinc-600 bg-zinc-800 px-3 py-4 text-left transition hover:border-zinc-500 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
               >
                 <div className="flex w-full items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-zinc-900">{group.name}</p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="truncate text-sm font-semibold text-zinc-50">{group.name}</p>
+                    <p className="text-xs text-zinc-400">
                       {people.length} member{people.length === 1 ? "" : "s"}
                     </p>
                   </div>
@@ -113,7 +113,7 @@ export function GroupsPanel({
                     }}
                     title="Edit group"
                     aria-label={`Edit ${group.name}`}
-                    className={`${ICON_BUTTON} -mt-0.5 -mr-1.5 hover:bg-zinc-100 hover:text-zinc-700`}
+                    className={`${ICON_BUTTON} -mt-0.5 -mr-1.5 hover:bg-zinc-700 hover:text-white`}
                   >
                     <EditIcon className="size-3.5" />
                   </button>
@@ -124,9 +124,9 @@ export function GroupsPanel({
                       <span
                         key={member.id}
                         title={member.fullName}
-                        className="rounded-full"
+                        className="rounded-full [&>span]:ring-1 [&>span]:ring-white"
                       >
-                        <InitialsAvatar name={member.fullName} neutral />
+                        <InitialsAvatar name={member.fullName} />
                       </span>
                     ))}
                     {people.length > FACES && (
@@ -141,11 +141,11 @@ export function GroupsPanel({
           })}
         </div>
 
-        <div className="flex justify-start px-6">
+        <div className="flex shrink-0 justify-start px-6">
           <button
             type="button"
             onClick={() => setPanel({ mode: "add" })}
-            className="flex cursor-pointer items-center gap-1.5 py-1.5 text-sm font-medium text-zinc-900 transition hover:text-zinc-600"
+            className="flex cursor-pointer items-center gap-1.5 py-1.5 text-sm font-medium text-zinc-100 transition hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
           >
             <Plus className="size-4" />
             New Group
@@ -229,7 +229,7 @@ function GroupView({ group, members }: { group: MemberGroup; members: Worker[] }
                     key={member.id}
                     className="flex items-center gap-2.5 px-2 py-1.5 text-sm"
                   >
-                    <InitialsAvatar name={member.fullName} neutral />
+                    <InitialsAvatar name={member.fullName} />
                     <span className="truncate font-medium text-zinc-900">{member.fullName}</span>
                     {member.title && (
                       <span className="shrink-0 text-xs text-zinc-400">{member.title}</span>

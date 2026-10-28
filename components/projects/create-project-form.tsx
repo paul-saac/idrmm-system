@@ -5,6 +5,7 @@ import { ChevronDown } from "lucide-react";
 import { createProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { AccountRow } from "@/lib/accounts/data";
 import { projectElsewhere } from "@/lib/accounts/availability";
+import { DatePicker } from "@/components/ui/date-picker";
 
 const initialState: ProjectActionState = {};
 
@@ -15,10 +16,6 @@ function personLabel(account: AccountRow) {
 // Toggles data-empty so globals.css can gray out an empty date input's
 // own "mm/dd/yyyy" hint like a real placeholder — see that rule's own
 // comment for why this couldn't just be a CSS pseudo-class instead.
-function handleDateEmptyChange(e: React.ChangeEvent<HTMLInputElement>) {
-  e.currentTarget.dataset.empty = e.currentTarget.value ? "false" : "true";
-}
-
 export function CreateProjectForm({
   projectManagers,
   foremen,
@@ -90,12 +87,10 @@ export function CreateProjectForm({
         <label htmlFor="startDate" className="text-sm font-medium text-zinc-900">
           Start date
         </label>
-        <input
+        <DatePicker
           id="startDate"
           name="startDate"
-          type="date"
-          data-empty="true"
-          onChange={handleDateEmptyChange}
+          ariaLabel="Start date"
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -107,12 +102,10 @@ export function CreateProjectForm({
         >
           Target end date
         </label>
-        <input
+        <DatePicker
           id="targetEndDate"
           name="targetEndDate"
-          type="date"
-          data-empty="true"
-          onChange={handleDateEmptyChange}
+          ariaLabel="Target end date"
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -147,7 +140,7 @@ export function CreateProjectForm({
             id="projectManagerId"
             name="projectManagerId"
             required
-            className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+            className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
             {/* Someone already on an unfinished project can't be picked
                 (see projectElsewhere). */}
@@ -185,7 +178,7 @@ export function CreateProjectForm({
             id="foremanId"
             name="foremanId"
             required
-            className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+            className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
             {eligibleForemen.map((f) => {
               const elsewhere = projectElsewhere(f);

@@ -13,12 +13,13 @@ import {
   Diamond,
   Plus,
   Redo2,
-  Sparkles,
   Trash2,
   Undo2,
 } from "lucide-react";
+import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
+import { GanttDateInput } from "./gantt-date-input";
 import { ViewMenu, type ViewOption } from "@/components/ui/view-menu";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
@@ -931,6 +932,7 @@ export function GanttChartView({
   // change it was about) is highlighted.
   const [progressModal, setProgressModal] = useState<ProgressModalTarget | null>(null);
   const [equipmentTarget, setEquipmentTarget] = useState<{ key: string; name: string } | null>(null);
+  const [projectInsightsOpen, setProjectInsightsOpen] = useState(false);
   const [equipmentSaving, setEquipmentSaving] = useState(false);
   const [equipmentTracking, setEquipmentTracking] = useState<EquipmentTracking | null>(initialEquipmentTracking);
   const [prevInitialEquipmentTracking, setPrevInitialEquipmentTracking] = useState(initialEquipmentTracking);
@@ -3303,7 +3305,7 @@ export function GanttChartView({
                     className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
                   />
                 ) : isFiller ? null : (
-                  <input
+                  <GanttDateInput
                     // Forces a remount (and so a freshly-evaluated
                     // defaultValue) whenever the underlying date actually
                     // changes — including live, frame-by-frame, while
@@ -3418,7 +3420,7 @@ export function GanttChartView({
                     className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
                   />
                 ) : isFiller ? null : (
-                  <input
+                  <GanttDateInput
                     // See the matching comment on the Start input above.
                     key={toIsoDate(trueEndDate(row))}
                     type="date"
@@ -3524,7 +3526,7 @@ export function GanttChartView({
                             delete e.currentTarget.dataset.cellActive;
                           }}
                           aria-label={`${row.name} priority`}
-                          className={`h-full w-full cursor-pointer appearance-none border-none bg-transparent px-2 pr-6 text-xs transition hover:bg-zinc-900 hover:text-white ${
+                          className={`flex h-full w-full cursor-pointer appearance-none items-center border-none bg-transparent px-2 pr-6 text-left text-xs leading-none transition hover:bg-zinc-900 hover:text-white ${
                             effectivePriority === "high"
                               ? "font-medium text-red-600"
                               : effectivePriority === "low"
@@ -3571,7 +3573,7 @@ export function GanttChartView({
                             delete e.currentTarget.dataset.cellActive;
                           }}
                           aria-label={`${row.name} priority`}
-                          className={`h-full w-full cursor-pointer appearance-none border-none bg-transparent px-2 pr-6 text-xs transition hover:bg-zinc-900 hover:text-white ${
+                          className={`flex h-full w-full cursor-pointer appearance-none items-center border-none bg-transparent px-2 pr-6 text-left text-xs leading-none transition hover:bg-zinc-900 hover:text-white ${
                             effectivePriority === "high"
                               ? "font-medium text-red-600"
                               : effectivePriority === "low"
@@ -3979,15 +3981,26 @@ export function GanttChartView({
             {scheduleCounts.milestones === 1 ? "milestone" : "milestones"}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onImportBom}
-          title="Import a document with AI"
-          className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 bg-white px-2.5 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
-        >
-          <Sparkles className="size-4" />
-          Import with AI
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setProjectInsightsOpen(true)}
+            title="AI Project Insights"
+            className="ai-rainbow-button flex cursor-pointer items-center gap-2 rounded px-3.5 py-1.5 text-sm font-semibold text-white transition"
+          >
+            <AiSparklesIcon variant="white" className="size-5 shrink-0" />
+            <span>AI Project Insights</span>
+          </button>
+          <button
+            type="button"
+            onClick={onImportBom}
+            title="Import a document with AI"
+            className="ai-rainbow-button flex cursor-pointer items-center gap-2 rounded px-3.5 py-1.5 text-sm font-semibold text-white transition"
+          >
+            <AiSparklesIcon variant="white" className="size-5 shrink-0" />
+            <span>Import with AI</span>
+          </button>
+        </div>
       </div>
       {/* Toolbar + whatever follows (the chart, or the empty-state
           placeholder) share this one un-gapped flex column so the
@@ -4252,6 +4265,82 @@ export function GanttChartView({
             </div>
         </div>
       </div>
+
+      <Modal
+        open={projectInsightsOpen}
+        onClose={() => setProjectInsightsOpen(false)}
+        title="AI Project Insights"
+        icon={<AiSparklesIcon className="size-6 shrink-0 text-amber-300" />}
+        bareIcon
+        aiBorder
+      >
+        <article className="space-y-5 text-sm leading-relaxed text-zinc-200">
+          <section>
+            <h3 className="text-base font-semibold text-zinc-100">Executive Summary</h3>
+            <p className="mt-3">
+              The &ldquo;{projectName}&rdquo; project is currently being monitored across its
+              planned phases, task schedule, assigned resources, and recorded progress. The
+              project contains {scheduleCounts.tasks} {scheduleCounts.tasks === 1 ? "task" : "tasks"} and{" "}
+              {scheduleCounts.milestones} {scheduleCounts.milestones === 1 ? "milestone" : "milestones"}.
+              Regular progress updates are important for keeping the schedule and cost records
+              accurate.
+            </p>
+          </section>
+
+          <section>
+            <h3 className="text-base font-semibold text-zinc-100">
+              Potential Risks and Recommendations
+            </h3>
+            <ol className="mt-3 list-decimal space-y-4 pl-6">
+              <li>
+                <strong className="text-zinc-100">Schedule dependencies:</strong> Tasks that
+                depend on unfinished activities may affect succeeding work.
+                <p className="mt-2 pl-4">
+                  <strong className="text-zinc-100">Recommendation:</strong> Review predecessor
+                  tasks regularly and address blocked work before it affects later phases.
+                </p>
+              </li>
+              <li>
+                <strong className="text-zinc-100">Resource availability:</strong> Workers or
+                equipment assigned to overlapping activities may create scheduling conflicts.
+                <p className="mt-2 pl-4">
+                  <strong className="text-zinc-100">Recommendation:</strong> Confirm resource
+                  availability before starting each scheduled activity.
+                </p>
+              </li>
+              <li>
+                <strong className="text-zinc-100">Progress reporting:</strong> Missing or delayed
+                updates can make the displayed project status inaccurate.
+                <p className="mt-2 pl-4">
+                  <strong className="text-zinc-100">Recommendation:</strong> Record and validate
+                  progress consistently throughout the project.
+                </p>
+              </li>
+              <li>
+                <strong className="text-zinc-100">Cost monitoring:</strong> Unplanned material,
+                labor, equipment, or other expenses may reduce the remaining project budget.
+                <p className="mt-2 pl-4">
+                  <strong className="text-zinc-100">Recommendation:</strong> Review actual costs
+                  against planned estimates whenever progress is recorded.
+                </p>
+              </li>
+              <li>
+                <strong className="text-zinc-100">Quality and closeout readiness:</strong> Pending
+                inspections or incomplete supporting records may delay project completion.
+                <p className="mt-2 pl-4">
+                  <strong className="text-zinc-100">Recommendation:</strong> Keep inspection,
+                  incident, and closeout records updated before final review.
+                </p>
+              </li>
+            </ol>
+          </section>
+
+          <p>
+            This preview demonstrates the intended presentation of project insights. It is static
+            reference content and is not yet generated or evaluated by the configured AI service.
+          </p>
+        </article>
+      </Modal>
 
       <Modal
         open={eventModal !== null}

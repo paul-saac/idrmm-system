@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { roleLabel } from "@/lib/auth/roles";
 import { getSessionProfile } from "@/lib/auth/session";
@@ -51,6 +52,7 @@ import {
 import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
 import { getDelayRiskAssessment } from "@/lib/forecasting/data";
 import { ProjectDetailView } from "@/components/projects/project-detail-view";
+import { ProjectWorkspaceLoading } from "@/components/projects/project-workspace-loading";
 
 /**
  * The project detail page for both portals (app/admin/projects/[id] and
@@ -69,8 +71,29 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     notFound();
   }
 
+  // Resolve only the small project record first. This lets Next.js stream a
+  // useful workspace header and tab frame while the larger project data set
+  // below is still loading.
+  const project = await getProjectById(projectId);
+  if (!project) {
+    notFound();
+  }
+
+  return (
+    <Suspense fallback={<ProjectWorkspaceLoading project={project} />}>
+      <ProjectDetailContent projectId={projectId} project={project} />
+    </Suspense>
+  );
+}
+
+async function ProjectDetailContent({
+  projectId,
+  project,
+}: {
+  projectId: number;
+  project: NonNullable<Awaited<ReturnType<typeof getProjectById>>>;
+}) {
   const [
-    project,
     projectManagers,
     foremen,
     costEstimate,
@@ -103,10 +126,9 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     equipmentTrackingResult,
     materialPurchases,
   ] = await Promise.all([
-    getProjectById(projectId),
     listAccountsByRole(["project_manager"]),
     listAccountsByRole(["foreman"]),
-    getCostEstimate(projectId),
+    getCostEstimate(projectId, true),
     listDailyLogs(projectId),
     listSurveyQuestions(projectId),
     listProjectMaterials(projectId),
@@ -136,10 +158,6 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     loadEquipmentTracking(projectId),
     listMaterialPurchases(projectId),
   ]);
-
-  if (!project) {
-    notFound();
-  }
 
   // Every material the project has, each once: planned, used, in stock.
   const materialRecords = buildMaterialRecords(
@@ -276,31 +294,26 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
       roleLabel(sessionProfile.role)
     : "Admin";
 
-  if (!project) {
-    notFound();
-  }
-
   // Depends on costEstimate's categories/tasks, so it can't join the
   // Promise.all above.
   const progress = await getProjectProgress(projectId, costEstimate.categories);
 
-  // Self-healing status sync on every view — see
-  // syncProjectStatusFromProgress's own doc comment. A foreman can't write
-  // to projects, so for them this only patches the in-memory status below
-  // (the database catches up on the next admin view).
+  // Reconcile persisted status after changes to task scope or saved work.
+  // The sync helper checks project access before its narrow status write.
   const syncedStatus = await syncProjectStatusFromProgress(
     projectId,
-    progress.overallPercent
+    costEstimate.lifecycle
   );
-  if (syncedStatus && syncedStatus !== project.status) {
-    project.status = syncedStatus;
-  }
+  const currentProject =
+    syncedStatus && syncedStatus !== project.status
+        ? { ...project, status: syncedStatus, actualEndDate: syncedStatus === "completed" ? project.actualEndDate : null }
+      : project;
 
   // Same reasoning as costEstimate/progress above: depends on data
   // fetched earlier, so it can't join the first Promise.all.
   const risk = await getDelayRiskAssessment(
     projectId,
-    project,
+    currentProject,
     costEstimate,
     progress,
     expenseOverview
@@ -323,7 +336,7 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
 
   return (
     <ProjectDetailView
-      project={project}
+      project={currentProject}
       projectManagers={projectManagers}
       foremen={foremen}
       costEstimate={costEstimate}

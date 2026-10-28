@@ -149,7 +149,7 @@ export function entryCosts(row: {
  * one embedded select — neither table declares a Relationships entry in
  * lib/supabase/types.ts for the typed client to embed through.
  */
-async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entry[]> {
+async function fetchEntries(supabase: Supabase, taskIds: number[], strict = false): Promise<Entry[]> {
   const { data: entries, error: entriesError } = await supabase
     .from("task_progress_entries")
     .select("*")
@@ -159,6 +159,7 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
   // Logged rather than swallowed — a not-yet-run migration or an RLS
   // denial otherwise just looks like "no progress ever recorded."
   if (entriesError) {
+    if (strict) throw new Error("Could not verify saved task progress.");
     console.error("[task-progress] entries query failed:", entriesError.message);
   }
 
@@ -179,6 +180,7 @@ async function fetchEntries(supabase: Supabase, taskIds: number[]): Promise<Entr
       .in("progress_entry_id", entryIds);
 
     if (materialsError) {
+      if (strict) throw new Error("Could not verify saved task material usage.");
       console.error(
         "[task-progress] material entries query failed:",
         materialsError.message
@@ -363,11 +365,12 @@ function addEntry(anchor: ReturnType<typeof emptyAnchor>, entry: Entry) {
 }
 
 export async function listTaskProgressAnchors(
-  taskIds: number[]
+  taskIds: number[],
+  strict = false,
 ): Promise<TaskProgressAnchors> {
   if (taskIds.length === 0) return {};
   const supabase = await createClient();
-  const entries = await fetchEntries(supabase, taskIds);
+  const entries = await fetchEntries(supabase, taskIds, strict);
 
   const result: Record<number, ReturnType<typeof emptyAnchor>> = {};
   for (const entry of entries) {

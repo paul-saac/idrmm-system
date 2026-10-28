@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Flag, Mail, MoreHorizontal, Package, Trash2, TrendingUp, Wrench } from "lucide-react";
 import type { AppNotification } from "@/lib/notifications/actions";
 import { initials } from "@/lib/initials";
+import { avatarColor } from "@/components/ui/list-table";
 import { notificationTime } from "@/lib/time-ago";
 
 function formatDay(iso: string) {
@@ -80,7 +81,7 @@ function NotificationCard({
     >
       <div className="flex items-start gap-3">
         <span className="relative shrink-0">
-          <span className="flex size-9 items-center justify-center rounded-full bg-zinc-900 text-xs font-semibold text-white">
+          <span className={`flex size-9 items-center justify-center rounded-full text-xs font-semibold ${avatarColor(notification.actorName ?? "?")}`}>
             {initials(notification.actorName)}
           </span>
           <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border border-white bg-orange-100 text-orange-600">

@@ -139,7 +139,7 @@ export function ProgressTrackingModal({
   });
 
   return (
-    <Modal open={target !== null} onClose={onClose} size="large" bare title={item?.name ?? "Progress Tracking"}>
+    <Modal open={target !== null} onClose={onClose} size="large" bare hideCloseButton={!readOnly} title={item?.name ?? "Progress Tracking"}>
       {target && item && (
         <ProgressTrackingModalContent
           key={`${itemKey}:${target.highlightEntryDate ?? ""}`}

@@ -5,6 +5,7 @@
 import { useState, useTransition, type FormEvent } from "react";
 import { Pencil } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import type { CloseoutReportData } from "@/lib/reports/closeout-data";
 import { CLOSEOUT_FIELDS } from "@/lib/reports/closeout-model";
 import { saveCloseoutReport } from "@/lib/reports/closeout-actions";
@@ -502,7 +503,7 @@ export function CloseoutEditor({ data, onClose }: { data: CloseoutReportData; on
         <h4 className="mb-4 border-b border-zinc-200 pb-2 text-sm font-medium">Recorded milestone achievement dates</h4>
         <p className="mb-3 text-xs text-zinc-500">Enter the confirmed date each milestone was achieved. Leave blank when unconfirmed.</p>
         <div className="grid gap-4 md:grid-cols-2">{data.work.filter((item) => item.milestone).map((item) => <label key={item.key} className="space-y-1.5 text-xs text-zinc-600">
-          <span>{item.name}</span><input type="date" name={`milestone:${item.key}`} max={data.asOf} defaultValue={data.record?.milestone_dates[item.key] ?? ""} className={inputClass} />
+          <span>{item.name}</span><DatePicker name={`milestone:${item.key}`} ariaLabel={`${item.name} achievement date`} max={data.asOf} defaultValue={data.record?.milestone_dates[item.key] ?? ""} className={inputClass} />
         </label>)}</div>
       </div>}
     </fieldset>

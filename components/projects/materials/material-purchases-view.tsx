@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import { ViewMenu, type ViewOption } from "@/components/ui/view-menu";
 import { MaterialStockPickerModal } from "./material-stock-picker-modal";
 import {
@@ -331,7 +332,7 @@ export function MaterialPurchasesView({
                   <th className="px-4 py-3">Description</th>
                   <th className="px-4 py-3 text-right">Purchased</th>
                   <th className="px-4 py-3">Invoice #</th>
-                  <th className="px-4 py-3 text-center">Receipt</th>
+                  <th className="px-4 py-3 text-center">Attachment</th>
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -447,12 +448,12 @@ export function MaterialPurchasesView({
               >
                 Date <span className="text-red-500">*</span>
               </label>
-              <input
+              <DatePicker
                 id={`${formId}-date`}
-                type="date"
+                ariaLabel="Purchase date"
                 required
                 value={purchaseDate}
-                onChange={(e) => setPurchaseDate(e.target.value)}
+                onChange={setPurchaseDate}
                 className={`${fieldInput} max-w-xs`}
               />
             </div>
@@ -694,10 +695,10 @@ export function MaterialPurchasesView({
         onClose={() => setStockModalItemIndex(null)}
       />
 
-      {/* Image Preview Modal */}
+      {/* Attachment preview modal */}
       <Modal
         open={viewingReceiptUrl !== null}
-        title="Invoice / Receipt"
+        title="Attachment"
         icon={<FileText className="size-5" />}
         onClose={() => setViewingReceiptUrl(null)}
       >
@@ -706,7 +707,7 @@ export function MaterialPurchasesView({
             <div className="max-h-[70vh] w-full overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2">
               <img
                 src={viewingReceiptUrl}
-                alt="Invoice / Receipt"
+                alt="Purchase attachment"
                 className="mx-auto max-h-[65vh] w-auto object-contain"
               />
             </div>
@@ -717,7 +718,7 @@ export function MaterialPurchasesView({
                 rel="noopener noreferrer"
                 className="flex items-center gap-1 text-xs font-medium text-zinc-700 hover:text-zinc-900 hover:underline"
               >
-                <ExternalLink className="size-3.5" /> Open original in new tab
+                <ExternalLink className="size-3.5" /> Open attachment in new tab
               </a>
             </div>
           </div>

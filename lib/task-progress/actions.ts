@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
+import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
+import { revalidateProjectLists } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
@@ -428,6 +430,8 @@ export async function recordTaskProgress(
       })),
     });
 
+    await syncProjectStatusFromProgress(projectId);
+    revalidateProjectLists();
     revalidateProjectPaths(projectId);
     return { success: true };
   });
@@ -481,6 +485,8 @@ export async function deleteTaskProgressEntry(
       attendance: [],
     });
 
+    await syncProjectStatusFromProgress(projectId);
+    revalidateProjectLists();
     revalidateProjectPaths(projectId);
     return { success: true };
   });

@@ -3,6 +3,7 @@
 import { useState, useTransition, type FormEvent } from "react";
 import { ChevronDown, ClipboardCheck, Plus } from "lucide-react";
 import { ModalFooter } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import type { CloseoutReportData } from "@/lib/reports/closeout-data";
 import { saveQualityInspection } from "@/lib/reports/quality-inspection-actions";
 import {
@@ -64,7 +65,7 @@ export function QualityInspectionManager({ data, onClose, onSaved }: { data: Clo
           <input id="qa-area" name="area" required maxLength={200} defaultValue={selected?.area ?? ""} placeholder="e.g. Grid A1–A5" className={input} />
 
           <label htmlFor="qa-date" className="pt-2 text-sm font-medium">Inspection date *</label>
-          <input id="qa-date" name="inspectedOn" type="date" required defaultValue={selected?.inspected_on ?? data.asOf} className={input} />
+          <DatePicker id="qa-date" name="inspectedOn" ariaLabel="Inspection date" required defaultValue={selected?.inspected_on ?? data.asOf} className={input} />
 
           <label htmlFor="qa-inspector" className="pt-2 text-sm font-medium">Inspector name *</label>
           <input id="qa-inspector" name="inspectorName" required maxLength={200} defaultValue={selected?.inspector_name ?? ""} className={input} />

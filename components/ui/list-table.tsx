@@ -147,7 +147,7 @@ const AVATAR_COLORS = [
   "bg-teal-100 text-teal-700",
 ];
 
-function avatarColor(name: string) {
+export function avatarColor(name: string) {
   let hash = 0;
   for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return AVATAR_COLORS[hash % AVATAR_COLORS.length];
@@ -155,13 +155,13 @@ function avatarColor(name: string) {
 
 /** A person's initials in a small colored circle, beside their name —
  * `large` where each person gets more room (the Team's table).
- * Defaults to neutral zinc styling to match the rest of the system. */
-export function InitialsAvatar({ name, large = false, neutral = true }: { name: string; large?: boolean; neutral?: boolean }) {
+ * Uses the same name-based palette everywhere in the system. */
+export function InitialsAvatar({ name, large = false }: { name: string; large?: boolean }) {
   return (
     <span
-      className={`flex shrink-0 items-center justify-center rounded-full ${neutral ? "font-normal" : "font-semibold"} ${
+      className={`flex shrink-0 items-center justify-center rounded-full font-semibold ${
         large ? "size-8 text-xs" : "size-6 text-[10px]"
-      } ${neutral ? "border border-zinc-300 bg-zinc-100 text-zinc-700" : avatarColor(name)}`}
+      } ${avatarColor(name)}`}
     >
       {initials(name)}
     </span>

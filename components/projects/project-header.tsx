@@ -40,7 +40,7 @@ function Stat({ label, value }: { label: string; value: ReactNode }) {
 function Person({ role, name }: { role: string; name: string | null }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <InitialsAvatar name={name ?? "?"} neutral />
+      <InitialsAvatar name={name ?? "?"} />
       <span className="text-zinc-400">{role}</span>
       <span className="truncate font-medium text-zinc-900">{name ?? "—"}</span>
     </span>
@@ -148,7 +148,7 @@ export function ProjectHeader({
           <button
             type="button"
             onClick={onEdit}
-            className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+            className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
           >
             <EditIcon className="size-4" />
             Edit project
@@ -171,7 +171,7 @@ export function ProjectHeader({
             >
               {crew.slice(0, TEAM_PREVIEW).map((worker) => (
                 <span key={worker.id} className="rounded-full">
-                  <InitialsAvatar name={worker.fullName} neutral />
+                  <InitialsAvatar name={worker.fullName} />
                 </span>
               ))}
               {crew.length > TEAM_PREVIEW && (
@@ -184,7 +184,7 @@ export function ProjectHeader({
         )}
       </div>
 
-      <div className="mt-5 grid grid-cols-2 border-y border-zinc-200 lg:grid-cols-4 lg:divide-x lg:divide-zinc-200">
+      <div className="mt-5 grid grid-cols-2 border-y border-zinc-200 bg-white lg:grid-cols-4 lg:divide-x lg:divide-zinc-200">
         <Stat
           label="Overall progress"
           value={<span className="tabular-nums">{progress.toFixed(2)}%</span>}

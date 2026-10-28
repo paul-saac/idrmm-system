@@ -114,7 +114,7 @@ export function EquipmentRequestsTable({
                   </td>
                   <td className="px-5 py-3">
                     <span className="flex items-center gap-2">
-                      <InitialsAvatar name={request.requestedByName} neutral />
+                      <InitialsAvatar name={request.requestedByName} />
                       <span className="truncate text-zinc-900">{request.requestedByName}</span>
                     </span>
                   </td>

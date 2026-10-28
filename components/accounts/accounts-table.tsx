@@ -77,7 +77,7 @@ export function AccountsTable({
                 />
                 <td className={CELL}>
                   <div className="flex items-center gap-2.5">
-                    <InitialsAvatar name={name || account.email} neutral />
+                    <InitialsAvatar name={name || account.email} />
                     {/* Its click is the row's (bubbles up). */}
                     <button
                       type="button"

@@ -1,5 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import type { ProjectStatus } from "@/lib/supabase/types";
+import { getCostEstimate } from "@/lib/cost-estimate/data";
+import { deriveProjectStatusFromProgress } from "./status";
+import { syncProjectStatusFromProgress } from "./sync";
 
 export type ProjectRow = {
   id: number;
@@ -113,7 +116,15 @@ export async function listProjects(): Promise<ProjectRow[]> {
 
   const namesById = await attachAssigneeNames(supabase, data);
 
-  return data.map((row) => toProjectRow(row, namesById));
+  return Promise.all(data.map(async (row) => {
+    const project = toProjectRow(row, namesById);
+    const { lifecycle } = await getCostEstimate(row.id, true);
+    const status = deriveProjectStatusFromProgress(lifecycle, project.actualEndDate);
+    if (status !== project.status || (status !== "completed" && project.actualEndDate)) {
+      await syncProjectStatusFromProgress(row.id, lifecycle);
+    }
+    return { ...project, status, actualEndDate: status === "completed" ? project.actualEndDate : null };
+  }));
 }
 
 export async function getProjectById(id: number): Promise<ProjectRow | null> {

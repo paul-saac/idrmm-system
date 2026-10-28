@@ -355,8 +355,8 @@ function normalizeCategories(value: unknown): ExtractedCategory[] | null {
 
 /** Groq may place an otherwise usable JSON result in `failed_generation`
  * when its response validator rejects surrounding text or a minor wrapper
- * mismatch. Parse only the JSON object and still apply our full local shape
- * validation before accepting it. */
+ * mismatch. Accept the schema's { categories: [...] } wrapper or the direct
+ * category array models sometimes produce, then apply full local validation. */
 function categoriesFromJsonText(text: string): ExtractedCategory[] | null {
   const trimmed = text.trim();
   const candidates = [trimmed];
@@ -365,12 +365,18 @@ function categoriesFromJsonText(text: string): ExtractedCategory[] | null {
   if (objectStart >= 0 && objectEnd > objectStart) {
     candidates.push(trimmed.slice(objectStart, objectEnd + 1));
   }
+  const arrayStart = trimmed.indexOf("[");
+  const arrayEnd = trimmed.lastIndexOf("]");
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    candidates.push(trimmed.slice(arrayStart, arrayEnd + 1));
+  }
 
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate);
-      const value =
-        typeof parsed === "object" && parsed !== null
+      const value = Array.isArray(parsed)
+        ? parsed
+        : typeof parsed === "object" && parsed !== null
           ? (parsed as Record<string, unknown>).categories
           : null;
       const categories = normalizeCategories(value);
@@ -532,10 +538,21 @@ export async function extractBomFromFile(
       const errorBody = await response.clone().json().catch(() => null);
       const message =
         typeof errorBody?.error?.message === "string" ? errorBody.error.message : "";
-      if (message.toLowerCase().includes("failed to generate json")) {
+      const errorCode =
+        typeof errorBody?.error?.code === "string" ? errorBody.error.code : "";
+      const normalizedMessage = message.toLowerCase();
+      const jsonGenerationFailed =
+        errorCode === "json_validate_failed" ||
+        normalizedMessage.includes("failed to generate json") ||
+        normalizedMessage.includes("does not match the expected schema");
+      if (jsonGenerationFailed) {
         const failedGeneration = errorBody?.error?.failed_generation;
-        if (typeof failedGeneration === "string") {
-          const recovered = categoriesFromJsonText(failedGeneration);
+        if (failedGeneration !== undefined && failedGeneration !== null) {
+          const recovered = categoriesFromJsonText(
+            typeof failedGeneration === "string"
+              ? failedGeneration
+              : JSON.stringify(failedGeneration)
+          );
           if (recovered && recovered.length > 0) return { categories: recovered };
         }
 

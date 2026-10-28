@@ -3,6 +3,23 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { avatarColor } from "@/components/ui/list-table";
+import {
+  Building2,
+  ChevronDown,
+  ClipboardList,
+  Folder,
+  History,
+  KeyRound,
+  LockKeyhole,
+  Mail,
+  RefreshCw,
+  ScrollText,
+  ShieldCheck,
+  TrendingUp,
+  UserRound,
+  PackageSearch,
+} from "lucide-react";
 import {
   changeAccountRole,
   deactivateWithHandover,
@@ -21,6 +38,7 @@ import type { AccountDetail as Detail, AccountRow } from "@/lib/accounts/data";
 import { roleLabel, type UserRole } from "@/lib/auth/roles";
 import type { AccountEventAction } from "@/lib/supabase/types";
 import { timeAgo } from "@/lib/time-ago";
+import { ModalFooter } from "@/components/ui/modal";
 
 const INPUT =
   "w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
@@ -50,6 +68,12 @@ const PROJECT_STATUS: Record<"planning" | "ongoing" | "completed", { label: stri
   ongoing: { label: "Ongoing", className: "bg-amber-50 text-amber-700" },
   completed: { label: "Completed", className: "bg-zinc-100 text-zinc-500" },
 };
+
+const ACTIVITY_ICON = {
+  progress: TrendingUp,
+  daily_log: ClipboardList,
+  material_request: PackageSearch,
+} as const;
 
 function formatDate(iso: string | null, withTime = false) {
   if (!iso) return "—";
@@ -84,6 +108,7 @@ export function AccountDetail({
   accounts,
   roleOptions,
   isSuperAdmin,
+  onClose,
 }: {
   account: AccountRow;
   /** Everyone listed — the hand-over picks come from here. */
@@ -91,9 +116,15 @@ export function AccountDetail({
   /** Roles this viewer may give. */
   roleOptions: UserRole[];
   isSuperAdmin: boolean;
+  onClose: () => void;
 }) {
   const router = useRouter();
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detail, setDetail] = useState<Detail>(() => ({
+    projects: account.detailPreview.projects,
+    activity: account.detailPreview.activity,
+    log: [],
+    hasHistory: true,
+  }));
   const [loadError, setLoadError] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
@@ -158,107 +189,169 @@ export function AccountDetail({
   const active = account.status === "active";
   // Unfinished projects they still run — each needs a replacement before
   // they're deactivated.
-  const running = (detail?.projects ?? []).filter((project) => project.status !== "completed");
+  const running = detail.projects.filter((project) => project.status !== "completed");
   const detailsChanged =
     firstName.trim() !== account.firstName ||
     lastName.trim() !== account.lastName ||
     email.trim().toLowerCase() !== account.email.toLowerCase();
+  const initials = `${account.firstName.charAt(0)}${account.lastName.charAt(0)}`.toUpperCase() ||
+    account.email.charAt(0).toUpperCase();
+
+  function deactivateAccount() {
+    if (!window.confirm(`Deactivate ${name}? They won't be able to sign in until reactivated.`)) {
+      return;
+    }
+    run("access", "deactivate", () =>
+      running.length > 0
+        ? deactivateWithHandover(
+            account.id,
+            running.map((project) => ({
+              projectId: project.id,
+              replacementId: handovers[project.id],
+            }))
+          )
+        : setAccountsStatus([account.id], "inactive")
+    );
+  }
 
   return (
-    <div className="flex flex-col gap-6">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-8 gap-y-2.5 text-sm">
-        <dt className="text-zinc-500">Role</dt>
-        <dd className="font-medium text-zinc-900">{roleLabel(account.role)}</dd>
-        <dt className="text-zinc-500">Status</dt>
-        <dd>
-          <span
-            className={`rounded-sm px-2 py-0.5 text-xs font-medium ${
-              active ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-            }`}
+    <div className="flex flex-col gap-0">
+      <div className="-mx-6 -mt-5 flex items-center gap-4 border-b border-zinc-200 px-6 py-5">
+        <div className={`flex size-12 shrink-0 items-center justify-center rounded-full text-sm font-medium ${avatarColor(name || account.email)}`}>
+          {initials}
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="truncate text-lg font-semibold text-zinc-900">{name}</h3>
+            <span
+              className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${
+                active && !account.invitationPending
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-amber-50 text-amber-700"
+              }`}
+            >
+              {account.status === "inactive" ? "Inactive" : account.invitationPending ? "Invited" : "Active"}
+            </span>
+          </div>
+          <p className="truncate text-sm text-zinc-500">{account.email}</p>
+        </div>
+        {active && (
+          <button
+            type="button"
+            disabled={!detail || busy !== null || running.some((project) => !handovers[project.id])}
+            onClick={deactivateAccount}
+            className={`${DANGER} ml-auto shrink-0`}
           >
-            {active ? "Active" : "Inactive"}
-          </span>
-        </dd>
-        <dt className="text-zinc-500">Last Sign-in</dt>
-        <dd className="text-zinc-900">
-          {account.lastSignInAt ? formatDate(account.lastSignInAt, true) : "Never"}
-        </dd>
-        <dt className="text-zinc-500">Created</dt>
-        <dd className="text-zinc-900">{formatDate(account.createdAt)}</dd>
+            {busy === "deactivate" ? "Deactivating..." : "Deactivate"}
+          </button>
+        )}
+      </div>
+
+      <dl className="-mx-6 grid grid-cols-1 border-b border-zinc-200 sm:grid-cols-3">
+        <div className="px-6 py-3">
+          <dt className="text-[11px] text-zinc-400">Current role</dt>
+          <dd className="mt-0.5 text-sm font-medium text-zinc-900">{roleLabel(account.role)}</dd>
+        </div>
+        <div className="border-zinc-200 px-6 py-3 sm:border-l">
+          <dt className="text-[11px] text-zinc-400">Last sign-in</dt>
+          <dd className="mt-0.5 text-sm text-zinc-900">
+            {account.lastSignInAt ? formatDate(account.lastSignInAt, true) : "Never"}
+          </dd>
+        </div>
+        <div className="border-zinc-200 px-6 py-3 sm:border-l">
+          <dt className="text-[11px] text-zinc-400">Created</dt>
+          <dd className="mt-0.5 text-sm text-zinc-900">{formatDate(account.createdAt)}</dd>
+        </div>
       </dl>
 
-      {/* Details */}
-      <section className="flex flex-col gap-3 border-t border-zinc-200 pt-5">
-        <h3 className="text-sm font-semibold text-zinc-900">Details</h3>
+      <div className="-mx-6 grid bg-zinc-50 lg:grid-cols-2">
+      <section className="flex flex-col gap-3 px-6 py-5">
+        <div>
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+            <UserRound className="size-4 text-zinc-500" /> Account details
+          </h3>
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
-            <span className={LABEL}>First Name</span>
+            <span className={LABEL}>First name</span>
             <input value={firstName} onChange={(e) => setFirstName(e.target.value)} className={INPUT} />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className={LABEL}>Last Name</span>
+            <span className={LABEL}>Last name</span>
             <input value={lastName} onChange={(e) => setLastName(e.target.value)} className={INPUT} />
           </label>
           <label className="flex flex-col gap-1.5 sm:col-span-2">
-            <span className={LABEL}>Email</span>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className={INPUT}
-            />
+            <span className={LABEL}>Email address</span>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={INPUT} />
           </label>
         </div>
         {note("details")}
-        <div>
-          <button
-            type="button"
-            disabled={!detailsChanged || busy !== null}
-            onClick={() =>
-              run("details", "details", () =>
-                updateAccountDetails(account.id, { firstName, lastName, email })
-              )
-            }
-            className={PRIMARY}
-          >
-            {busy === "details" ? "Saving..." : "Save Details"}
+        <div className="mt-auto">
+          <button type="button" disabled={!detailsChanged || busy !== null} onClick={() => run("details", "details", () => updateAccountDetails(account.id, { firstName, lastName, email }))} className={PRIMARY}>
+            {busy === "details" ? "Saving..." : "Save details"}
           </button>
         </div>
       </section>
 
-      {/* Role */}
       {roleOptions.length > 1 && (
-        <section className="flex flex-col gap-3 border-t border-zinc-200 pt-5">
-          <h3 className="text-sm font-semibold text-zinc-900">Role</h3>
-          <div className="flex flex-wrap items-center gap-3">
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as UserRole)}
-              aria-label="Role"
-              className={`${INPUT} w-auto cursor-pointer`}
-            >
-              {roleOptions.map((option) => (
-                <option key={option} value={option}>
-                  {roleLabel(option)}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={role === account.role || busy !== null}
-              onClick={() => run("role", "role", () => changeAccountRole(account.id, role))}
-              className={PRIMARY}
-            >
-              {busy === "role" ? "Changing..." : "Change Role"}
+        <section className="flex flex-col gap-3 px-6 py-5 lg:border-l lg:border-zinc-200">
+          <div>
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+              <ShieldCheck className="size-4 text-zinc-500" /> Roles
+            </h3>
+          </div>
+          <label className="flex flex-col gap-1.5">
+            <span className={LABEL}>Role</span>
+            <span className="relative">
+              <select value={role} onChange={(e) => setRole(e.target.value as UserRole)} aria-label="Role" className={`${INPUT} cursor-pointer appearance-none pr-9`}>
+                {roleOptions.map((option) => <option key={option} value={option}>{roleLabel(option)}</option>)}
+              </select>
+              <ChevronDown className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-zinc-400" />
+            </span>
+          </label>
+          {note("role")}
+          <div className="mt-auto">
+            <button type="button" disabled={role === account.role || busy !== null} onClick={() => run("role", "role", () => changeAccountRole(account.id, role))} className={PRIMARY}>
+              {busy === "role" ? "Changing..." : "Change role"}
             </button>
           </div>
-          {note("role")}
         </section>
       )}
+      </div>
+
+      {/* The sections below keep the existing account controls and data. */}
+      <div className="-mx-6 border-t border-zinc-200" />
 
       {/* Password & sign-in */}
-      <section className="flex flex-col gap-3 border-t border-zinc-200 pt-5">
-        <h3 className="text-sm font-semibold text-zinc-900">{account.invitationPending ? "Invitation" : "Password & Sign-in"}</h3>
+      <section className="flex flex-col gap-2 py-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+              {account.invitationPending ? (
+                <Mail className="size-4 text-zinc-500" />
+              ) : (
+                <KeyRound className="size-4 text-zinc-500" />
+              )}
+              {account.invitationPending ? "Invitation" : "Password & sign-in"}
+            </h3>
+            {account.invitationPending && (
+              <p className="text-xs text-zinc-400">Help this member complete their account setup.</p>
+            )}
+          </div>
+          {!account.invitationPending && (
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={busy !== null} onClick={() => run("password", "reset", () => sendPasswordReset(account.id))} className={SECONDARY}>
+                <Mail className="mr-1.5 inline size-4" />
+                {busy === "reset" ? "Sending..." : "Send reset email"}
+              </button>
+              <button type="button" disabled={busy !== null} onClick={() => {
+                if (window.confirm(`Sign ${name} out of every device?`)) run("password", "signout", () => signOutEverywhere(account.id));
+              }} className={SECONDARY}>
+                {busy === "signout" ? "Signing out..." : "Sign out everywhere"}
+              </button>
+            </div>
+          )}
+        </div>
         {account.invitationPending ? (
           <div>
             <button
@@ -277,31 +370,9 @@ export function AccountDetail({
           </div>
         ) : (
           <>
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => run("password", "reset", () => sendPasswordReset(account.id))}
-            className={SECONDARY}
-          >
-            {busy === "reset" ? "Sending..." : "Send Reset Email"}
-          </button>
-          <button
-            type="button"
-            disabled={busy !== null}
-            onClick={() => {
-              if (window.confirm(`Sign ${name} out of every device?`)) {
-                run("password", "signout", () => signOutEverywhere(account.id));
-              }
-            }}
-            className={SECONDARY}
-          >
-            {busy === "signout" ? "Signing out..." : "Sign Out Everywhere"}
-          </button>
-        </div>
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex min-w-48 flex-1 flex-col gap-1.5">
-            <span className={LABEL}>Temporary Password</span>
+            <span className={LABEL}>Temporary password</span>
             <input
               type="text"
               value={password}
@@ -312,6 +383,7 @@ export function AccountDetail({
             />
           </label>
           <button type="button" onClick={() => setPassword(generatePassword())} className={SECONDARY}>
+            <RefreshCw className="mr-1.5 inline size-4" />
             Generate
           </button>
           <button
@@ -324,7 +396,7 @@ export function AccountDetail({
             }
             className={PRIMARY}
           >
-            {busy === "password" ? "Setting..." : "Set Password"}
+            {busy === "password" ? "Setting..." : "Set password"}
           </button>
         </div>
           </>
@@ -338,67 +410,82 @@ export function AccountDetail({
         </p>
       )}
 
-      {/* Projects */}
+      {/* Projects and recent activity */}
       {detail && (
-        <section className="flex flex-col gap-2 border-t border-zinc-200 pt-5">
-          <h3 className="text-sm font-semibold text-zinc-900">Projects</h3>
+        <div className="-mx-6 grid border-t border-zinc-200 lg:grid-cols-2">
+        <section className="flex flex-col gap-3 px-6 py-5">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+            <Folder className="size-4 text-zinc-500" />
+            Projects <span className="text-xs font-normal text-zinc-400">{detail.projects.length} assigned</span>
+          </h3>
           {detail.projects.length === 0 ? (
             <p className="text-sm text-zinc-400">No projects yet.</p>
           ) : (
-            <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200">
+            <ul className="-mx-2 flex flex-col gap-1">
               {detail.projects.map((project) => (
-                <li key={project.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                  <div className="min-w-0 flex-1">
-                    <Link
-                      href={`/admin/projects/${project.id}`}
-                      className="font-medium text-zinc-900 hover:underline"
-                    >
-                      {project.name}
-                    </Link>
-                    <p className="text-xs text-zinc-400">
-                      {project.as} · {formatDate(project.startDate)} – {formatDate(project.endDate)}
-                    </p>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-sm px-2 py-0.5 text-xs font-medium ${PROJECT_STATUS[project.status].className}`}
+                <li key={project.id}>
+                  <Link
+                    href={`/admin/projects/${project.id}`}
+                    className="flex items-center gap-3 rounded-md px-2 py-2 text-sm transition hover:bg-zinc-50"
                   >
-                    {PROJECT_STATUS[project.status].label}
-                  </span>
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-500">
+                      <Building2 className="size-4" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-zinc-900">
+                        {project.name}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-zinc-400">
+                        {project.location || "No location provided"}
+                      </p>
+                    </div>
+                    <span
+                      className={`shrink-0 rounded-sm px-2 py-0.5 text-xs font-medium ${PROJECT_STATUS[project.status].className}`}
+                    >
+                      {PROJECT_STATUS[project.status].label}
+                    </span>
+                  </Link>
                 </li>
               ))}
             </ul>
           )}
         </section>
-      )}
-
-      {/* Recent activity */}
-      {detail && (
-        <section className="flex flex-col gap-2 border-t border-zinc-200 pt-5">
-          <h3 className="text-sm font-semibold text-zinc-900">Recent Activity</h3>
+        <section className="flex flex-col gap-3 px-6 py-5 lg:border-l lg:border-zinc-200">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+            <History className="size-4 text-zinc-500" /> Recent activity
+          </h3>
           {detail.activity.length === 0 ? (
-            <p className="text-sm text-zinc-400">Nothing yet.</p>
+            <p className="text-sm text-zinc-400">No activity yet.</p>
           ) : (
-            <ul className="flex flex-col gap-2.5">
-              {detail.activity.map((item, index) => (
-                <li key={`${item.at}-${index}`} className="flex items-baseline gap-3 text-sm">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-zinc-800">{item.label}</p>
-                    {item.projectName && <p className="text-xs text-zinc-400">{item.projectName}</p>}
-                  </div>
-                  <span className="shrink-0 text-xs text-zinc-400" title={formatDate(item.at, true)}>
-                    {timeAgo(item.at)}
-                  </span>
-                </li>
-              ))}
+            <ul className="-mx-2 flex flex-col gap-1">
+              {detail.activity.map((item, index) => {
+                const ActivityIcon = ACTIVITY_ICON[item.kind];
+                return (
+                  <li key={`${item.at}-${index}`} className="flex gap-3 rounded-md px-2 py-2 transition hover:bg-white/70">
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-500">
+                      <ActivityIcon className="size-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm text-zinc-900">{item.label}</p>
+                      <p className="mt-0.5 text-xs text-zinc-400" title={formatDate(item.at, true)}>
+                        {item.projectName ? `${item.projectName} · ` : ""}{timeAgo(item.at)}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
+        </div>
       )}
 
       {/* Change log — a super admin's */}
       {detail && isSuperAdmin && (
-        <section className="flex flex-col gap-2 border-t border-zinc-200 pt-5">
-          <h3 className="text-sm font-semibold text-zinc-900">Change Log</h3>
+        <section className="-mx-6 flex flex-col gap-2 border-t border-zinc-200 px-6 pt-5">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+            <ScrollText className="size-4 text-zinc-500" /> Change Log
+          </h3>
           {detail.log.length === 0 ? (
             <p className="text-sm text-zinc-400">No changes recorded yet.</p>
           ) : (
@@ -421,16 +508,14 @@ export function AccountDetail({
       )}
 
       {/* Access */}
-      <section className="flex flex-col gap-3 border-t border-zinc-200 pt-5">
-        <h3 className="text-sm font-semibold text-zinc-900">Access</h3>
+      <section className="-mx-6 flex flex-col gap-3 border-t border-zinc-200 px-6 pt-5">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
+          <LockKeyhole className="size-4 text-zinc-500" /> Access
+        </h3>
         {active ? (
           <>
             {running.length > 0 && (
               <div className="flex flex-col gap-3">
-                <p className="text-sm text-zinc-500">
-                  {name} still runs {running.length === 1 ? "a project" : "these projects"} — pick
-                  who takes over before deactivating.
-                </p>
                 {running.map((project) => {
                   const needed: UserRole =
                     project.as === "Project Manager" ? "project_manager" : "foreman";
@@ -451,64 +536,32 @@ export function AccountDetail({
                       <span className={LABEL}>
                         {project.name} — new {project.as}
                       </span>
-                      <select
-                        value={handovers[project.id] ?? ""}
-                        onChange={(e) =>
-                          setHandovers((prev) => ({ ...prev, [project.id]: e.target.value }))
-                        }
-                        className={`${INPUT} cursor-pointer`}
-                      >
-                        <option value="" disabled>
-                          {candidates.length === 0
-                            ? `No free ${roleLabel(needed)} right now`
-                            : `Select a ${roleLabel(needed)}`}
-                        </option>
-                        {candidates.map((person) => (
-                          <option key={person.id} value={person.id}>
-                            {`${person.firstName} ${person.lastName}`.trim() || person.email}
+                      <span className="relative">
+                        <select
+                          value={handovers[project.id] ?? ""}
+                          onChange={(e) =>
+                            setHandovers((prev) => ({ ...prev, [project.id]: e.target.value }))
+                          }
+                          className={`${INPUT} cursor-pointer appearance-none pr-9`}
+                        >
+                          <option value="" disabled>
+                            {candidates.length === 0
+                              ? `No free ${roleLabel(needed)} right now`
+                              : `Select a ${roleLabel(needed)}`}
                           </option>
-                        ))}
-                      </select>
+                          {candidates.map((person) => (
+                            <option key={person.id} value={person.id}>
+                              {`${person.firstName} ${person.lastName}`.trim() || person.email}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-zinc-400" />
+                      </span>
                     </label>
                   );
                 })}
               </div>
             )}
-            <div>
-              <button
-                type="button"
-                disabled={
-                  !detail || busy !== null || running.some((project) => !handovers[project.id])
-                }
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `Deactivate ${name}? They won't be able to sign in until reactivated.`
-                    )
-                  ) {
-                    return;
-                  }
-                  run("access", "deactivate", () =>
-                    running.length > 0
-                      ? deactivateWithHandover(
-                          account.id,
-                          running.map((project) => ({
-                            projectId: project.id,
-                            replacementId: handovers[project.id],
-                          }))
-                        )
-                      : setAccountsStatus([account.id], "inactive")
-                  );
-                }}
-                className={DANGER}
-              >
-                {busy === "deactivate"
-                  ? "Deactivating..."
-                  : running.length > 0
-                    ? "Hand Over & Deactivate"
-                    : "Deactivate"}
-              </button>
-            </div>
           </>
         ) : (
           <div>
@@ -553,6 +606,11 @@ export function AccountDetail({
         )}
         {note("access")}
       </section>
+      <ModalFooter>
+        <p className="mr-auto text-xs text-zinc-400">Changes are saved within each section.</p>
+        <button type="button" onClick={onClose} className={SECONDARY}>Cancel</button>
+        <button type="button" onClick={onClose} className={PRIMARY}>Save</button>
+      </ModalFooter>
     </div>
   );
 }

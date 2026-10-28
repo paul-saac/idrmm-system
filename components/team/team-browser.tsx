@@ -388,15 +388,9 @@ export function TeamBrowser({
   }
 
   return (
-    // The groups on the left; the members beside them — one above the
-    // other on a narrow screen. The members under their own heading, the
-    // Material record's kind, how many there are beside it; the groups'
-    // sidebar separated from the member content by a single divider.
-    <div className="grid flex-1 items-stretch lg:grid-cols-[17rem_minmax(0,1fr)]">
-      <GroupsPanel groups={memberGroups} members={members} />
-
-      <div className="flex min-w-0 flex-col gap-3 border-t border-zinc-200 p-6 sm:p-8 lg:border-t-0 lg:border-l">
-        <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
+    // The toolbar spans the page; Groups sits beside the table below it.
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-6 sm:p-8">
+        <div className="flex min-h-9 shrink-0 flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-2">
             <h2 className="text-base font-semibold text-zinc-900">All members</h2>
             <span className="text-xs text-zinc-400 tabular-nums">{members.length}</span>
@@ -459,19 +453,22 @@ export function TeamBrowser({
           </div>
         </div>
 
-        <section className="min-w-0 rounded-lg border border-zinc-200 bg-white">
+      <div className="grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,2fr)] items-stretch gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+        <GroupsPanel groups={memberGroups} members={members} />
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white">
           {/* The open tab underlined in black; the
               gray line under them all an inset shadow, so a narrow screen
               can still scroll the tabs sideways. */}
-          <div className="flex gap-6 overflow-x-auto px-6 pt-4 shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
+          <div role="tablist" aria-label="Team categories" className="flex shrink-0 gap-6 overflow-x-auto px-6 pt-4 shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
             {groups.map((group) => {
               const active = group.key === activeGroup.key;
               return (
                 <button
                   key={group.key}
+                  role="tab"
+                  aria-selected={active}
                   type="button"
                   onClick={() => setTab(group.key)}
-                  aria-pressed={active}
                   className={`flex shrink-0 cursor-pointer items-center gap-2 border-b-2 pb-3 text-sm font-medium whitespace-nowrap transition ${
                     active
                       ? "border-zinc-900 text-zinc-900"
@@ -488,12 +485,13 @@ export function TeamBrowser({
           </div>
 
           {deleteError && !panel && (
-            <p role="alert" className="border-b border-zinc-200 px-6 py-2 text-sm text-red-600">
+            <p role="alert" className="shrink-0 border-b border-zinc-200 px-6 py-2 text-sm text-red-600">
               {deleteError}
             </p>
           )}
 
           {total === 0 ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-6">
             <p className="py-12 text-center text-sm text-zinc-400">
               {filtering ? (
                 "No members match."
@@ -512,12 +510,12 @@ export function TeamBrowser({
                 </>
               )}
             </p>
+            </div>
           ) : (
             <>
-              {/* Keep the member list a consistent, comfortable size. The
-                  table scrolls inside this area when a category has more
-                  rows, while its header remains visible. */}
-              <div className="h-[40rem] overflow-auto">
+              {/* Fill the available height; scroll rows inside the table
+                  while keeping its tabs, column headers and footer visible. */}
+              <div className="min-h-0 flex-1 overflow-auto">
                 {/* Fixed widths, so the columns stay put from tab to tab. */}
                 <table className="w-full min-w-5xl table-fixed text-left text-[13px] text-zinc-600">
                   <colgroup>
@@ -602,7 +600,7 @@ export function TeamBrowser({
                           />
                           <td className={TD}>
                             <div className="flex items-center gap-3">
-                              <InitialsAvatar name={member.fullName} large neutral />
+                              <InitialsAvatar name={member.fullName} large />
                               {/* Its click is the row's (bubbles up). */}
                               <button
                                 type="button"
@@ -697,13 +695,14 @@ export function TeamBrowser({
                 </table>
               </div>
 
-              <div className="border-t border-zinc-200 px-6 py-3 text-xs text-zinc-500">
-                Showing <span className="font-semibold text-zinc-700">{total}</span> of{" "}
-                <span className="font-semibold text-zinc-700">{tabTotal}</span>{" "}
-                {tabTotal === 1 ? noun : nounPlural}
-              </div>
             </>
           )}
+
+          <div className="shrink-0 border-t border-zinc-200 bg-white px-6 py-3 text-xs text-zinc-500">
+            Showing <span className="font-semibold text-zinc-700 tabular-nums">{total}</span> of{" "}
+            <span className="font-semibold text-zinc-700 tabular-nums">{tabTotal}</span>{" "}
+            {tabTotal === 1 ? noun : nounPlural}
+          </div>
 
           <Modal
             open={panel !== null}

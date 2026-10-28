@@ -26,8 +26,8 @@ function quantity(value: number) {
 }
 
 function reportDate(value: string) {
-  return new Date(`${value}T00:00:00`).toLocaleDateString("en-PH", {
-    timeZone: "Asia/Manila", weekday: "long", year: "numeric", month: "long", day: "numeric",
+  return new Date(`${value}T00:00:00`).toLocaleDateString("en-US", {
+    timeZone: "Asia/Manila", year: "numeric", month: "short", day: "numeric",
   });
 }
 
@@ -70,13 +70,38 @@ export async function downloadDailyLogPdf(input: DailyLogPdfInput) {
     y += height;
   }
 
-  pdf.setFont("times", "bold"); pdf.setFontSize(18); pdf.setTextColor(30); pdf.text("IDR M&M", margin, y + 5);
-  pdf.setFont("helvetica", "bold"); pdf.setFontSize(14); pdf.text("DAILY PROGRESS LOG REPORT", margin + width, y + 5, { align: "right" });
-  y += 11; pdf.setDrawColor(35); pdf.setLineWidth(0.45); pdf.line(margin, y, margin + width, y); y += 6;
-  row("Project", input.projectName);
-  row("Task / Phase", input.workItemName);
-  row("Log date", reportDate(input.log.entryDate));
-  row("Prepared by", `${input.log.savedByName ?? "Unknown account"}${input.log.savedByRole ? ` | ${input.log.savedByRole}` : ""}`);
+  const preparedBy = `${input.log.savedByName ?? "Unknown account"}${input.log.savedByRole ? ` · ${input.log.savedByRole}` : ""}`;
+  const savedAt = new Date(input.log.createdAt).toLocaleString("en-US", {
+    timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
+
+  // Keep the exported report masthead consistent with the formal reports page:
+  // strong identity and title, compact metadata, then one full-width divider.
+  pdf.setFont("times", "bold"); pdf.setFontSize(18); pdf.setTextColor(24, 24, 27);
+  pdf.text("IDR M&M", margin, y + 5);
+  pdf.setFont("helvetica", "bold"); pdf.setFontSize(14);
+  pdf.text("DAILY PROGRESS LOG", margin + width, y + 5, { align: "right" });
+  pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(82, 82, 91);
+  pdf.text(reportDate(input.log.entryDate), margin + width, y + 11, { align: "right" });
+
+  y += 18;
+  const headerRows = [
+    ["Project", input.projectName],
+    ["Task / Phase", input.workItemName],
+    ["Prepared by", preparedBy],
+    ["Saved at", savedAt],
+  ] as const;
+  for (const [label, value] of headerRows) {
+    pdf.setFont("helvetica", "bold"); pdf.setFontSize(8); pdf.setTextColor(63, 63, 70);
+    pdf.text(label, margin + 2, y);
+    pdf.setFont("helvetica", "normal"); pdf.setTextColor(24, 24, 27);
+    pdf.text(safe(value), margin + 34, y);
+    y += 5;
+  }
+  pdf.setDrawColor(24, 24, 27); pdf.setLineWidth(0.35);
+  pdf.line(margin, y + 1, margin + width, y + 1);
+  y += 7;
 
   section("WORK PROGRESS AND COST SUMMARY");
   row("Quantity completed", `${quantity(input.log.quantityCompleted)}${input.unit ? ` ${input.unit}` : ""}`);

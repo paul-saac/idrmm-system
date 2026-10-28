@@ -1,4 +1,5 @@
 import type { ProjectStatus } from "@/lib/supabase/types";
+import type { ProjectLifecycle } from "./lifecycle";
 
 export const PROJECT_STATUSES: ProjectStatus[] = [
   "planning",
@@ -28,24 +29,13 @@ export function projectStatusBadgeClasses(status: ProjectStatus): string {
   }
 }
 
-/**
- * What projects.status should become once actual logged progress
- * changes — called after any event that can move the needle (approving
- * a daily log, resolving a flag on a work_item entry). A project can't
- * sit at "planning" once real work is logged, and it's "completed" the
- * moment every task's quantity is fully accounted for, not just
- * whenever someone remembers to flip the Edit Project dropdown.
- *
- * Deliberately doesn't force 0% back to "planning" — an admin may have
- * a legitimate reason to mark a project "ongoing" before any Work Log
- * quantity is in yet (site mobilization, prep work), and this only
- * reacts to progress actually changing, not to every read.
- */
+/** Actual work starts a project; an administrator's actual end date
+ * confirms completion only while every leaf item is fully logged. */
 export function deriveProjectStatusFromProgress(
-  currentStatus: ProjectStatus,
-  progressPercent: number
+  lifecycle: ProjectLifecycle,
+  actualEndDate: string | null,
 ): ProjectStatus {
-  if (progressPercent >= 100) return "completed";
-  if (progressPercent > 0) return "ongoing";
-  return currentStatus;
+  if (!lifecycle.hasRecordedWork) return "planning";
+  if (lifecycle.allItemsComplete && actualEndDate) return "completed";
+  return "ongoing";
 }

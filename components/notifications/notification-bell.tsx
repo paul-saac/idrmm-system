@@ -111,13 +111,14 @@ export function NotificationBell() {
           <h2 className="text-lg font-semibold tracking-tight text-zinc-900">Notifications</h2>
 
           <div className="-mx-6 mt-5 flex items-center justify-between gap-3 border-b border-zinc-200 px-6 pb-5">
-            <div className="flex rounded bg-zinc-100 p-1">
+            <div role="tablist" aria-label="Notification status" className="flex rounded bg-zinc-100 p-1">
               {(["all", "unread"] as const).map((value) => (
                 <button
                   key={value}
+                  role="tab"
+                  aria-selected={tab === value}
                   type="button"
                   onClick={() => setTab(value)}
-                  aria-pressed={tab === value}
                   className={`cursor-pointer rounded-sm px-5 py-1.5 text-xs transition ${
                     tab === value
                       ? "bg-white font-medium text-zinc-900 shadow-sm"
@@ -151,22 +152,24 @@ export function NotificationBell() {
             </div>
           </div>
 
-          <NotificationList
-            items={visible}
-            onOpen={openNotification}
-            onDismiss={dismiss}
-            onMarkRead={(id) => void markRead(id)}
-            onMarkUnread={(id) => void markUnread(id)}
-            emptyText={
-              tab === "unread"
-                ? "No unread notifications."
-                : range
-                  ? "Nothing in this period."
-                  : "No notifications."
-            }
-            textSize="small"
-            className="mt-5 max-h-160 overflow-y-auto pr-1"
-          />
+          <div key={`${tab}-${range ?? "any"}`} className="tab-content-enter">
+            <NotificationList
+              items={visible}
+              onOpen={openNotification}
+              onDismiss={dismiss}
+              onMarkRead={(id) => void markRead(id)}
+              onMarkUnread={(id) => void markUnread(id)}
+              emptyText={
+                tab === "unread"
+                  ? "No unread notifications."
+                  : range
+                    ? "Nothing in this period."
+                    : "No notifications."
+              }
+              textSize="small"
+              className="mt-5 max-h-160 overflow-y-auto pr-1"
+            />
+          </div>
 
           <div className="-mx-6 mt-5 flex items-center justify-between border-t border-zinc-200 px-6 pt-4 text-xs">
             <Link

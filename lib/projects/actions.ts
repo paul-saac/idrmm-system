@@ -7,6 +7,8 @@ import { getSessionProfile } from "@/lib/auth/session";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { seedDefaultSurveyQuestions } from "@/lib/daily-logs/actions";
 import { isAdminRole } from "@/lib/auth/roles";
+import { getCostEstimate } from "@/lib/cost-estimate/data";
+import { deriveProjectStatusFromProgress } from "./status";
 
 export type ProjectActionState = {
   error?: string;
@@ -225,11 +227,30 @@ export async function updateProject(
     return { error: clash };
   }
 
-  // status is deliberately not editable here — it's kept in sync with
-  // actual logged progress by lib/projects/status.ts's
-  // deriveProjectStatusFromProgress, called from lib/daily-logs/
-  // actions.ts whenever progress can change (approving a daily log,
-  // resolving a work_item flag).
+  const confirmed = formData.get("confirmCompletion") === "on";
+  const actualEndDate = confirmed ? parseOptionalDate(formData.get("actualEndDate")) : null;
+  let lifecycle;
+  try {
+    lifecycle = (await getCostEstimate(projectId, true)).lifecycle;
+  } catch {
+    return { error: "Could not verify saved progress. Please try again." };
+  }
+  if (confirmed) {
+    if (!lifecycle.allItemsComplete) {
+      return { error: "Every task and standalone phase must be 100% complete from saved logs before confirming completion." };
+    }
+    const parsed = actualEndDate ? new Date(`${actualEndDate}T00:00:00Z`) : null;
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    if (!actualEndDate || !/^\d{4}-\d{2}-\d{2}$/.test(actualEndDate) || !parsed ||
+      Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== actualEndDate || actualEndDate > today) {
+      return { error: "Enter a valid actual end date that is today or earlier." };
+    }
+    const startDate = parseOptionalDate(formData.get("startDate"));
+    if (startDate && actualEndDate < startDate) {
+      return { error: "Actual end date cannot be before the project start date." };
+    }
+  }
+  const status = deriveProjectStatusFromProgress(lifecycle, actualEndDate);
   const { error } = await supabase
     .from("projects")
     .update({
@@ -237,7 +258,8 @@ export async function updateProject(
       location: location || null,
       start_date: parseOptionalDate(formData.get("startDate")),
       target_end_date: parseOptionalDate(formData.get("targetEndDate")),
-      actual_end_date: parseOptionalDate(formData.get("actualEndDate")),
+      actual_end_date: actualEndDate,
+      status,
       allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
       project_manager_id: projectManagerId,
       foreman_id: foremanId,

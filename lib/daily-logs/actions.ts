@@ -16,8 +16,6 @@ import { deriveEquipmentRequestStatus } from "@/lib/equipment-requests/status";
 import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
 import { nextMaterialCode } from "@/lib/materials/codes";
 import { listFlaggedEntryIds, type EntryType } from "@/lib/daily-logs/data";
-import { getCostEstimate } from "@/lib/cost-estimate/data";
-import { getProjectProgress } from "@/lib/progress/data";
 import { isAdminRole } from "@/lib/auth/roles";
 
 export type DailyLogActionState = {
@@ -1348,9 +1346,7 @@ async function creditEquipmentAcquisitionIds(
  * Estimate edit too, with no daily-log event at all).
  */
 async function syncProjectStatus(projectId: number) {
-  const costEstimate = await getCostEstimate(projectId);
-  const progress = await getProjectProgress(projectId, costEstimate.categories);
-  await syncProjectStatusFromProgress(projectId, progress.overallPercent);
+  await syncProjectStatusFromProgress(projectId);
 }
 
 export async function updateDailyLogStatus(

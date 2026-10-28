@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { CalendarDays, Plus, Settings2 } from "lucide-react";
+import { Plus, Settings2 } from "lucide-react";
+import { DatePicker } from "@/components/ui/date-picker";
 import { DailyLogsTable } from "@/components/projects/daily-logs/daily-logs-table";
 import { AddDailyLogModal } from "@/components/projects/daily-logs/add-daily-log-modal";
 import { SurveyQuestionsModal } from "@/components/projects/daily-logs/survey-questions-modal";
@@ -86,16 +87,12 @@ export function DailyLogsView({
         ))}
       </select>
 
-      <label className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50">
-        <CalendarDays className="size-4" />
-        {dateFilter || "Filter By Date"}
-        <input
-          type="date"
-          value={dateFilter}
-          onChange={(e) => setDateFilter(e.target.value)}
-          className="absolute size-0 opacity-0"
-        />
-      </label>
+      <DatePicker
+        ariaLabel="Filter logs by date"
+        value={dateFilter}
+        onChange={setDateFilter}
+        className="rounded border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-50"
+      />
       {dateFilter && (
         <button
           type="button"

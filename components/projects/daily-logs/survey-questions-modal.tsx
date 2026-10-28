@@ -197,8 +197,8 @@ function QuestionRow({
             onChange={(e) => onChange({ isRequired: e.target.checked })}
             className="peer sr-only"
           />
-          <span className="absolute inset-0 cursor-pointer rounded-full bg-zinc-200 transition peer-checked:bg-zinc-900" />
-          <span className="absolute left-0.5 size-4 rounded-full bg-white transition peer-checked:translate-x-4" />
+          <span className="absolute inset-0 cursor-pointer rounded-full bg-zinc-200 transition-colors duration-150 ease-out peer-checked:bg-zinc-900" />
+          <span className="absolute left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform duration-150 ease-out peer-active:scale-90 peer-checked:translate-x-4" />
         </span>
       </label>
 

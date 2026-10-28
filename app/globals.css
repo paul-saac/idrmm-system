@@ -212,11 +212,15 @@ input[type="date"][data-empty="true"] {
 .gantt-task-react-root::-webkit-scrollbar-thumb,
 .gantt-task-react-root *::-webkit-scrollbar-thumb {
   background: #d4d4d8;
+  border: 0;
+  background-clip: border-box;
   border-radius: 4px;
 }
 .gantt-task-react-root::-webkit-scrollbar-thumb:hover,
 .gantt-task-react-root *::-webkit-scrollbar-thumb:hover {
   background: #a1a1aa;
+  border: 0;
+  background-clip: border-box;
 }
 .gantt-task-react-root::-webkit-scrollbar-track,
 .gantt-task-react-root *::-webkit-scrollbar-track {
@@ -426,6 +430,10 @@ input[type="date"][data-empty="true"] {
 .gantt-task-react-root input[type="date"][data-cell-active="true"]::-webkit-calendar-picker-indicator {
   opacity: 1;
 }
+.gantt-task-react-root .gantt-date-input input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  pointer-events: none;
+}
 .gantt-task-react-root input[type="date"][data-cell-active="true"],
 .gantt-task-react-root select[data-cell-active="true"] {
   background-color: #fff;
@@ -442,4 +450,359 @@ input[type="date"][data-empty="true"] {
  */
 .gantt-task-react-root input[type="date"][readonly]::-webkit-calendar-picker-indicator {
   display: none;
+}
+
+/*
+ * Animated rainbow border outline for AI-driven modals (e.g. Import with AI).
+ * Uses CSS @property with a rotating conic-gradient along the border-box
+ * to create a seamless, continuous rainbow flow around the modal perimeter,
+ * accompanied by a subtle ambient colored glow.
+ */
+@property --rainbow-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes ai-rainbow-spin {
+  0% {
+    --rainbow-angle: 0deg;
+  }
+  100% {
+    --rainbow-angle: 360deg;
+  }
+}
+
+.ai-rainbow-modal {
+  border-radius: var(--radius-lg, 2px) !important;
+  border: 2px solid transparent !important;
+  background:
+    linear-gradient(var(--color-zinc-900), var(--color-zinc-900)) padding-box,
+    conic-gradient(
+      from var(--rainbow-angle, 0deg),
+      #ff4582 0%,
+      #ff7a30 12%,
+      #ffd000 24%,
+      #22c55e 36%,
+      #06b6d4 48%,
+      #3b82f6 60%,
+      #8b5cf6 72%,
+      #d946ef 84%,
+      #ff4582 100%
+    ) border-box !important;
+  animation: ai-rainbow-spin 4.5s linear infinite;
+  box-shadow:
+    0 0 20px -2px rgba(244, 63, 94, 0.25),
+    0 0 35px -4px rgba(6, 182, 212, 0.22),
+    0 25px 50px -12px rgba(0, 0, 0, 0.55) !important;
+  overflow: hidden !important;
+}
+
+/*
+ * Animated rainbow border outline for AI action buttons (e.g. Import with AI).
+ * Uses the rotating conic-gradient along the border-box with the warm system black
+ * (#3B3939) in padding-box and smooth hover state.
+ */
+.ai-rainbow-button {
+  border-radius: var(--radius, 2px) !important;
+  border: 1.5px solid transparent !important;
+  background:
+    linear-gradient(var(--color-zinc-900), var(--color-zinc-900)) padding-box,
+    conic-gradient(
+      from var(--rainbow-angle, 0deg),
+      #ff4582 0%,
+      #ff7a30 12%,
+      #ffd000 24%,
+      #22c55e 36%,
+      #06b6d4 48%,
+      #3b82f6 60%,
+      #8b5cf6 72%,
+      #d946ef 84%,
+      #ff4582 100%
+    ) border-box !important;
+  animation: ai-rainbow-spin 4.5s linear infinite;
+  color: #ffffff !important;
+  box-shadow: none !important;
+  transition: filter 0.2s ease !important;
+}
+
+.ai-rainbow-button:hover {
+  background:
+    linear-gradient(var(--color-zinc-800), var(--color-zinc-800)) padding-box,
+    conic-gradient(
+      from var(--rainbow-angle, 0deg),
+      #ff4582 0%,
+      #ff7a30 12%,
+      #ffd000 24%,
+      #22c55e 36%,
+      #06b6d4 48%,
+      #3b82f6 60%,
+      #8b5cf6 72%,
+      #d946ef 84%,
+      #ff4582 100%
+    ) border-box !important;
+  box-shadow: none !important;
+}
+
+/* Preserve Today's Log's expanded-layout width when its 28rem summary is hidden. */
+@media (min-width: 64rem) {
+  dialog:has([data-progress-summary-collapsed]) {
+    width: min(100vw, var(--container-6xl, 72rem));
+    transition: width 120ms ease-out;
+  }
+  [data-progress-summary-collapsed] {
+    grid-template-columns: calc(min(100vw, var(--container-6xl, 72rem)) - 28rem) 28rem;
+  }
+  [data-progress-summary-collapsed] > .progress-summary {
+    transition: transform 120ms ease-out, opacity 120ms ease-out, visibility 120ms;
+    transform: translateX(0);
+    opacity: 1;
+    visibility: visible;
+  }
+  [data-progress-summary-collapsed="true"] > .progress-summary {
+    transform: translateX(100%);
+    opacity: 0;
+    visibility: hidden;
+  }
+  dialog:has([data-progress-summary-collapsed="true"]) {
+    width: calc(min(100vw, var(--container-6xl, 72rem)) - 28rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog:has([data-progress-summary-collapsed]),
+  [data-progress-summary-collapsed] > .progress-summary {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-rainbow-modal,
+  .ai-rainbow-button {
+    animation: none;
+  }
+}
+
+@keyframes route-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(45%);
+  }
+  100% {
+    transform: translateX(210%);
+  }
+}
+
+/* Shared modal motion. Side panels preserve their right-edge relationship;
+   centered dialogs use a quieter fade/scale so they remain spatially stable. */
+@keyframes modal-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes modal-centered-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes modal-backdrop-enter {
+  from { background-color: rgb(24 24 27 / 0%); }
+  to { background-color: rgb(24 24 27 / 50%); }
+}
+
+@keyframes tab-content-enter {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes dropdown-content-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.dropdown-content-enter {
+  animation: dropdown-content-enter 110ms ease-out both;
+}
+
+.tab-content-enter {
+  animation: tab-content-enter 190ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+[role="tab"] {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+[role="tab"]:active {
+  transform: scale(0.98);
+}
+
+dialog[data-modal-variant="panel"][open] {
+  animation: modal-panel-enter 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+dialog[data-modal-variant="centered"][open] {
+  animation: modal-centered-enter 160ms ease-out both;
+}
+
+dialog[data-modal-variant][open]::backdrop {
+  animation: modal-backdrop-enter 160ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog[data-modal-variant][open],
+  dialog[data-modal-variant][open]::backdrop,
+  .tab-content-enter {
+    animation-duration: 1ms;
+  }
+
+  .dropdown-content-enter {
+    animation-duration: 1ms;
+  }
+
+  [role="tab"] {
+    transition-duration: 1ms;
+  }
+}
+
+.route-progress-indicator {
+  width: 45%;
+  animation: route-progress 1.1s ease-in-out infinite;
+}
+
+select[data-calendar-dropdown] {
+  appearance: none;
+  scrollbar-width: none;
+}
+
+select[data-calendar-dropdown]::picker-icon {
+  display: none;
+}
+
+select[data-calendar-dropdown]::picker(select) {
+  scrollbar-width: none;
+}
+
+select[data-calendar-dropdown]::-webkit-scrollbar {
+  display: none;
+}
+
+/* Modern browsers can expose the native select picker for styling while
+   preserving its keyboard controls, validation, and FormData behavior. Older
+   browsers ignore this block and retain their normal native select UI. */
+@supports (appearance: base-select) {
+  select:not([multiple]),
+  select:not([multiple])::picker(select) {
+    appearance: base-select;
+  }
+
+  select:not([multiple]) {
+    transition: border-color 120ms ease-out, box-shadow 120ms ease-out,
+      background-color 120ms ease-out;
+  }
+
+  select:not([multiple])::picker(select) {
+    margin-block-start: 4px;
+    max-height: min(20rem, 50dvh);
+    overflow-y: auto;
+    border: 1px solid var(--color-zinc-200);
+    border-radius: var(--radius-md, 2px);
+    background: white;
+    padding: 0;
+    color: var(--color-zinc-800);
+    box-shadow: 0 10px 25px rgb(24 24 27 / 12%);
+    opacity: 0;
+    transform: translateY(-4px);
+    transition:
+      opacity 110ms ease-out,
+      transform 110ms ease-out,
+      display 110ms allow-discrete,
+      overlay 110ms allow-discrete;
+  }
+
+  select:not([multiple]):open::picker(select) {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  @starting-style {
+    select:not([multiple]):open::picker(select) {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+
+  select:not([multiple]) option {
+    min-height: 2rem;
+    border-radius: 0;
+    padding: 7px 10px;
+    background: white;
+    color: var(--color-zinc-700);
+    transition: background-color 80ms ease-out, color 80ms ease-out;
+  }
+
+  select:not([multiple]) option:hover,
+  select:not([multiple]) option:focus-visible {
+    background: var(--color-zinc-100);
+    color: var(--color-zinc-900);
+  }
+
+  select:not([multiple]) option:checked {
+    background: var(--color-zinc-100);
+    color: var(--color-zinc-900);
+    font-weight: 500;
+  }
+
+  select:not([multiple]) option:disabled {
+    color: var(--color-zinc-400);
+  }
+
+  select:not([multiple]) option::checkmark {
+    display: none;
+  }
+
+  /* These selects already render the app's ChevronDown beside them. */
+  select.appearance-none::picker-icon {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-progress-indicator {
+    width: 100%;
+    animation: none;
+    transform: none;
+  }
+
+  select:not([multiple])::picker(select),
+  select:not([multiple]) option {
+    transition-duration: 1ms;
+  }
 }

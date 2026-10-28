@@ -71,8 +71,8 @@ const VARIANT_CLASS = {
   // Edge to edge on the top, right and bottom — only its left side,
   // facing the page, gets a border.
   panel:
-    "fixed top-0 right-0 left-auto m-0 h-dvh max-h-none rounded-none border-l border-zinc-200",
-  centered: "fixed inset-0 m-auto h-fit max-h-[85dvh] rounded-lg border border-zinc-200",
+    "fixed top-0 right-0 left-auto m-0 h-dvh max-h-none rounded-none border-l border-zinc-200 bg-white",
+  centered: "fixed inset-0 m-auto h-fit max-h-[85dvh]",
 } as const;
 
 export function Modal({
@@ -83,10 +83,12 @@ export function Modal({
   description,
   icon,
   bareIcon = false,
+  hideCloseButton = false,
   size = "default",
   variant = "panel",
   menuItems,
   bare = false,
+  aiBorder = false,
   children,
 }: {
   open: boolean;
@@ -103,6 +105,8 @@ export function Modal({
   icon?: React.ReactNode;
   /** Removes the icon tile while retaining the icon and its alignment. */
   bareIcon?: boolean;
+  /** Allows a modal with its own header control to replace the X button. */
+  hideCloseButton?: boolean;
   size?: keyof typeof SIZE_CLASS;
   /** See VARIANT_CLASS's own doc comment above. Defaults to "panel" so
    * every existing call site keeps its current look unchanged. */
@@ -113,6 +117,8 @@ export function Modal({
    * out in columns that pad and scroll themselves (edge-to-edge dividers
    * between them), within a panel's full height. */
   bare?: boolean;
+  /** When true, renders an animated rainbow border around the modal indicating AI workflows */
+  aiBorder?: boolean;
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -164,6 +170,7 @@ export function Modal({
   return (
     <dialog
       ref={dialogRef}
+      data-modal-variant={variant}
       // React bubbles a <dialog>'s close/cancel up the component tree
       // (it only keeps scroll events to their target), so a modal
       // stacked on top of this one closing would otherwise close this
@@ -217,108 +224,172 @@ export function Modal({
       // than the viewport) to center itself, sized to fit its own
       // content up to max-h-[85dvh]. rounded-lg is this app's own 5px
       // token (see globals.css), not Tailwind's default 8px.
-      className={`${VARIANT_CLASS[variant]} w-full ${SIZE_CLASS[size]} overflow-hidden bg-white p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col`}
+      className={`${VARIANT_CLASS[variant]} w-full ${SIZE_CLASS[size]} overflow-hidden p-0 backdrop:bg-zinc-900/50 open:flex open:flex-col ${
+        variant === "centered"
+          ? aiBorder
+            ? "rounded-lg ai-rainbow-modal"
+            : "rounded-lg border border-zinc-200 bg-white"
+          : aiBorder
+            ? "ai-rainbow-modal"
+            : "bg-white"
+      }`}
     >
-      <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4">
-        <div className="flex items-center gap-1">
-          {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              aria-label="Back"
-              className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
-            >
-              <ChevronLeft className="size-5" />
-            </button>
-          )}
-          {icon && (
-            <span
-              className={`mr-3 flex size-10 shrink-0 items-center justify-center text-zinc-700 ${
-                bareIcon ? "" : "rounded-md bg-zinc-100"
-              }`}
-            >
-              {icon}
-            </span>
-          )}
-          <div className="min-w-0">
-            <div className="flex items-center">
-              <h2 className="text-lg font-semibold text-zinc-900">{title}</h2>
-              <div ref={setHeaderSlot} className="ml-2 flex items-center empty:hidden" />
-            </div>
-            {description && <p className="mt-0.5 whitespace-pre-line text-sm text-zinc-500">{description}</p>}
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
-          <div ref={setHeaderActionsSlot} className="flex items-center empty:hidden" />
-          {menuItems && menuItems.length > 0 && (
-            <>
-              <div ref={menuRef} className="relative">
-                <button
-                  type="button"
-                  onClick={() => setMenuOpen((isOpen) => !isOpen)}
-                  aria-label="More actions"
-                  aria-haspopup="menu"
-                  aria-expanded={menuOpen}
-                  className={`cursor-pointer rounded p-1 transition hover:bg-zinc-100 hover:text-zinc-600 ${
-                    menuOpen ? "bg-zinc-100 text-zinc-600" : "text-zinc-400"
+      <div
+        className={`flex h-full w-full min-h-0 flex-1 flex-col overflow-hidden ${
+          aiBorder
+            ? `${variant === "centered" ? "rounded-lg" : "rounded-none"} bg-zinc-900 text-zinc-100`
+            : ""
+        }`}
+      >
+        <div
+          className={`flex items-center justify-between px-6 py-4 ${
+            aiBorder
+              ? "border-b border-white/10 bg-zinc-900"
+              : "border-b border-zinc-200"
+          }`}
+        >
+          <div className="flex items-center gap-1">
+            {onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                aria-label="Back"
+                className={`cursor-pointer rounded p-1 transition ${
+                  aiBorder
+                    ? "text-zinc-400 hover:bg-white/10 hover:text-white"
+                    : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+                }`}
+              >
+                <ChevronLeft className="size-5" />
+              </button>
+            )}
+            {icon && (
+              <span
+                className={`flex shrink-0 items-center justify-center ${
+                  bareIcon
+                    ? `mr-2.5 ${aiBorder ? "text-emerald-300" : "text-zinc-700"}`
+                    : `mr-3 size-10 rounded-md ${
+                        aiBorder
+                          ? "border border-white/10 bg-gradient-to-br from-pink-500/15 via-purple-500/15 to-emerald-500/15 text-emerald-300 shadow-inner"
+                          : "bg-zinc-100 text-zinc-700"
+                      }`
+                }`}
+              >
+                {icon}
+              </span>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center">
+                <h2
+                  className={`text-lg font-semibold ${
+                    aiBorder ? "text-white" : "text-zinc-900"
                   }`}
                 >
-                  <MoreVertical className="size-5" />
-                </button>
-                {menuOpen && (
-                  <div
-                    role="menu"
-                    className="absolute top-full right-0 z-20 mt-1 min-w-44 overflow-hidden rounded border border-zinc-200 bg-white py-1 shadow-lg"
-                  >
-                    {menuItems.map((item) => (
-                      <button
-                        key={item.label}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          item.onSelect();
-                        }}
-                        className={`block w-full cursor-pointer px-3 py-2 text-left text-sm transition ${
-                          item.destructive
-                            ? "text-red-600 hover:bg-red-50"
-                            : "text-zinc-700 hover:bg-zinc-50"
-                        }`}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                  {title}
+                </h2>
+                <div ref={setHeaderSlot} className="ml-2 flex items-center empty:hidden" />
               </div>
-              <div className="mx-1 h-5 w-px bg-zinc-200" />
-            </>
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
-          >
-            <X className="size-5" />
-          </button>
+              {description && (
+                <p
+                  className={`mt-0.5 whitespace-pre-line text-sm ${
+                    aiBorder ? "text-zinc-400" : "text-zinc-500"
+                  }`}
+                >
+                  {description}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <div ref={setHeaderActionsSlot} className="flex items-center empty:hidden" />
+            {menuItems && menuItems.length > 0 && (
+              <>
+                <div ref={menuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setMenuOpen((isOpen) => !isOpen)}
+                    aria-label="More actions"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    className={`cursor-pointer rounded p-1 transition ${
+                      aiBorder
+                        ? menuOpen
+                          ? "bg-white/10 text-white"
+                          : "text-zinc-400 hover:bg-white/10 hover:text-white"
+                        : menuOpen
+                          ? "bg-zinc-100 text-zinc-600"
+                          : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+                    }`}
+                  >
+                    <MoreVertical className="size-5" />
+                  </button>
+                  {menuOpen && (
+                    <div
+                      role="menu"
+                      className={`absolute top-full right-0 z-20 mt-1 min-w-44 overflow-hidden rounded py-1 shadow-lg ${
+                        aiBorder
+                          ? "border border-white/15 bg-zinc-800 text-zinc-200"
+                          : "border border-zinc-200 bg-white"
+                      }`}
+                    >
+                      {menuItems.map((item) => (
+                        <button
+                          key={item.label}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            item.onSelect();
+                          }}
+                          className={`block w-full cursor-pointer px-3 py-2 text-left text-sm transition ${
+                            item.destructive
+                              ? "text-red-400 hover:bg-red-500/10"
+                              : aiBorder
+                                ? "text-zinc-200 hover:bg-white/10 hover:text-white"
+                                : "text-zinc-700 hover:bg-zinc-50"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className={`mx-1 h-5 w-px ${aiBorder ? "bg-white/10" : "bg-zinc-200"}`} />
+              </>
+            )}
+            {!hideCloseButton && <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className={`cursor-pointer rounded p-1 transition ${
+                aiBorder
+                  ? "text-zinc-400 hover:bg-white/10 hover:text-white"
+                  : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+              }`}
+            >
+              <X className="size-5" />
+            </button>}
+          </div>
         </div>
+        {/* Grows to fit its content; only scrolls once the dialog would
+            otherwise run off the top/bottom of the viewport. */}
+        <div className={bare ? "min-h-0 flex-1" : "min-h-0 flex-1 overflow-y-auto px-6 py-5"}>
+          <HeaderSlotContext.Provider value={headerSlot}>
+            <HeaderActionsSlotContext.Provider value={headerActionsSlot}>
+              <FooterSlotContext.Provider value={footerSlot}>
+                {hasOpened && children}
+              </FooterSlotContext.Provider>
+            </HeaderActionsSlotContext.Provider>
+          </HeaderSlotContext.Provider>
+        </div>
+        <div
+          ref={setFooterSlot}
+          className={`flex shrink-0 items-center justify-end gap-3 px-6 py-4 empty:hidden ${
+            aiBorder ? "border-t border-white/10 bg-zinc-900" : "border-t border-zinc-200"
+          }`}
+        />
       </div>
-      {/* Grows to fit its content; only scrolls once the dialog would
-          otherwise run off the top/bottom of the viewport. */}
-      <div className={bare ? "min-h-0 flex-1" : "min-h-0 flex-1 overflow-y-auto px-6 py-5"}>
-        <HeaderSlotContext.Provider value={headerSlot}>
-          <HeaderActionsSlotContext.Provider value={headerActionsSlot}>
-            <FooterSlotContext.Provider value={footerSlot}>
-              {hasOpened && children}
-            </FooterSlotContext.Provider>
-          </HeaderActionsSlotContext.Provider>
-        </HeaderSlotContext.Provider>
-      </div>
-      <div
-        ref={setFooterSlot}
-        className="flex shrink-0 items-center justify-end gap-3 border-t border-zinc-200 px-6 py-4 empty:hidden"
-      />
     </dialog>
   );
 }

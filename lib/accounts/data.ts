@@ -22,12 +22,16 @@ export type AccountRow = {
   assignedProjects: AssignedProject[];
   /** Null before their first sign-in (or before 0066 has run). */
   lastSignInAt: string | null;
+  /** Projects and recent activity loaded with the table so the detail
+   * panel does not open with an empty/loading delay. */
+  detailPreview: Pick<AccountDetail, "projects" | "activity">;
 };
 
 /** One project someone runs or ran, for their account's detail window. */
 export type AccountProject = {
   id: number;
   name: string;
+  location: string | null;
   status: "planning" | "ongoing" | "completed";
   as: "Project Manager" | "Foreman";
   startDate: string | null;
@@ -99,6 +103,131 @@ async function mapAssignedProjects(
   return byAccount;
 }
 
+/** Loads the account-detail sections visible at first paint in bulk. The
+ * slower, privileged change-log/history checks remain in getAccountDetail. */
+async function accountDetailPreviews(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  accountIds: string[]
+) {
+  const previews = new Map<string, Pick<AccountDetail, "projects" | "activity">>(
+    accountIds.map((id) => [id, { projects: [], activity: [] }])
+  );
+  if (accountIds.length === 0) return previews;
+
+  const [projectRows, taskEntries, categoryEntries, dailyLogs, materialRequests] =
+    await Promise.all([
+      supabase
+        .from("projects")
+        .select("id, project_name, location, status, start_date, target_end_date, actual_end_date, project_manager_id, foreman_id"),
+      supabase
+        .from("task_progress_entries")
+        .select("task_id, recorded_by, created_at")
+        .in("recorded_by", accountIds)
+        .order("created_at", { ascending: false })
+        .limit(250),
+      supabase
+        .from("category_progress_entries")
+        .select("category_id, recorded_by, created_at")
+        .in("recorded_by", accountIds)
+        .order("created_at", { ascending: false })
+        .limit(250),
+      supabase
+        .from("daily_logs")
+        .select("project_id, log_date, submitted_by, created_at")
+        .in("submitted_by", accountIds)
+        .order("created_at", { ascending: false })
+        .limit(250),
+      supabase
+        .from("material_requests")
+        .select("project_id, mr_no, requested_by, created_at")
+        .in("requested_by", accountIds)
+        .order("created_at", { ascending: false })
+        .limit(250),
+    ]);
+
+  const projectName = new Map((projectRows.data ?? []).map((row) => [row.id, row.project_name]));
+  for (const row of projectRows.data ?? []) {
+    for (const [accountId, assignment] of [
+      [row.project_manager_id, "Project Manager"],
+      [row.foreman_id, "Foreman"],
+    ] as const) {
+      const preview = previews.get(accountId);
+      if (!preview) continue;
+      preview.projects.push({
+        id: row.id,
+        name: row.project_name,
+        location: row.location,
+        status: row.status,
+        as: assignment,
+        startDate: row.start_date,
+        endDate: row.actual_end_date ?? row.target_end_date,
+      });
+    }
+  }
+  for (const preview of previews.values()) {
+    preview.projects.sort(
+      (a, b) =>
+        Number(a.status === "completed") - Number(b.status === "completed") ||
+        (b.startDate ?? "").localeCompare(a.startDate ?? "")
+    );
+  }
+
+  const taskIds = [...new Set((taskEntries.data ?? []).map((entry) => entry.task_id))];
+  const categoryIds = [...new Set((categoryEntries.data ?? []).map((entry) => entry.category_id))];
+  const [tasks, categories] = await Promise.all([
+    taskIds.length
+      ? supabase.from("estimate_tasks").select("id, task_name, project_id").in("id", taskIds)
+      : Promise.resolve({ data: [] as { id: number; task_name: string; project_id: number }[] }),
+    categoryIds.length
+      ? supabase.from("estimate_categories").select("id, category_name, project_id").in("id", categoryIds)
+      : Promise.resolve({ data: [] as { id: number; category_name: string; project_id: number }[] }),
+  ]);
+  const taskById = new Map((tasks.data ?? []).map((row) => [row.id, row]));
+  const categoryById = new Map((categories.data ?? []).map((row) => [row.id, row]));
+
+  for (const entry of taskEntries.data ?? []) {
+    if (!entry.recorded_by) continue;
+    const task = taskById.get(entry.task_id);
+    previews.get(entry.recorded_by)?.activity.push({
+      kind: "progress",
+      label: `Updated progress on ${task?.task_name ?? "a task"}`,
+      projectName: task ? (projectName.get(task.project_id) ?? null) : null,
+      at: entry.created_at,
+    });
+  }
+  for (const entry of categoryEntries.data ?? []) {
+    if (!entry.recorded_by) continue;
+    const category = categoryById.get(entry.category_id);
+    previews.get(entry.recorded_by)?.activity.push({
+      kind: "progress",
+      label: `Updated progress on ${category?.category_name ?? "a phase"}`,
+      projectName: category ? (projectName.get(category.project_id) ?? null) : null,
+      at: entry.created_at,
+    });
+  }
+  for (const log of dailyLogs.data ?? []) {
+    previews.get(log.submitted_by)?.activity.push({
+      kind: "daily_log",
+      label: `Submitted the daily log for ${log.log_date}`,
+      projectName: projectName.get(log.project_id) ?? null,
+      at: log.created_at,
+    });
+  }
+  for (const request of materialRequests.data ?? []) {
+    previews.get(request.requested_by)?.activity.push({
+      kind: "material_request",
+      label: `Requested materials (${request.mr_no})`,
+      projectName: projectName.get(request.project_id) ?? null,
+      at: request.created_at,
+    });
+  }
+  for (const preview of previews.values()) {
+    preview.activity.sort((a, b) => b.at.localeCompare(a.at));
+    preview.activity.splice(12);
+  }
+  return previews;
+}
+
 /**
  * Lists profiles for the given roles. Relies on the "Admins can view all
  * profiles" RLS policy — only callable with an authenticated admin/super
@@ -117,9 +246,11 @@ export async function listAccountsByRole(
 
   if (error || !data) return [];
 
-  const [assignedByAccount, signIns] = await Promise.all([
+  const accountIds = data.map((row) => row.id);
+  const [assignedByAccount, signIns, previews] = await Promise.all([
     mapAssignedProjects(supabase),
     lastSignIns(supabase),
+    accountDetailPreviews(supabase, accountIds),
   ]);
 
   return data.map((row) => ({
@@ -133,5 +264,6 @@ export async function listAccountsByRole(
     createdAt: row.created_at,
     assignedProjects: assignedByAccount.get(row.id) ?? [],
     lastSignInAt: signIns.get(row.id) ?? null,
+    detailPreview: previews.get(row.id) ?? { projects: [], activity: [] },
   }));
 }

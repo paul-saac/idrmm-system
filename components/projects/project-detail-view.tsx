@@ -2,13 +2,14 @@
 import { SheetsSection } from "@/components/projects/sheets/sheets-section";
 import type { listSheets } from "@/lib/sheets/actions";
 
-import { useActionState, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Trash2, LayoutGrid, CircleDollarSign, CalendarDays, PiggyBank, ChevronRight, Wallet } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import { HeaderActions } from "@/components/auth/header-actions";
 import { usePortal } from "@/components/portal/portal-context";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
@@ -160,10 +161,12 @@ function SubTabsRow<T extends string>({
 }) {
   return (
     <div className="mt-4 mb-4 flex flex-wrap items-start justify-between gap-3">
-      <div className="flex items-center gap-2">
+      <div role="tablist" className="flex items-center gap-2">
         {tabs.map((tab) => (
           <button
             key={tab.value}
+            role="tab"
+            aria-selected={active === tab.value}
             type="button"
             onClick={() => onChange(tab.value)}
             className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${active === tab.value
@@ -378,8 +381,7 @@ export function ProjectDetailView({
   // Reading the initial tab/sub-tab from the URL lets a link *into* this
   // page (e.g. a Daily Log detail page's back button) land on the exact
   // tab it came from, instead of always resetting to Overview — this is
-  // otherwise a fully client-state tabbed view with no URL sync per tab
-  // click, so this is only ever read once, on mount.
+  // tab clicks also update this URL so reloads retain the selected workspace.
   const searchParams = useSearchParams();
   const incidentParam = searchParams.get("incident");
   const incidentId = incidentParam && Number.isSafeInteger(Number(incidentParam)) && Number(incidentParam) > 0 ? Number(incidentParam) : null;
@@ -403,6 +405,50 @@ export function ProjectDetailView({
     : PROGRESS_SUB_TABS.filter((tab) => tab.value !== "daily-logs");
 
   const [activeTab, setActiveTab] = useState<MainTab>(initialTab);
+  const [previousTabParam, setPreviousTabParam] = useState(tabParam);
+  if (previousTabParam !== tabParam) {
+    setPreviousTabParam(tabParam);
+    setActiveTab(initialTab);
+  }
+  function selectWorkspaceTab(tab: MainTab) {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", tab);
+    url.searchParams.delete("subtab");
+    url.searchParams.delete("request");
+    url.searchParams.delete("progress");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+  const mainTabRefs = useRef<Partial<Record<MainTab, HTMLButtonElement | null>>>({});
+  const mainTabIndicatorRef = useRef<HTMLSpanElement>(null);
+
+  useLayoutEffect(() => {
+    const activeButton = mainTabRefs.current[activeTab];
+    const indicator = mainTabIndicatorRef.current;
+    if (!indicator) return;
+    const indicatorElement = indicator;
+
+    function positionIndicator() {
+      const button = mainTabRefs.current[activeTab];
+      if (!button) {
+        indicatorElement.style.opacity = "0";
+        return;
+      }
+      indicatorElement.style.opacity = "1";
+      indicatorElement.style.width = `${button.offsetWidth}px`;
+      indicatorElement.style.transform = `translateX(${button.offsetLeft}px)`;
+    }
+
+    positionIndicator();
+    if (!activeButton) return;
+    const observer = new ResizeObserver(positionIndicator);
+    observer.observe(activeButton);
+    window.addEventListener("resize", positionIndicator);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", positionIndicator);
+    };
+  }, [activeTab]);
   // Shared progress URLs still land on the Gantt chart in Overview.
   // Equipment-row clicks open the shared modal directly below.
   const progressTarget = searchParams.get("progress");
@@ -638,7 +684,7 @@ export function ProjectDetailView({
   >(null);
 
   function handleNavigateToCostEstimate(target: CostNavigateDestination) {
-    setActiveTab("overview");
+    selectWorkspaceTab("overview");
     setCostOverviewOpen(true);
     setCostEstimateHighlight({ ...target, timestamp: Date.now() });
   }
@@ -711,20 +757,30 @@ export function ProjectDetailView({
             z-20 is well below the Modal (native <dialog>, browser top
             layer) so Edit Project etc. are unaffected. */}
         <div className="sticky top-0 z-20 bg-white pt-3 shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
-          <div className="flex gap-10 px-8">
+          <div role="tablist" aria-label="Project workspace" className="relative flex gap-10 px-8">
             {VISIBLE_MAIN_TABS.map((tab) => (
               <button
                 key={tab.value}
+                ref={(element) => {
+                  mainTabRefs.current[tab.value] = element;
+                }}
+                role="tab"
+                aria-selected={activeTab === tab.value}
                 type="button"
-                onClick={() => setActiveTab(tab.value)}
-                className={`cursor-pointer border-b-2 pb-2 text-xs font-medium transition ${activeTab === tab.value
-                  ? "border-zinc-900 text-zinc-900"
-                  : "border-transparent text-zinc-400 hover:border-zinc-300 hover:text-zinc-900"
+                onClick={() => selectWorkspaceTab(tab.value)}
+                className={`cursor-pointer border-b-2 border-transparent pb-2 text-xs font-medium transition ${activeTab === tab.value
+                  ? "text-zinc-900"
+                  : "text-zinc-400 hover:text-zinc-900"
                   }`}
               >
                 {tab.label}
               </button>
             ))}
+            <span
+              ref={mainTabIndicatorRef}
+              aria-hidden
+              className="pointer-events-none absolute bottom-0 left-0 h-0.5 bg-zinc-900 opacity-0 transition-[width,transform,opacity] duration-250 ease-out"
+            />
           </div>
         </div>
 
@@ -743,7 +799,10 @@ export function ProjectDetailView({
           />
         )}
 
-
+        <div
+          key={`${activeTab}-${activeTab === "progress" ? activeProgressSubTab : "main"}`}
+          className="tab-content-enter"
+        >
         {activeTab === "progress" ? (
           activeProgressSubTab === "overview" ? (
             <ProgressView
@@ -970,13 +1029,23 @@ export function ProjectDetailView({
             />
           </div>
         )}
+        </div>
 
         <Modal
           open={importBomModalOpen}
           onClose={() => setImportBomModalOpen(false)}
           title="Import with AI"
+          icon={
+            importBomStep === "review" ? (
+              <AiSparklesIcon className="size-6 text-zinc-700 shrink-0" />
+            ) : (
+              <AiSparklesIcon className="size-7 text-emerald-300 shrink-0" />
+            )
+          }
+          bareIcon
           variant="centered"
           size={importBomStep === "review" ? "large" : "default"}
+          aiBorder={importBomStep !== "review"}
         >
           <ImportBomModalContent
             projectId={project.id}

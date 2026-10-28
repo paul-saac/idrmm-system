@@ -3,6 +3,7 @@
 import { useState, useTransition, type FormEvent } from "react";
 import { ChevronDown, ClipboardList, Plus } from "lucide-react";
 import { ModalFooter } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import type { CloseoutReportData } from "@/lib/reports/closeout-data";
 import { savePunchItem } from "@/lib/reports/punch-list-actions";
 import {
@@ -174,10 +175,10 @@ export function PunchListManager({
           <label htmlFor="punch-date" className="pt-2 text-sm font-medium text-zinc-900">
             Date identified
           </label>
-          <input
+          <DatePicker
             id="punch-date"
-            type="date"
             name="identifiedOn"
+            ariaLabel="Date identified"
             required
             defaultValue={selected?.identified_on ?? data.asOf}
             className={input}

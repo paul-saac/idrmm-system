@@ -8,6 +8,7 @@ import {
 } from "@/lib/workers/actions";
 import type { Worker } from "@/lib/workers/data";
 import { ModalFooter } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import { DEFAULT_WORK_HOURS, WEEKDAY_LABELS } from "@/lib/workers/schedule";
 import {
   TITLE_SUGGESTIONS,
@@ -157,10 +158,10 @@ export function MemberForm({
         <label htmlFor={`${formId}-hired`} className={LABEL}>
           Date Hired
         </label>
-        <input
+        <DatePicker
           id={`${formId}-hired`}
           name="dateHired"
-          type="date"
+          ariaLabel="Date hired"
           defaultValue={member?.dateHired ?? ""}
           className={FIELD}
         />

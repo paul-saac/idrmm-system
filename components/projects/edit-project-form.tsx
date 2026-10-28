@@ -6,6 +6,7 @@ import { updateProject, type ProjectActionState } from "@/lib/projects/actions";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
 import { projectElsewhere } from "@/lib/accounts/availability";
+import { DatePicker } from "@/components/ui/date-picker";
 
 const initialState: ProjectActionState = {};
 
@@ -28,10 +29,6 @@ function personLabel(account: AccountRow) {
 // Toggles data-empty so globals.css can gray out an empty date input's
 // own "mm/dd/yyyy" hint like a real placeholder — see that rule's own
 // comment for why this couldn't just be a CSS pseudo-class instead.
-function handleDateEmptyChange(e: React.ChangeEvent<HTMLInputElement>) {
-  e.currentTarget.dataset.empty = e.currentTarget.value ? "false" : "true";
-}
-
 export function EditProjectForm({
   project,
   projectManagers,
@@ -55,6 +52,7 @@ export function EditProjectForm({
   // Holidays aren't set here — they're Holiday events on the Gantt
   // chart's Calendar view (0055_project_events.sql).
   const [workingDays, setWorkingDays] = useState<number[]>(project.workingDays);
+  const [confirmCompletion, setConfirmCompletion] = useState(project.status === "completed" && Boolean(project.actualEndDate));
 
   useEffect(() => {
     if (state.success) {
@@ -114,13 +112,11 @@ export function EditProjectForm({
         >
           Start date
         </label>
-        <input
+        <DatePicker
           id="edit-startDate"
           name="startDate"
-          type="date"
+          ariaLabel="Start date"
           defaultValue={project.startDate ?? ""}
-          data-empty={project.startDate ? "false" : "true"}
-          onChange={handleDateEmptyChange}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -132,13 +128,11 @@ export function EditProjectForm({
         >
           Target end date
         </label>
-        <input
+        <DatePicker
           id="edit-targetEndDate"
           name="targetEndDate"
-          type="date"
+          ariaLabel="Target end date"
           defaultValue={project.targetEndDate ?? ""}
-          data-empty={project.targetEndDate ? "false" : "true"}
-          onChange={handleDateEmptyChange}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -150,13 +144,12 @@ export function EditProjectForm({
         >
           Actual end date
         </label>
-        <input
+        <DatePicker
           id="edit-actualEndDate"
           name="actualEndDate"
-          type="date"
+          ariaLabel="Actual end date"
+          disabled={!confirmCompletion}
           defaultValue={project.actualEndDate ?? ""}
-          data-empty={project.actualEndDate ? "false" : "true"}
-          onChange={handleDateEmptyChange}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>
@@ -180,6 +173,20 @@ export function EditProjectForm({
         />
       </div>
 
+      <div className="flex flex-col gap-1.5 sm:col-span-2">
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-900">
+          <input
+            type="checkbox"
+            name="confirmCompletion"
+            checked={confirmCompletion}
+            onChange={(event) => setConfirmCompletion(event.target.checked)}
+            className="size-4 accent-zinc-800"
+          />
+          Confirm project completion
+        </label>
+        <p className="text-xs text-zinc-500">All tasks must be 100% complete from saved logs. Enter the actual end date above; early completion is allowed.</p>
+      </div>
+
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-projectManagerId"
@@ -193,7 +200,7 @@ export function EditProjectForm({
             name="projectManagerId"
             required
             defaultValue={project.projectManagerId}
-            className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+            className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
             {/* Someone already on another unfinished project can't be
                 picked (see projectElsewhere) — this project's own PM
@@ -225,7 +232,7 @@ export function EditProjectForm({
             name="foremanId"
             required
             defaultValue={project.foremanId}
-            className="w-full cursor-pointer appearance-none rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+            className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
             {foremen.map((f) => {
               const elsewhere = f.id === project.foremanId ? null : projectElsewhere(f, project.id);

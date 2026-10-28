@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { DateRange } from "@/lib/reports/data";
 import type { PortalBasePath } from "@/components/portal/portal-context";
+import { DatePicker } from "@/components/ui/date-picker";
 
 /**
  * Plain GET form — no client JS needed, submitting just re-navigates
@@ -29,20 +30,18 @@ export function DateRangeFilter({
       <input type="hidden" name="projectId" value={projectId} />
       <label className="flex items-center gap-1.5 text-zinc-600">
         From
-        <input
-          type="date"
+        <DatePicker
           name="from"
           defaultValue={range.from ?? ""}
-          className="rounded border border-zinc-200 px-2 py-1 text-sm outline-none focus:border-zinc-400"
+          ariaLabel="From date"
         />
       </label>
       <label className="flex items-center gap-1.5 text-zinc-600">
         To
-        <input
-          type="date"
+        <DatePicker
           name="to"
           defaultValue={range.to ?? ""}
-          className="rounded border border-zinc-200 px-2 py-1 text-sm outline-none focus:border-zinc-400"
+          ariaLabel="To date"
         />
       </label>
       <button

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { usePortal } from "@/components/portal/portal-context";
 import { ChevronDown, ClipboardCheck, ClipboardList, Eye, FileDown, FileSpreadsheet, Pencil } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
 import type { CloseoutReportData } from "@/lib/reports/closeout-data";
 import {
   generateReport,
@@ -53,8 +54,8 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
   const [asBuiltSections, setAsBuiltSections] = useState<AsBuiltSectionId[]>(AS_BUILT_SECTIONS.map(s => s.id));
   const [asBuiltColumns, setAsBuiltColumns] = useState<string[]>([...AS_BUILT_COLUMNS]);
   const [financialSections, setFinancialSections] = useState<FinancialSectionId[]>(FINANCIAL_REPORT_SECTIONS.map(s => s.id));
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(data.project.startDate ?? "");
+  const [to, setTo] = useState(data.project.targetEndDate ?? "");
   const [generating, setBusy] = useState(false);
   const busy = generating || switchingProject;
   const [error, setError] = useState("");
@@ -192,7 +193,15 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
           <div className={`space-y-5 p-6 sm:p-8 ${hasRightColumn ? "" : "xl:col-span-2"}`}>
             <label className="flex items-center gap-3 text-sm text-zinc-500">
               <span className="w-14 shrink-0">Title</span>
-              <input value={title} maxLength={120} onChange={e => setTitle(e.target.value)} className={`${input} max-w-sm`} />
+              <input
+                value={title}
+                maxLength={120}
+                autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                onChange={e => setTitle(e.target.value)}
+                className={`${input} max-w-sm`}
+              />
             </label>
             <label className="flex items-center gap-3 text-sm text-zinc-500">
               <span className="w-14 shrink-0">Project</span>
@@ -215,21 +224,21 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
               <div className="flex items-center gap-3 text-sm text-zinc-500">
                 <span className="w-14 shrink-0">Dates</span>
                 <div className="flex w-full max-w-sm items-center gap-2">
-                  <input
-                    type="date"
-                    aria-label="From date"
+                  <DatePicker
+                    ariaLabel="From date"
                     value={from}
                     max={to || undefined}
-                    onChange={e => setFrom(e.target.value)}
+                    onChange={setFrom}
+                    rootClassName="min-w-0 flex-1"
                     className={`${input} text-zinc-900`}
                   />
                   <span className="shrink-0 text-xs text-zinc-400">to</span>
-                  <input
-                    type="date"
-                    aria-label="To date"
+                  <DatePicker
+                    ariaLabel="To date"
                     value={to}
                     min={from || undefined}
-                    onChange={e => setTo(e.target.value)}
+                    onChange={setTo}
+                    rootClassName="min-w-0 flex-1"
                     className={`${input} text-zinc-900`}
                   />
                   {(from || to) && (

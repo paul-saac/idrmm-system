@@ -2,6 +2,7 @@ import { createClient } from "@/lib/supabase/server";
 import { listTaskProgressAnchors } from "@/lib/task-progress/data";
 import { listCategoryProgressAnchors } from "@/lib/category-progress/data";
 import { computeWeights } from "@/lib/cost-estimate/weights";
+import { projectLifecycle, type ProjectLifecycle } from "@/lib/projects/lifecycle";
 import {
   computeProgressBreakdown,
   EMPTY_PROGRESS_ANCHOR,
@@ -109,9 +110,7 @@ export type CostTask = {
    * complete is never stored — always a plain average of its tasks'
    * own percentComplete, computed in gantt-chart-view.tsx itself. */
   percentComplete: number;
-  /** What's been spent so far, per cost column, from its Daily Progress
-   * Updates — its saved logs, each working day without one at its planned
-   * share (computeProgressBreakdown). */
+  /** Recorded spend per cost column from saved Daily Progress Updates only. */
   costsToDate: CostAmounts;
   materialAssignments: TaskMaterialAssignment[];
 };
@@ -205,8 +204,7 @@ export type CostEstimateSummary = {
   };
   /** What's been spent so far, per cost column, from the Daily Progress
    * Updates — every task's cost to date, and every task-less phase's own:
-   * its saved updates, plus each working day without one counting its
-   * planned share (computeProgressBreakdown). The Overview's Actual
+   * its saved updates only (computeProgressBreakdown). The Overview's Actual
    * Expense. */
   costsToDate: CostAmounts;
 };
@@ -214,6 +212,7 @@ export type CostEstimateSummary = {
 export type CostEstimate = {
   categories: CostCategory[];
   summary: CostEstimateSummary;
+  lifecycle: ProjectLifecycle;
 };
 
 /**
@@ -223,10 +222,10 @@ export type CostEstimate = {
  * through in one call), so all three are fetched in parallel and grouped
  * in JS.
  */
-export async function getCostEstimate(projectId: number): Promise<CostEstimate> {
+export async function getCostEstimate(projectId: number, strict = false): Promise<CostEstimate> {
   const supabase = await createClient();
 
-  const [{ data: categoryRows }, { data: taskRows }, { data: projectRow }] =
+  const [{ data: categoryRows, error: categoryError }, { data: taskRows, error: taskError }, { data: projectRow, error: projectError }] =
     await Promise.all([
       // "*" rather than a column list, so a DB that hasn't run
       // 0056_category_equipment_other.sql yet still loads (those two
@@ -250,6 +249,10 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
         .eq("id", projectId)
         .maybeSingle(),
     ]);
+
+  if (strict && (categoryError || taskError || projectError || !projectRow)) {
+    throw new Error("Could not verify the project's tasks and progress. Please try again.");
+  }
 
   // Falls back to the same Mon-Sat default the DB column itself defaults
   // to — projectRow can come back null only if the project row itself
@@ -289,10 +292,10 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
     // lib/task-progress/data.ts) — what computeProgressBreakdown below
     // projects each task's live percentComplete and cost to date
     // forward from.
-    listTaskProgressAnchors(taskIds),
+    listTaskProgressAnchors(taskIds, strict),
     // Same idea, one level up, for a task-less category's own Progress
     // Tracking Override — see lib/category-progress/data.ts.
-    listCategoryProgressAnchors(categoryIds),
+    listCategoryProgressAnchors(categoryIds, strict),
     // A standalone category's own itemized materials (0058) — empty, not
     // an error, until that migration has run.
     categoryIds.length > 0
@@ -449,9 +452,8 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
       predecessorTaskId: row.predecessor_task_id,
       isMilestone: row.is_milestone ?? false,
       priority: toTaskPriority(row.priority),
-      // Live-computed (Automatic Progress Completion — an equal-
-      // weighted Materials/Labor/Time blend, see lib/task-progress/
-      // calculate.ts) rather than read from the stored percent_complete
+      // Computed from saved progress entries (see lib/task-progress/
+      // calculate.ts), never elapsed time or the stored percent_complete
       // column, which this feature supersedes as the actual source of a
       // task's own percent complete (see 0040_task_progress_tracking.
       // sql's own comment on why that column is left in place but no
@@ -564,6 +566,7 @@ export async function getCostEstimate(projectId: number): Promise<CostEstimate> 
 
   return {
     categories,
+    lifecycle: projectLifecycle(categories, progressAnchorsByTask, progressAnchorsByCategory),
     summary: {
       totalEstimatedCost,
       categoryCount: categories.length,
