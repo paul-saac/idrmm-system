@@ -27,22 +27,22 @@ export function PendingApprovalsCard({
   total: number;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-5">
-      <div className="mb-4 flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-zinc-900">Pending Approvals</h2>
-        <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+    <section className="overflow-hidden rounded border border-zinc-200 bg-white">
+      <div className="flex items-center gap-2 border-b border-zinc-200 px-5 py-4">
+        <h2 className="text-sm font-semibold text-zinc-900">Pending approvals</h2>
+        <span className="text-xs tabular-nums text-zinc-400">
           {total}
         </span>
       </div>
 
       {items.length === 0 ? (
-        <EmptyState compact className="text-sm text-zinc-500">Nothing waiting on approval.</EmptyState>
+        <EmptyState compact className="px-5 py-6 text-sm text-zinc-500">Nothing waiting on approval.</EmptyState>
       ) : (
-        <ul className="flex flex-col gap-4">
+        <ul className="divide-y divide-zinc-100">
           {items.map((item) => (
             <li
               key={`${item.kind}-${item.id}`}
-              className="flex items-center justify-between gap-3"
+              className="flex items-center justify-between gap-3 px-5 py-4"
             >
               <div className="min-w-0">
                 <p className="flex items-center gap-2 text-sm font-medium text-zinc-900">
@@ -77,6 +77,6 @@ export function PendingApprovalsCard({
           ))}
         </ul>
       )}
-    </div>
+    </section>
   );
 }

@@ -89,21 +89,25 @@ function DashboardSkeleton() {
   return (
     <>
       <StatsSkeleton />
-      <div className="mt-4 grid min-h-80 grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="flex flex-col gap-4 lg:col-span-2">
+      <div className="mt-5 grid min-h-80 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2.25fr)_minmax(19rem,1fr)]">
+        <div className="flex flex-col gap-5">
           {[3, 2].map((rows) => (
-            <section key={rows} className="rounded-lg border border-zinc-200 bg-white p-5">
+            <section key={rows} className="rounded border border-zinc-200 bg-white p-5">
               <SkeletonLine className="mb-4 w-32" />
               {Array.from({ length: rows }, (_, index) => <LoadingRow key={index} />)}
             </section>
           ))}
         </div>
-        <div className="flex flex-col gap-4">
-          <section className="rounded-lg border border-zinc-200 bg-white p-5">
+        <div className="flex flex-col gap-5">
+          <section className="rounded border border-zinc-200 bg-white p-5">
             <SkeletonLine className="mb-4 w-32" />
             <LoadingRow /><LoadingRow /><LoadingRow />
           </section>
-          <section className="rounded-lg border border-zinc-200 bg-white p-5">
+          <section className="rounded border border-zinc-200 bg-white p-5">
+            <SkeletonLine className="mb-4 w-24" />
+            <div className="grid grid-cols-7 gap-2">{Array.from({ length: 42 }, (_, index) => <span key={index} className="mx-auto size-6 rounded-full bg-zinc-100" />)}</div>
+          </section>
+          <section className="rounded border border-zinc-200 bg-white p-5">
             <SkeletonLine className="mb-4 w-24" />
             <div className="grid grid-cols-2 gap-3">
               <span className="h-16 rounded-md bg-zinc-200" />

@@ -5,6 +5,8 @@ import { ActiveProjectsCard } from "@/components/admin/dashboard/active-projects
 import { PendingApprovalsCard } from "@/components/admin/dashboard/pending-approvals-card";
 import { RecentActivityCard } from "@/components/admin/dashboard/recent-activity-card";
 import { ResourcesCard } from "@/components/admin/dashboard/resources-card";
+import { DashboardCalendar } from "@/components/admin/dashboard/dashboard-calendar";
+import { manilaToday } from "@/components/admin/dashboard/calendar-model";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 import { getDashboardData } from "@/lib/dashboard/data";
 
@@ -18,7 +20,7 @@ export async function DashboardView({ basePath }: { basePath: PortalBasePath }) 
     <>
       <AdminPageHeader title="Dashboard" />
 
-      <main className="flex-1 overflow-y-auto px-8 py-6">
+      <main className="flex-1 overflow-y-auto bg-zinc-50 px-4 py-6 sm:px-8">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             label="Ongoing Projects"
@@ -42,17 +44,18 @@ export async function DashboardView({ basePath }: { basePath: PortalBasePath }) 
           />
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-          <div className="flex flex-col gap-4 lg:col-span-2">
+        <div className="mt-5 grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,2.25fr)_minmax(19rem,1fr)]">
+          <div className="flex min-w-0 flex-col gap-5">
             <ActiveProjectsCard basePath={basePath} projects={data.activeProjects} />
             <RecentActivityCard basePath={basePath} items={data.recentActivity} />
           </div>
-          <div className="flex flex-col gap-4">
+          <div className="flex min-w-0 flex-col gap-5">
             <PendingApprovalsCard
               basePath={basePath}
               items={data.pendingRequests}
               total={data.stats.pendingMaterialRequests + data.stats.pendingEquipmentRequests}
             />
+            <DashboardCalendar initialToday={manilaToday()} />
             <ResourcesCard
               basePath={basePath}
               isAdmin={isAdmin}

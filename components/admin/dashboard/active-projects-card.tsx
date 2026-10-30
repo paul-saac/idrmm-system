@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowRight, Building2 } from "lucide-react";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 import type { DashboardProject } from "@/lib/dashboard/data";
@@ -37,19 +38,19 @@ export function ActiveProjectsCard({
   projects: DashboardProject[];
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+    <section className="overflow-hidden rounded border border-zinc-200 bg-white">
       <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-zinc-900">Active Projects</h2>
-          <span className="rounded-sm bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
+          <h2 className="text-sm font-semibold text-zinc-900">Active projects</h2>
+          <span className="text-xs tabular-nums text-zinc-400">
             {projects.length}
           </span>
         </div>
         <Link
           href={`${basePath}/projects`}
-          className="text-xs font-medium text-zinc-500 hover:text-zinc-900"
+          className="flex items-center gap-1.5 text-xs font-medium text-zinc-500 hover:text-zinc-900"
         >
-          See all
+          View all projects <ArrowRight aria-hidden className="size-3.5" />
         </Link>
       </div>
 
@@ -69,7 +70,8 @@ export function ActiveProjectsCard({
                   className="block px-5 py-4 transition hover:bg-zinc-50"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded bg-zinc-100 text-zinc-500"><Building2 aria-hidden className="size-4" /></span>
+                    <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-zinc-900">
                         {project.name}
                       </p>
@@ -94,36 +96,30 @@ export function ActiveProjectsCard({
                     )}
                   </div>
 
-                  <div className="mt-3 flex items-center gap-3">
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-sm bg-zinc-100">
+                  <div className="mt-4 flex items-center justify-between gap-3 text-xs">
+                    <span className="text-zinc-500">Project progress</span>
+                    <span className="font-semibold tabular-nums text-zinc-900">{percent(project.progress)}</span>
+                  </div>
+                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-sm bg-zinc-100" role="progressbar" aria-label={`${project.name} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.max(0, project.progress))}>
                       <div
                         className="h-full rounded-sm bg-zinc-900"
                         style={{ width: `${Math.min(100, Math.max(0, project.progress))}%` }}
                       />
                     </div>
-                    <span className="w-12 shrink-0 text-right text-xs font-semibold text-zinc-900">
-                      {percent(project.progress)}
-                    </span>
-                  </div>
-                  {project.expected !== null && (
-                    <p className="mt-1 text-xs text-zinc-400">
-                      Expected {percent(project.expected)} by now
-                    </p>
-                  )}
 
                   <dl className="mt-3 grid grid-cols-3 gap-2 text-xs">
                     <div>
-                      <dt className="text-zinc-500">Budget</dt>
+                      <dt className="text-zinc-500">Total budget</dt>
                       <dd className="mt-0.5 font-medium text-zinc-900">
                         {project.budget != null ? peso(project.budget) : "—"}
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-zinc-500">Spent</dt>
-                      <dd className="mt-0.5 font-medium text-amber-700">{peso(project.spent)}</dd>
+                      <dt className="text-zinc-500">Spent to date</dt>
+                      <dd className="mt-0.5 font-medium text-zinc-900">{peso(project.spent)}</dd>
                     </div>
                     <div>
-                      <dt className="text-zinc-500">Remaining</dt>
+                      <dt className="text-zinc-500">Remaining budget</dt>
                       <dd
                         className={`mt-0.5 font-medium ${
                           project.remaining != null && project.remaining < 0
@@ -141,6 +137,6 @@ export function ActiveProjectsCard({
           })}
         </ul>
       )}
-    </div>
+    </section>
   );
 }
