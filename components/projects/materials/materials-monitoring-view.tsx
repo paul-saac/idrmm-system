@@ -199,6 +199,7 @@ export function MaterialsMonitoringView({
   onViewChange,
   requests,
   openRequestIds,
+  linkedRequestId,
   onToggleRequest,
   currentUserName,
   usage,
@@ -214,6 +215,7 @@ export function MaterialsMonitoringView({
   /** The requests opened to their details — the parent's, so they stay
    * open across switching lists, and the Material overview can open one. */
   openRequestIds: ReadonlySet<number>;
+  linkedRequestId?: number;
   onToggleRequest: (requestId: number) => void;
   /** Shown as Requested By on a new request. */
   currentUserName: string;
@@ -230,6 +232,11 @@ export function MaterialsMonitoringView({
   // The Material requests view's own search and status filter.
   const [requestQuery, setRequestQuery] = useState("");
   const [requestStatus, setRequestStatus] = useState<MaterialRequestStatus | "all">("all");
+  const [handledLinkedRequest, setHandledLinkedRequest] = useState<number | undefined>(undefined);
+  if (linkedRequestId !== handledLinkedRequest) {
+    setHandledLinkedRequest(linkedRequestId);
+    if (linkedRequestId !== undefined) { setRequestQuery(""); setRequestStatus("all"); }
+  }
   const [requestOpen, setRequestOpen] = useState(false);
 
   // Switching lists keeps the section at least as tall as it just was —

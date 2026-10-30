@@ -1597,6 +1597,10 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      move_selected_schedules: {
+        Args: { p_project_id: number; p_changes: unknown };
+        Returns: undefined;
+      };
       save_estimate_successor: {
         Args: { p_project_id: number; p_source_kind: string; p_source_id: number; p_successor_kind: string | null;
           p_successor_id: number | null; p_milestone?: boolean | null; p_name?: string | null };

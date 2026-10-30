@@ -144,6 +144,7 @@ export function EquipmentRecordView({
   onViewChange,
   onOpenProgressLog,
   openRequestIds,
+  linkedRequestId,
   onToggleRequest,
   currentUserName,
 }: {
@@ -158,6 +159,7 @@ export function EquipmentRecordView({
   /** Opens the matching Gantt Progress Tracking history entry. */
   onOpenProgressLog: (itemKey: string, entryDate: string) => void;
   openRequestIds: ReadonlySet<number>;
+  linkedRequestId?: number;
   onToggleRequest: (requestId: number) => void;
   currentUserName: string;
 }) {
@@ -168,6 +170,11 @@ export function EquipmentRecordView({
   const [monitoringQuery, setMonitoringQuery] = useState("");
   const [requestQuery, setRequestQuery] = useState("");
   const [requestStatus, setRequestStatus] = useState<EquipmentRequestStatus | "all">("all");
+  const [handledLinkedRequest, setHandledLinkedRequest] = useState<number | undefined>(undefined);
+  if (linkedRequestId !== handledLinkedRequest) {
+    setHandledLinkedRequest(linkedRequestId);
+    if (linkedRequestId !== undefined) { setRequestQuery(""); setRequestStatus("all"); }
+  }
   const [requestOpen, setRequestOpen] = useState(false);
 
   // Keep a shorter switched-to list from pulling the page upward.

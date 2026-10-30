@@ -73,6 +73,10 @@ import {
   resetGanttHistory,
 } from "@/lib/cost-estimate/undo-redo-actions";
 import type { CostCategory, CostTask, TaskPriority } from "@/lib/cost-estimate/data";
+import { projectScheduleDates } from "@/lib/cost-estimate/schedule-dates";
+import type { ScheduleDateChange } from "@/lib/cost-estimate/schedule-dates";
+import { moveSelectedSchedules } from "@/lib/cost-estimate/schedule-actions";
+import { barDragDays, selectedBarChanges } from "./gantt-bar-selection";
 import { setTaskWorkers, setCategoryWorkers } from "@/lib/workers/actions";
 import type { ProjectOverrideHistory } from "@/lib/progress-logs/types";
 import type {
@@ -1018,8 +1022,8 @@ export function GanttChartView({
     return () => { active = false; };
   }, [projectId, initialEquipmentTracking]);
 
-  // A notification's View Progress (?progress=task-12 or category-5)
-  // opens that row's Daily Progress Update straight away. Compared with
+  // A notification (?progress=task-12 or category-5) opens the saved record
+  // read-only, with the notification's log date selected. Compared with
   // the last one handled during render (React's "adjust state when a
   // prop changes" pattern), then dropped from the URL below — so a
   // refresh doesn't reopen it, and the same link works again later.
@@ -1047,6 +1051,7 @@ export function GanttChartView({
         setProgressModal({
           kind: "task",
           task,
+          readOnly: true,
           highlightLatest: !progressDate,
           highlightEntryDate: progressDate,
         });
@@ -1057,6 +1062,7 @@ export function GanttChartView({
         setProgressModal({
           kind: "category",
           category,
+          readOnly: true,
           highlightLatest: !progressDate,
           highlightEntryDate: progressDate,
         });
@@ -1478,7 +1484,7 @@ export function GanttChartView({
   const showTaskList = true;
 
   const fallbackStart = projectStartDate ? toDate(projectStartDate) : new Date();
-  const fallbackEnd = new Date(fallbackStart.getTime() + 7 * 86_400_000);
+  const fallbackEnd = projectEndDate ? toDate(projectEndDate) : fallbackStart;
 
   // Every duration in this view (the Days column, the hover card, the
   // phase rollups below) counts working days only — the project's own
@@ -2462,6 +2468,141 @@ export function GanttChartView({
   // onClick straight to that same native click event with no drag
   // awareness of its own).
   const barJustDraggedRef = useRef(false);
+  const [selectedBarIds, setSelectedBarIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [savingBarGroup, setSavingBarGroup] = useState(false);
+  const [barGroupError, setBarGroupError] = useState<string | null>(null);
+  const groupDragCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => () => groupDragCleanup.current?.(), []);
+  useEffect(() => {
+    const root = chartWrapRef.current;
+    if (!root) return;
+    function markSelected() {
+      root!.querySelectorAll<SVGGElement>("[data-gantt-row-id]").forEach(node => {
+        const selected = selectedBarIds.has(node.dataset.ganttRowId ?? "");
+        node.toggleAttribute("data-gantt-multi-selected", selected);
+      });
+    }
+    markSelected();
+    const observer = new MutationObserver(markSelected);
+    observer.observe(root, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [selectedBarIds, calendarView]);
+  useEffect(() => {
+    function clear(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      groupDragCleanup.current?.();
+      setSelectedBarIds(new Set());
+    }
+    window.addEventListener("keydown", clear);
+    return () => window.removeEventListener("keydown", clear);
+  }, []);
+
+  async function persistBarGroup(changes: ScheduleDateChange[]) {
+    if (changes.length === 0) return;
+    const previousTasks = new Map(pendingScheduleOverrides);
+    const previousCategories = new Map(pendingCategoryScheduleOverrides);
+    setBarGroupError(null); setSavingBarGroup(true);
+    for (const change of changes) {
+      if (change.kind === "category") setCategoryScheduleOverride(change.id, change);
+      else setScheduleOverride(change.id, change);
+    }
+    try {
+      const result = await moveSelectedSchedules(projectId, changes);
+      if (result.error) throw new Error(result.error);
+    } catch (error) {
+      for (const change of changes) {
+        if (change.kind === "category") {
+          const previous = previousCategories.get(change.id);
+          if (previous) setCategoryScheduleOverride(change.id, previous);
+          else clearCategoryScheduleOverride(change.id);
+        } else {
+          const previous = previousTasks.get(change.id);
+          if (previous) setScheduleOverride(change.id, previous);
+          else clearScheduleOverride(change.id);
+        }
+      }
+      setBarGroupError(error instanceof Error ? error.message : "Could not move the selected schedules.");
+    } finally { setSavingBarGroup(false); router.refresh(); }
+  }
+
+  function handleBarSelectionMouseDown(event: React.MouseEvent<HTMLDivElement>) {
+    if (!canEdit || event.button !== 0 || !(event.target instanceof Element)) return;
+    const bar = event.target.closest<SVGGElement>("[data-gantt-row-id]");
+    if (!bar) {
+      if (selectedBarIds.size > 0 && !event.shiftKey && event.target.closest("svg") && !event.target.closest("button")) setSelectedBarIds(new Set());
+      return;
+    }
+    const id = bar.dataset.ganttRowId;
+    const row = effectiveTasks.find(item => item.id === id);
+    if (!id || !row || row.isDisabled || (!taskById.has(id) && !categoryById.has(id))) return;
+    if (savingBarGroup) { event.preventDefault(); event.stopPropagation(); return; }
+    const wasSelected = selectedBarIds.has(id);
+    if (!event.shiftKey && !wasSelected) { if (selectedBarIds.size > 0) setSelectedBarIds(new Set()); return; }
+    event.preventDefault(); event.stopPropagation();
+    const selected = new Set(selectedBarIds); selected.add(id);
+    if (!wasSelected) setSelectedBarIds(selected);
+    const previewIds = new Set(selected);
+    for (const item of effectiveTasks) if (item.project && selected.has(item.project)) previewIds.add(item.id);
+    const svg = bar.ownerSVGElement;
+    if (!svg) return;
+    const originX = event.clientX;
+    const originLeft = svg.getBoundingClientRect().left;
+    const scale = svg.getScreenCTM()?.a || 1;
+    const projectFirst = projectStartDate ? toDate(projectStartDate) : null;
+    const first = projectFirst && (!timelineExtent || projectFirst < timelineExtent.min) ? projectFirst : timelineExtent?.min ?? row.start;
+    const daysPerColumn = barDragDays(effectiveColumnWidth, effectiveColumnWidth, view, first);
+    const originals = new Map<SVGGElement, string | null>();
+    let delta = 0, moved = false, frame = 0;
+    const shiftClick = event.shiftKey;
+    function displacement(clientX: number) {
+      return (clientX - originX + originLeft - svg!.getBoundingClientRect().left) / scale;
+    }
+    function paint() {
+      frame = 0;
+      const pixels = delta * effectiveColumnWidth / daysPerColumn;
+      chartWrapRef.current?.querySelectorAll<SVGGElement>("[data-gantt-row-id]").forEach(node => {
+        if (!previewIds.has(node.dataset.ganttRowId ?? "")) return;
+        if (!originals.has(node)) originals.set(node, node.getAttribute("transform"));
+        node.setAttribute("transform", `${originals.get(node) ?? ""} translate(${pixels} 0)`);
+      });
+    }
+    function cleanup() {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("blur", cleanup);
+      if (frame) window.cancelAnimationFrame(frame);
+      originals.forEach((value, node) => { if (value === null) node.removeAttribute("transform"); else node.setAttribute("transform", value); });
+      groupDragCleanup.current = null;
+    }
+    function move(e: MouseEvent) {
+      const pixels = displacement(e.clientX);
+      if (Math.abs(pixels) > 3) moved = true;
+      if (!moved) return;
+      e.preventDefault();
+      delta = barDragDays(pixels, effectiveColumnWidth, view, first);
+      if (!frame) frame = window.requestAnimationFrame(paint);
+    }
+    function up(e: MouseEvent) {
+      const pixels = displacement(e.clientX);
+      moved ||= Math.abs(pixels) > 3;
+      delta = barDragDays(pixels, effectiveColumnWidth, view, first);
+      cleanup();
+      if (!moved) {
+        if (shiftClick && wasSelected) setSelectedBarIds(prev => { const next = new Set(prev); next.delete(id!); return next; });
+        else if (!shiftClick && selected.size === 1) handleBarClick(row!);
+        return;
+      }
+      barJustDraggedRef.current = true;
+      window.setTimeout(() => { barJustDraggedRef.current = false; }, 0);
+      try { void persistBarGroup(selectedBarChanges(selected, effectiveTasks, categoriesForDisplay, delta)); }
+      catch (error) { setBarGroupError(error instanceof Error ? error.message : "Could not move the selected schedules."); }
+    }
+    groupDragCleanup.current?.();
+    groupDragCleanup.current = cleanup;
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("blur", cleanup);
+  }
 
   // Detects a native gantt-task-react drag starting (move, resize, or
   // progress), purely to set barJustDraggedRef above. Every such
@@ -2826,6 +2967,7 @@ export function GanttChartView({
     // swapped for a real id below).
     const tempId = -Date.now();
     const categoriesAtSet = categories;
+    const dates = projectScheduleDates(projectStartDate, projectEndDate);
     setEditingCategoryId(tempId);
     setPendingNewPhase({
       categoriesAtSet,
@@ -2840,8 +2982,8 @@ export function GanttChartView({
         materialDirectAmountOverride: null,
         categoryMaterialEstimate: 0,
         materialAssignments: [],
-        plannedStartDate: null,
-        plannedEndDate: null,
+        plannedStartDate: dates.start,
+        plannedEndDate: dates.end,
         priority: "medium",
         isMilestone: false,
         categoryLaborEstimate: 0,
@@ -2892,8 +3034,8 @@ export function GanttChartView({
           materialDirectAmountOverride: null,
           categoryMaterialEstimate: 0,
           materialAssignments: [],
-          plannedStartDate: null,
-          plannedEndDate: null,
+          plannedStartDate: dates.start,
+          plannedEndDate: dates.end,
           priority: "medium",
           isMilestone: false,
           categoryLaborEstimate: 0,
@@ -2940,6 +3082,7 @@ export function GanttChartView({
     // tempId above — see its own comment for why.
     const tempId = -Date.now();
     const categoriesAtSet = categories;
+    const dates = projectScheduleDates(projectStartDate, projectEndDate);
     const placeholderTask: CostTask = {
       id: tempId,
       categoryId,
@@ -2957,15 +3100,8 @@ export function GanttChartView({
       otherCostItems: [],
       totalEstimateCost: 0,
       weight: 0,
-      // Left dateless rather than guessing today/today the way an
-      // empty *phase*'s own placeholder range does — resolvedDates()
-      // inside the `tasks` memo already has a real fallback for a
-      // dateless task (fallbackStart/fallbackEnd, project-start-or-
-      // today plus a week), the same one any other dateless task
-      // already renders with, so this doesn't need its own special
-      // case.
-      plannedStartDate: null,
-      plannedEndDate: null,
+      plannedStartDate: dates.start,
+      plannedEndDate: dates.end,
       predecessorTaskId: null,
       isMilestone: false,
       priority: "medium",
@@ -4380,7 +4516,7 @@ export function GanttChartView({
           <ProjectWriteButton
             type="button"
             onClick={handleUndo}
-            disabled={!historyReady || !effectiveCanUndo || isUndoRedoPending || deleting || savingModalEdit || savingRowOrder || savingSharedCost}
+            disabled={!historyReady || !effectiveCanUndo || isUndoRedoPending || deleting || savingModalEdit || savingRowOrder || savingSharedCost || savingBarGroup}
             aria-label="Undo"
             title="Undo (Ctrl+Z)"
             className="cursor-pointer rounded p-2 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
@@ -4390,7 +4526,7 @@ export function GanttChartView({
           <ProjectWriteButton
             type="button"
             onClick={handleRedo}
-            disabled={!historyReady || !effectiveCanRedo || isUndoRedoPending || deleting || savingModalEdit || savingRowOrder || savingSharedCost}
+            disabled={!historyReady || !effectiveCanRedo || isUndoRedoPending || deleting || savingModalEdit || savingRowOrder || savingSharedCost || savingBarGroup}
             aria-label="Redo"
             title="Redo (Ctrl+Y)"
             className="cursor-pointer rounded p-2 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
@@ -4416,6 +4552,10 @@ export function GanttChartView({
               {option}
             </button>
           ))}
+          {!calendarView && canEdit && <span className="ml-auto flex items-center gap-2 text-xs text-zinc-500">
+            {savingBarGroup ? "Saving schedules..." : selectedBarIds.size > 0 ? `${selectedBarIds.size} bars selected` : "Shift-click bars to select"}
+            {selectedBarIds.size > 0 && <button type="button" onClick={() => setSelectedBarIds(new Set())} className="cursor-pointer underline underline-offset-2">Clear</button>}
+          </span>}
           {/* Only while something's ticked in the task list. */}
           {!calendarView && selectedCount > 0 && (
             <ProjectWriteButton
@@ -4430,6 +4570,7 @@ export function GanttChartView({
           )}
         </div>
 
+        {barGroupError && <p role="alert" className="border-x border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{barGroupError}</p>}
         {/* Always the real chart, even with zero phases yet — a plain
             "add your first phase" placeholder here used to replace the
             whole chart outright, but the chart already renders as a
@@ -4557,7 +4698,12 @@ export function GanttChartView({
                   </marker>
                 </defs>
               </svg>
-              <div className="relative" onMouseDown={handleChartMouseDown}>
+              <div className="relative" onMouseDown={handleChartMouseDown} onMouseDownCapture={handleBarSelectionMouseDown}
+                onClickCapture={event => {
+                  if (event.target instanceof Element && event.target.closest("[data-gantt-row-id]") && (event.shiftKey || selectedBarIds.size > 0 || barJustDraggedRef.current)) {
+                    event.preventDefault(); event.stopPropagation();
+                  }
+                }}>
                 <WorkScheduleContext.Provider value={workSchedule}>
                 <Gantt
                   tasks={chartTasks}
@@ -4841,7 +4987,7 @@ export function GanttChartView({
         {equipmentTarget && <EquipmentTrackingPanel key={equipmentTarget.key} projectId={projectId} itemKey={equipmentTarget.key} initialData={equipmentTracking} onChange={setEquipmentTracking} onClose={() => setEquipmentTarget(null)} onPendingChange={setEquipmentSaving} />}
       </Modal>
       <ProgressTrackingModal
-        readOnly={!canEdit}
+        readOnly={!canEdit || progressModal?.readOnly === true}
         target={progressModal}
         projectId={projectId}
         projectName={projectName}

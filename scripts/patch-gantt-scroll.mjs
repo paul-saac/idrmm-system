@@ -19,6 +19,14 @@ export function patchGanttScroll(source) {
     }
     patched = patched.replace(ORIGINAL, PATCHED);
   }
+  // Stable row identity for Shift-selection; label text and DOM order are not unique.
+  const reactName = patched.includes("var React = require('react');") ? "React__default" : "React";
+  const barRoot = `return ${reactName}.createElement("g", {\n    onKeyDown: function onKeyDown(e) {`;
+  const identifiedBarRoot = `return ${reactName}.createElement("g", {\n    "data-gantt-row-id": task.id,\n    onKeyDown: function onKeyDown(e) {`;
+  if (!patched.includes(identifiedBarRoot)) {
+    if (patched.split(barRoot).length !== 2) throw new Error("Gantt row identity patch no longer matches TaskItem.");
+    patched = patched.replace(barRoot, identifiedBarRoot);
+  }
   for (const [axis, offset] of [["X", "scrollLeft"], ["Y", "scrollTop"]]) {
     const pattern = new RegExp(`  var handleScroll${axis} = function handleScroll${axis}\\(event\\) \\{[\\s\\S]*?\\r?\\n  \\};`, "g");
     const handlers = [...patched.matchAll(pattern)];

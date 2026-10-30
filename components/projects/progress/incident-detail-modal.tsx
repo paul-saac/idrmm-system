@@ -154,25 +154,34 @@ export function IncidentDetailModal({ projectId, id, result, onClose, onDeleted 
   onClose: () => void;
   onDeleted?: (id: number) => void;
 }) {
-  const [fetchedResult, setFetchedResult] = useState<LoadedIncident | null>(null);
+  const targetKey = `${projectId}:${id}`;
+  const [fetched, setFetched] = useState<{ key: string; result: LoadedIncident } | null>(null);
   useEffect(() => {
     if (result !== undefined || id === null) return;
     let cancelled = false;
     loadIncident(projectId, id)
       .then((value) => {
-        if (!cancelled) setFetchedResult(value);
+        if (!cancelled) setFetched({ key: targetKey, result: value });
       })
       .catch(() => {
-        if (!cancelled) setFetchedResult({ error: "Could not load this incident. Close and try again." });
+        if (!cancelled) setFetched({ key: targetKey, result: { error: "Could not load this incident. Close and try again." } });
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId, id, result]);
-  const effectiveResult = result === undefined ? fetchedResult : result;
+  }, [projectId, id, result, targetKey]);
+  const effectiveResult = result === undefined ? (fetched?.key === targetKey ? fetched.result : null) : result;
 
   return (
     <Modal open={id !== null} onClose={onClose} title={formatIncidentDate(effectiveResult?.incident?.occurred_on)} variant="centered">
+      {id !== null && effectiveResult === null && (
+        <div role="status" aria-label="Loading incident report" className="space-y-4">
+          <span className="sr-only">Loading incident report</span>
+          <div aria-hidden className="h-4 w-1/3 animate-pulse rounded bg-zinc-100" />
+          <div aria-hidden className="h-20 animate-pulse rounded bg-zinc-100" />
+          <div aria-hidden className="h-28 animate-pulse rounded bg-zinc-100" />
+        </div>
+      )}
       {id !== null && effectiveResult !== null && (
         <IncidentDetails key={`${projectId}:${id}`} projectId={projectId} id={id} result={effectiveResult} onClose={onClose} onDeleted={onDeleted} />
       )}

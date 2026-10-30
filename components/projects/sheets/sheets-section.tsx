@@ -4,6 +4,7 @@ import { RequiredMark } from "@/components/ui/required-mark";
 import { ProjectWriteButton } from "@/components/projects/project-access-context";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import { Check, ChevronDown, ChevronRight, ClipboardCheck, Clock3, FileText, History, Info, LayoutGrid, List, Plus, Search, ShieldCheck, Upload } from "lucide-react";
 import { DocumentThumbnail, DocumentViewer, documentFileUrl, type ThumbnailCache } from "./document-preview";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -32,7 +33,7 @@ function FilePicker({ name, required = false, label }: { name: string; required?
 }
 const date = (value: string) => new Date(value.length === 10 ? `${value}T00:00:00+08:00` : value).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric" });
 
-type Detail = Awaited<ReturnType<typeof sheetDetails>>;
+type Detail = Omit<Awaited<ReturnType<typeof sheetDetails>>, "drawingUrl"> & { drawingUrl: string | null };
 
 export function SheetsSection({
   projectId,
@@ -101,13 +102,56 @@ export function SheetsSection({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  function closeDetail() { inspecting.current = null; setSelected(null); setReviewsLoading(false); setConfirmingDelete(false); setDeleteError(null); }
+  const searchParams = useSearchParams();
+  const rawSheetId = Number(searchParams.get("sheet"));
+  const sheetId = Number.isSafeInteger(rawSheetId) && rawSheetId > 0 ? rawSheetId : null;
+  const [handledSheetId, setHandledSheetId] = useState<number | null>(null);
+  if (sheetId !== handledSheetId) {
+    setHandledSheetId(sheetId);
+    if (sheetId !== null) {
+      const known = sheets.find(s => s.id === sheetId);
+      setOpen(true);
+      setGroup(known?.document_type === "drawing" ? "drawings" : "documents");
+      setQuery(""); setDiscipline(""); setComments(""); setFormError(null);
+      setConfirmingDelete(false); setDeleteError(null);
+      setSelected(known ? { sheet: known, drawingUrl: null, evidenceUrl: null, reviews: [], error: null } : null);
+      setDetailLoading(!known);
+      setReviewsLoading(true);
+    }
+  }
+  useEffect(() => {
+    if (sheetId === null) return;
+    let cancelled = false;
+    inspecting.current = sheetId;
+    sheetDetails(projectId, sheetId).then(result => {
+      if (cancelled || inspecting.current !== sheetId) return;
+      if (!result.error) reviewCache.current.set(sheetId, result.reviews);
+      setSelected(result);
+    }).catch(() => {
+      if (!cancelled && inspecting.current === sheetId) {
+        setSelected({ sheet: null, drawingUrl: null, evidenceUrl: null, reviews: [], error: "Could not load sheet details. Close and try again." });
+      }
+    }).finally(() => {
+      if (!cancelled && inspecting.current === sheetId) { setDetailLoading(false); setReviewsLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [projectId, sheetId]);
+  function closeDetail() {
+    inspecting.current = null; setSelected(null); setDetailLoading(false);
+    setReviewsLoading(false); setConfirmingDelete(false); setDeleteError(null);
+    // Allow the same notification to reopen after closing its document.
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("sheet")) {
+      url.searchParams.delete("sheet");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }
   async function inspect(id: number) {
     setFormError(null); setComments(""); setConfirmingDelete(false); setDeleteError(null);
     inspecting.current = id;
     const known = sheets.find(s => s.id === id);
     const knownReviews = reviewCache.current.get(id);
-    if (known) { setSelected({ sheet: known, drawingUrl: null, evidenceUrl: null, reviews: knownReviews ?? [], error: null } as unknown as Detail); setDetailLoading(false); }
+    if (known) { setSelected({ sheet: known, drawingUrl: null, evidenceUrl: null, reviews: knownReviews ?? [], error: null }); setDetailLoading(false); }
     else { setSelected(null); setDetailLoading(true); }
     setReviewsLoading(!knownReviews);
     try {

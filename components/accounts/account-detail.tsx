@@ -37,6 +37,7 @@ import type { AccountDetail as Detail, AccountRow } from "@/lib/accounts/data";
 import { roleLabel, type UserRole } from "@/lib/auth/roles";
 import { timeAgo } from "@/lib/time-ago";
 import { Modal, ModalFooter } from "@/components/ui/modal";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const INPUT =
   "w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
@@ -125,6 +126,8 @@ export function AccountDetail({
   const requirementsId = useId();
   const [handovers, setHandovers] = useState<Record<number, string>>({});
   const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -256,6 +259,18 @@ export function AccountDetail({
     );
   }
 
+  async function handlePermanentDelete() {
+    if (!isSuperAdmin || detail.hasHistory || busy !== null) return;
+    setBusy("delete"); setDeleteError(null);
+    try {
+      const result = await deleteAccount(account.id);
+      if (result.error) { setDeleteError(result.error); return; }
+      setDeleteOpen(false); router.refresh(); onClose();
+    } catch {
+      setDeleteError("Could not delete this account. Please try again.");
+    } finally { setBusy(null); }
+  }
+
   return (
     <div className="flex flex-col gap-0">
       <div className="-mx-6 -mt-5 flex items-center gap-4 border-b border-zinc-200 px-6 py-5">
@@ -277,6 +292,7 @@ export function AccountDetail({
           </div>
           <p className="truncate text-sm text-zinc-500">{account.email}</p>
         </div>
+        <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-2">
         {active && (
           <button
             type="button"
@@ -285,11 +301,19 @@ export function AccountDetail({
               setMessage(null);
               setDeactivateOpen(true);
             }}
-            className={`${DANGER} ml-auto shrink-0`}
+            className={DANGER}
           >
             {busy === "deactivate" ? "Deactivating..." : "Deactivate"}
           </button>
         )}
+        {isSuperAdmin && (
+          <button type="button" disabled={detail.hasHistory || busy !== null}
+            title={detail.hasHistory ? "This account has records. Deactivate it to preserve its history." : undefined}
+            onClick={() => { setDeleteError(null); setDeleteOpen(true); }} className={DANGER}>
+            {busy === "delete" ? "Deleting..." : "Delete permanently"}
+          </button>
+        )}
+        </div>
       </div>
 
       <dl className="-mx-6 grid grid-cols-1 border-b border-zinc-200 sm:grid-cols-3">
@@ -542,34 +566,6 @@ export function AccountDetail({
           </div>
         )}
 
-        {isSuperAdmin && detail && (
-          <div className="flex flex-col gap-1.5">
-            <div>
-              <button
-                type="button"
-                disabled={detail.hasHistory || busy !== null}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Delete ${name}'s account for good? This can't be undone.`
-                    )
-                  ) {
-                    run("access", "delete", () => deleteAccount(account.id));
-                  }
-                }}
-                className={DANGER}
-              >
-                {busy === "delete" ? "Deleting..." : "Delete Permanently"}
-              </button>
-            </div>
-            {detail.hasHistory && (
-              <p className="text-xs text-zinc-400">
-                Has records in the app (projects, logs, requests…) — deactivate instead, so
-                those stay theirs.
-              </p>
-            )}
-          </div>
-        )}
         {note("access")}
       </section>
       <ModalFooter>
@@ -583,6 +579,10 @@ export function AccountDetail({
           {busy === "save" ? "Saving..." : "Save"}
         </button>
       </ModalFooter>
+      <ConfirmDialog open={deleteOpen} title="Delete account permanently"
+        message={`Permanently delete ${name}'s account? This cannot be undone.`}
+        confirmLabel="Delete permanently" pending={busy === "delete"} error={deleteError}
+        onConfirm={handlePermanentDelete} onCancel={() => { if (busy !== "delete") setDeleteOpen(false); }} />
       <Modal
         open={deactivateOpen}
         onClose={() => {

@@ -367,6 +367,18 @@ input[type="date"][data-empty="true"] {
  * the compiled bundle's `styles$8` map, same as the classes above); the
  * progress rect has no class, so it's the group's second rect.
  */
+.gantt-task-react-root [data-gantt-multi-selected] rect._31ERP,
+.gantt-task-react-root [data-gantt-multi-selected] rect._2P2B1,
+.gantt-task-react-root [data-gantt-multi-selected] rect._2RbVy {
+  stroke: var(--color-zinc-900);
+  stroke-width: 1.5px;
+  paint-order: stroke fill;
+}
+
+.gantt-task-react-root [data-gantt-multi-selected] > text {
+  font-weight: 600;
+}
+
 .gantt-task-react-root ._1KJ6x ._2RbVy {
   opacity: 1;
   clip-path: inset(0 0 50% 0);

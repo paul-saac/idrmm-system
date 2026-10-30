@@ -341,6 +341,7 @@ function ProjectDetailContent({
     url.searchParams.delete("subtab");
     url.searchParams.delete("request");
     url.searchParams.delete("progress");
+    url.searchParams.delete("progressDate");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
   const mainTabRefs = useRef<Partial<Record<MainTab, HTMLButtonElement | null>>>({});
@@ -477,16 +478,6 @@ function ProjectDetailContent({
     landOnEquipmentList ?? "cost"
   );
   const equipmentRecordRef = useRef<HTMLDivElement>(null);
-  const requestTarget = `${tabParam}:${subtabParam}:${searchParams.get("request")}`;
-  const [handledRequestTarget, setHandledRequestTarget] = useState(requestTarget);
-  if (requestTarget !== handledRequestTarget) {
-    setHandledRequestTarget(requestTarget);
-    if (subtabParam === "requests" && (tabParam === "materials" || tabParam === "equipment")) {
-      setActiveTab(tabParam);
-      if (tabParam === "materials") setMaterialsRecordView("requests");
-      else setEquipmentRecordList("requests");
-    }
-  }
   useEffect(() => {
     if (!landOnEquipmentList) return;
     // As the Material record's own landing above: to the request's row
@@ -502,6 +493,31 @@ function ProjectDetailContent({
   const [openEquipmentRequestIds, setOpenEquipmentRequestIds] = useState<ReadonlySet<number>>(
     () => new Set(landOnEquipmentRequestId ? [landOnEquipmentRequestId] : [])
   );
+  const requestTarget = `${tabParam}:${subtabParam}:${searchParams.get("request")}`;
+  const [handledRequestTarget, setHandledRequestTarget] = useState(requestTarget);
+  if (requestTarget !== handledRequestTarget) {
+    setHandledRequestTarget(requestTarget);
+    if (subtabParam === "requests" && (tabParam === "materials" || tabParam === "equipment")) {
+      setActiveTab(tabParam);
+      const id = Number(searchParams.get("request"));
+      if (tabParam === "materials") {
+        setMaterialsRecordView("requests");
+        if (Number.isSafeInteger(id) && id > 0) setOpenRequestIds(prev => new Set(prev).add(id));
+      } else {
+        setEquipmentRecordList("requests");
+        if (Number.isSafeInteger(id) && id > 0) setOpenEquipmentRequestIds(prev => new Set(prev).add(id));
+      }
+    }
+  }
+  useEffect(() => {
+    if (subtabParam !== "requests" || (tabParam !== "materials" && tabParam !== "equipment")) return;
+    if (!searchParams.has("request")) return;
+    // Consume the target after opening/scrolling so the same notification
+    // works again even if the user has since collapsed its request row.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("request");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [tabParam, subtabParam, searchParams]);
   function toggleEquipmentRequest(id: number) {
     setOpenEquipmentRequestIds((prev) => {
       const next = new Set(prev);
@@ -758,6 +774,7 @@ function ProjectDetailContent({
                 onViewChange={setMaterialsRecordView}
                 requests={materialRequests}
                 openRequestIds={openRequestIds}
+                linkedRequestId={landOnRequestId}
                 onToggleRequest={toggleRequest}
                 currentUserName={currentUserName}
                 usage={recentMaterialUsage}
@@ -798,6 +815,7 @@ function ProjectDetailContent({
                 onViewChange={setEquipmentRecordList}
                 onOpenProgressLog={openEquipmentProgressLog}
                 openRequestIds={openEquipmentRequestIds}
+                linkedRequestId={landOnEquipmentRequestId}
                 onToggleRequest={toggleEquipmentRequest}
                 currentUserName={currentUserName}
               />

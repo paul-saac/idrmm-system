@@ -7,6 +7,7 @@ import { requireProjectAccess } from "@/lib/auth/project-access";
 import { validOtherCostChanges, type OtherCostChange } from "./other-cost-lines";
 import { recordGanttCheckpoint } from "@/lib/cost-estimate/undo-redo";
 import type { CostCategory } from "@/lib/cost-estimate/data";
+import { projectScheduleDates } from "./schedule-dates";
 
 export type CostEstimateActionState = {
   error?: string;
@@ -173,11 +174,17 @@ export async function createCategory(
     }
 
     const supabase = await createClient();
+    const { data: project, error: projectError } = await supabase.from("projects")
+      .select("start_date, target_end_date").eq("id", projectId).single();
+    if (projectError || !project) return { error: "Could not load the project schedule. Please retry." };
+    const dates = projectScheduleDates(project.start_date, project.target_end_date);
     const { data, error } = await supabase
       .from("estimate_categories")
       .insert({
         project_id: projectId,
         category_name: categoryName,
+        planned_start_date: dates.start,
+        planned_end_date: dates.end,
       })
       .select("id")
       .single();
@@ -510,6 +517,17 @@ export async function createTask(
 
     const fields = buildTaskFields(formData);
 
+    const supabase = await createClient();
+    if (!fields.plannedStartDate || !fields.plannedEndDate) {
+      const { data: project, error } = await supabase.from("projects")
+        .select("start_date, target_end_date").eq("id", projectId).single();
+      if (error || !project) return { error: "Could not load the project schedule. Please retry." };
+      const dates = projectScheduleDates(project.start_date, project.target_end_date);
+      fields.plannedStartDate ||= dates.start;
+      fields.plannedEndDate ||= dates.end;
+    }
+    if (fields.isMilestone && fields.plannedStartDate) fields.plannedEndDate = fields.plannedStartDate;
+
     if (!fields.taskName) {
       return { error: "Task description is required." };
     }
@@ -535,8 +553,6 @@ export async function createTask(
     ) {
       fields.plannedEndDate = fields.plannedStartDate;
     }
-
-    const supabase = await createClient();
 
     const predecessorError = await validatePredecessor(
       supabase,

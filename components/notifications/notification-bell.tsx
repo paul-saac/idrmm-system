@@ -69,14 +69,13 @@ export function NotificationBell() {
     setOpen((value) => !value);
   }
 
-  async function openNotification(notification: AppNotification) {
+  function openNotification(notification: AppNotification) {
     setOpen(false);
-    if (!notification.read) await markRead(notification.id);
-    // Opens that row's Daily Progress Update, its Last override highlighted
-    // (see GanttChartView's own ?progress handling).
-    router.push(
-      notificationLink(basePath, notification)
-    );
+    router.push(notificationLink(basePath, notification));
+    // Updating the unread indicator must not delay or prevent opening a record.
+    if (!notification.read) void markRead(notification.id).catch(() => {
+      // The provider refreshes unread status when the bell opens or regains focus.
+    });
   }
 
   return (

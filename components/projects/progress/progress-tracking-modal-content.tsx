@@ -392,7 +392,9 @@ function LastOverride({
 }) {
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (highlight) ref.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (highlight && !ref.current?.closest("[inert]")) {
+      ref.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }
   }, [highlight]);
   const day =
     latest.entryDate === toIsoDate(new Date())
@@ -734,7 +736,7 @@ function OverrideHistory({
   const [highlightedId, setHighlightedId] = useState<number | null>(targetLogId);
   const targetRef = useRef<HTMLLIElement>(null);
   useLayoutEffect(() => {
-    if (targetLogId === null) return;
+    if (targetLogId === null || targetRef.current?.closest("[inert]")) return;
     targetRef.current?.scrollIntoView({ block: "center", behavior: "instant" });
   }, [targetLogId]);
   useEffect(() => {

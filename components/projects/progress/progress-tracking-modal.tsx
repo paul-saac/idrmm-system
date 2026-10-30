@@ -26,7 +26,7 @@ import type {
 export type ProgressModalTarget = (
   | { kind: "task"; task: CostTask }
   | { kind: "category"; category: CostCategory }
-) & { highlightLatest?: boolean; highlightEntryDate?: string };
+) & { readOnly?: boolean; highlightLatest?: boolean; highlightEntryDate?: string };
 
 const EMPTY_PROGRESS_TODAY: TaskProgressToday = {
   ...EMPTY_PROGRESS_ANCHOR,
@@ -126,6 +126,9 @@ export function ProgressTrackingModal({
 
   const item = target?.kind === "task" ? target.task : target?.category;
   const itemKey = target && item ? `${target.kind}-${item.id}` : "";
+  // A notification can open before the navigation's refreshed data arrives.
+  // Refresh read-only snapshots when history changes, preserving editor drafts.
+  const historyVersion = readOnly ? (overrideHistory[itemKey] ?? []).map(log => log.id).join(",") : "";
   const progressToday = target?.kind === "task"
     ? taskProgressToday[target.task.id]
     : target ? categoryProgressToday[target.category.id] : undefined;
@@ -142,7 +145,7 @@ export function ProgressTrackingModal({
     <Modal open={target !== null} onClose={onClose} size="large" bare hideCloseButton={!readOnly} title={item?.name ?? "Progress Tracking"}>
       {target && item && (
         <ProgressTrackingModalContent
-          key={`${itemKey}:${target.highlightEntryDate ?? ""}`}
+          key={`${itemKey}:${target.highlightEntryDate ?? ""}:${historyVersion}`}
           projectId={projectId}
           projectName={projectName}
           incidentContext={{ kind: target.kind, id: item.id, name: item.name }}
