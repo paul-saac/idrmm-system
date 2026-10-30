@@ -6,15 +6,27 @@ export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
 
 function isSameOrigin(request: NextRequest) {
-  let expectedOrigin = request.nextUrl.origin;
-  if (process.env.WEBSITE_HOSTNAME) {
-    // App Service terminates HTTPS before forwarding HTTP to Next.js. Use
-    // its public Host, not the internal URL or a supplied X-Forwarded-Host.
-    const host = request.headers.get("host");
-    if (!host || request.headers.get("x-forwarded-proto") !== "https") return false;
-    expectedOrigin = `https://${host}`;
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  if (process.env.NODE_ENV !== "production" && !process.env.WEBSITE_HOSTNAME) {
+    return origin === request.nextUrl.origin;
   }
-  return request.headers.get("origin") === expectedOrigin;
+  // Production proxies can rewrite the URL and Host. Only trust website
+  // addresses from server configuration, never client-supplied proxy headers.
+  const sites = [
+    process.env.NEXT_PUBLIC_SITE_URL,
+    process.env.WEBSITE_HOSTNAME && `https://${process.env.WEBSITE_HOSTNAME}`,
+    process.env.WEBSITE_DEFAULT_HOSTNAME && `https://${process.env.WEBSITE_DEFAULT_HOSTNAME}`,
+  ];
+  return sites.some(site => {
+    if (!site) return false;
+    try {
+      const url = new URL(site);
+      return url.protocol === "https:" && url.origin === origin;
+    } catch {
+      return false;
+    }
+  });
 }
 
 async function respond(activity = false, end = false) {
