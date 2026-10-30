@@ -6,6 +6,9 @@ export const metadata: Metadata = {
 };
 
 const ERROR_MESSAGES: Record<string, string> = {
+  session_idle: "You were signed out after 30 minutes of inactivity. Please sign in again.",
+  session_maximum: "Your 12-hour session has ended. Please sign in again.",
+  session_expired: "Your session has ended. Please sign in again.",
   account_disabled: "This account has been deactivated. Contact your administrator.",
   no_profile: "Your account has no assigned role yet. Contact your administrator.",
   invalid_link: "That link is invalid or has expired. Please request a new one.",

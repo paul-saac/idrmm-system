@@ -41,6 +41,16 @@ function formatWeight(weight: number | null | undefined) {
   return `${(weight ?? 0).toFixed(2)}%`;
 }
 
+// Display codes follow the full estimate order, including hidden milestone
+// rows, so expanding or hiding details cannot change another item's code.
+function categoryItemCode(index: number): string {
+  let code = "";
+  for (let position = index + 1; position > 0; position = Math.floor((position - 1) / 26)) {
+    code = String.fromCharCode(65 + ((position - 1) % 26)) + code;
+  }
+  return code;
+}
+
 // An empty cell counts as 0; null flags anything that isn't a real,
 // non-negative number.
 function parseQuantity(value: string): number | null {
@@ -99,13 +109,13 @@ const EDITABLE_TD = "border-r border-zinc-200 p-0";
 const MIN_CATEGORIES_WIDTH = 200;
 const DEFAULT_CATEGORIES_WIDTH = 280;
 
-// Every column this table renders — Categories, Estimated Quantity,
+// Every column this table renders — Item No., Categories, Estimated Quantity,
 // Unit, Labor, Material, Equipment, Other, Total Estimated Cost, Weight
 // — used only to span the "Other" cost breakdown row across all of
 // them. A plain constant rather than something computed: this table has
 // no manage-mode/Action column anymore (see CostEstimateView's own doc
 // comment on why), so the count never varies.
-const _COLUMN_COUNT = 9;
+const _COLUMN_COUNT = 10;
 
 /**
  * A read-only view of the project's own cost estimate *structure* —
@@ -388,6 +398,9 @@ export function CostEstimateView({
           <table className="w-full table-fixed text-left text-sm">
               <thead className="bg-white text-xs font-medium text-zinc-500">
                 <tr>
+                  <th className="w-12 border-r border-zinc-200 px-1 py-2.5 text-center whitespace-nowrap">
+                    Item No.
+                  </th>
                   <th
                     style={{ width: categoriesWidth }}
                     className="relative border-r border-zinc-200 px-4 py-2.5"
@@ -453,7 +466,8 @@ export function CostEstimateView({
                 </tr>
               </thead>
               <tbody>
-                {categories.map((category) => {
+                {categories.map((category, categoryIndex) => {
+                  const itemCode = categoryItemCode(categoryIndex);
                   // Milestones are point-in-time schedule markers (the
                   // Gantt Chart's own diamond rows) created from its own
                   // lightweight Add Task form, which never asks for
@@ -466,9 +480,9 @@ export function CostEstimateView({
                   // tied to a "Permit Approved" milestone), so only a
                   // milestone that's *actually* still ₱0 gets hidden,
                   // never one that's had a real cost entered against it.
-                  const tasks = category.tasks.filter(
-                    (t) => !t.isMilestone || t.totalEstimateCost > 0
-                  );
+                  const tasks = category.tasks
+                    .map((task, index) => ({ task, itemCode: `${itemCode}.${index + 1}` }))
+                    .filter(({ task }) => !task.isMilestone || task.totalEstimateCost > 0);
                   const isOpen = !collapsedCategoryIds.has(category.id);
                   // Each column is the category's own direct line (its
                   // labor/material/equipment/other — see 0047, 0042 and
@@ -502,10 +516,16 @@ export function CostEstimateView({
                           highlightedTarget?.kind === "category" &&
                           highlightedTarget.id === category.id
                             ? "bg-amber-50 text-zinc-900 ring-1 ring-amber-300 ring-inset"
-                            : "bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
+                            : category.tasks.length > 0
+                              ? "bg-zinc-100 text-zinc-700 hover:bg-zinc-200/60 hover:text-zinc-900"
+                              : "bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
                         }`}
                       >
+                        <td className="border-r border-zinc-200 px-1 py-2.5 text-center whitespace-nowrap">
+                          {itemCode}
+                        </td>
                         <td className="border-r border-zinc-200 px-4 py-2.5">
+                          {category.tasks.length > 0 ? (
                           <button
                             type="button"
                             onClick={() => toggleCategory(category.id)}
@@ -518,6 +538,9 @@ export function CostEstimateView({
                             )}
                             {category.name}
                           </button>
+                          ) : (
+                            <span className="block pl-5.5">{category.name}</span>
+                          )}
                         </td>
                         <td
                           className={
@@ -538,9 +561,7 @@ export function CostEstimateView({
                                 )
                               }
                             />
-                          ) : (
-                            "—"
-                          )}
+                          ) : null}
                         </td>
                         <td
                           className={
@@ -560,9 +581,7 @@ export function CostEstimateView({
                                 )
                               }
                             />
-                          ) : (
-                            "—"
-                          )}
+                          ) : null}
                         </td>
                         <td
                           className={`border-r border-zinc-200 px-4 py-2.5 text-right transition-colors duration-500 ${
@@ -633,7 +652,7 @@ export function CostEstimateView({
                       </tr>
 
                       {isOpen &&
-                        tasks.map((task) => (
+                        tasks.map(({ task, itemCode: taskItemCode }) => (
                           <tr
                             key={task.id}
                             data-cost-task-row={task.id}
@@ -644,6 +663,9 @@ export function CostEstimateView({
                                 : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
                             }`}
                           >
+                            <td className="border-r border-zinc-200 px-1 py-2.5 text-center whitespace-nowrap">
+                              {taskItemCode}
+                            </td>
                             <td className="truncate border-r border-zinc-200 px-4 py-2.5 pl-8">
                               {task.name}
                             </td>
@@ -748,7 +770,7 @@ export function CostEstimateView({
                   that header's own doc comment on this token). */}
               <tfoot>
                 <tr className="bg-zinc-900 text-sm font-semibold text-white">
-                  <td className="border-r border-white/10 px-4 py-3" colSpan={3}>
+                  <td className="border-r border-white/10 px-4 py-3" colSpan={4}>
                     PROJECT TOTAL
                   </td>
                   <td className="border-r border-white/10 px-4 py-3 text-right">

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { roleHome, roleLabel } from "@/lib/auth/roles";
 import { AcceptInviteForm } from "@/components/auth/accept-invite-form";
+import { SessionGuard } from "@/components/auth/session-guard";
 
 export const metadata = { title: "Accept invitation" };
 export default async function AcceptInvitePage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
@@ -13,6 +14,7 @@ export default async function AcceptInvitePage({ searchParams }: { searchParams:
   if (!params.error && profile?.status === "active" && !profile.invitation_pending) redirect(roleHome(profile.role));
   const valid = !params.error && user && profile?.status === "active" && profile.invitation_pending;
   return <main className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-12">
+    {valid && <SessionGuard />}
     <div className="w-full max-w-md rounded-lg border border-zinc-200 bg-white p-8">
       <h1 className="font-serif text-2xl">IDR M&amp;M</h1>
       <h2 className="mt-8 text-xl font-semibold">{valid ? "Set up your account" : "Invitation unavailable"}</h2>

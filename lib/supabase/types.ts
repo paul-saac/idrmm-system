@@ -225,6 +225,7 @@ export interface Database {
         Row: {
           id: number;
           project_id: number;
+          sort_order: number | null;
           category_name: string;
           /** See 0042_category_direct_cost.sql's own comment — a
            * category's own direct BOM line, same reasoning as a task's
@@ -278,6 +279,7 @@ export interface Database {
           // Every other insert call in the app omits this, same as before.
           id?: number;
           project_id: number;
+          sort_order?: number | null;
           category_name: string;
           material_direct_quantity?: number;
           material_direct_unit?: string | null;
@@ -296,6 +298,7 @@ export interface Database {
           unit?: string | null;
         };
         Update: {
+          sort_order?: number | null;
           category_name?: string;
           material_direct_quantity?: number;
           material_direct_unit?: string | null;
@@ -321,6 +324,7 @@ export interface Database {
         Row: {
           id: number;
           project_id: number;
+          sort_order: number | null;
           category_id: number;
           task_name: string;
           estimated_quantity: number | null;
@@ -352,6 +356,7 @@ export interface Database {
           // same reasoning, same restore-only caller.
           id?: number;
           project_id: number;
+          sort_order?: number | null;
           category_id: number;
           task_name: string;
           estimated_quantity?: number;
@@ -372,6 +377,7 @@ export interface Database {
           material_direct_amount?: number | null;
         };
         Update: {
+          sort_order?: number | null;
           category_id?: number;
           task_name?: string;
           estimated_quantity?: number;
@@ -1586,6 +1592,12 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      move_estimate_row: {
+        Args: { p_project_id: number; p_kind: string; p_row_id: number; p_target_id: number; p_after: boolean };
+        Returns: { category_id: number | null; ids: number[] };
+      };
+      app_session_state: { Args: { p_activity?: boolean; p_end?: boolean }; Returns: unknown };
+      app_session_is_active: { Args: Record<string, never>; Returns: boolean };
       system_backup_status: { Args: Record<string, never>; Returns: unknown };
       system_backup_request: { Args: { p_kind: string; p_snapshot_id?: string; p_confirmation?: string }; Returns: string };
       system_backup_maintenance: { Args: Record<string, never>; Returns: boolean };

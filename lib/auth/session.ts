@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/lib/auth/roles";
+import { readSessionState } from "./session-state";
 
 export type SessionProfile = {
   id: string;
@@ -28,6 +29,7 @@ export const getSessionProfile = cache(async (): Promise<SessionProfile | null> 
   } = await supabase.auth.getUser();
 
   if (!user) return null;
+  if (!(await readSessionState(supabase))?.active) return null;
 
   const { data: profile } = await supabase
     .from("profiles")

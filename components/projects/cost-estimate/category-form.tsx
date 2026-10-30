@@ -24,6 +24,7 @@ export function CategoryForm({
   showDeleteButton,
   onRequestDelete,
   onSuccess,
+  onSave,
 }: {
   projectId: number;
   /** hasTasks false (a task-less, "standalone" category) adds a
@@ -49,6 +50,9 @@ export function CategoryForm({
   showDeleteButton?: boolean;
   onRequestDelete?: () => void;
   onSuccess?: () => void;
+  /** The Gantt owns optimistic edit saves so closing this form cannot lose
+   * the save result or its error handler. Create mode keeps its normal action. */
+  onSave?: (form: FormData) => void;
 }) {
   const boundAction = category
     ? updateCategory.bind(null, category.id, projectId)
@@ -99,7 +103,10 @@ export function CategoryForm({
 
   return (
     <div className="flex flex-col gap-4">
-      <form id={formId} action={formAction} className="flex flex-col gap-4" noValidate autoComplete="off">
+      <form id={formId} action={formAction} onSubmit={category && onSave ? event => {
+        event.preventDefault();
+        onSave(new FormData(event.currentTarget));
+      } : undefined} className="flex flex-col gap-4" noValidate autoComplete="off">
         {category ? (
           <input type="hidden" name="categoryName" value={category.name} />
         ) : (

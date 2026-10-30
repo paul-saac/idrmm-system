@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { roleHome, type UserRole } from "@/lib/auth/roles";
 import { saveSetupPassword } from "./save-setup-password";
+import { readSessionState } from "./session-state";
 
 export type AuthActionState = {
   error?: string;
@@ -41,6 +42,11 @@ export async function login(
     return { error: "Invalid email or password." };
   }
 
+  if (!(await readSessionState(supabase))?.active) {
+    await supabase.auth.signOut({ scope: "local" });
+    return { error: "Could not start a secure session. Contact your administrator to check session configuration." };
+  }
+
   const { data: profile } = await supabase
     .from("profiles")
     .select("role, status, invitation_pending")
@@ -65,6 +71,7 @@ export async function login(
 
 export async function logout() {
   const supabase = await createClient();
+  await readSessionState(supabase, false, true);
   await supabase.auth.signOut();
   redirect("/");
 }
@@ -163,6 +170,11 @@ export async function changePassword(
   });
   if (signInError) {
     return { error: "Your current password is incorrect." };
+  }
+
+  if (!(await readSessionState(supabase))?.active) {
+    await supabase.auth.signOut({ scope: "local" });
+    return { error: "Could not verify your session. Please sign in again." };
   }
 
   const { error } = await supabase.auth.updateUser({ password });

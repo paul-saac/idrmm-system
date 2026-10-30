@@ -57,6 +57,7 @@ test('native pg_dump/psql round trip works without superuser recovery privileges
       alter table projects add constraint projects_cursor_fk foreign key(gantt_undo_cursor_id) references gantt_snapshots;
       create table tasks(id bigint primary key,project_id bigint references projects,predecessor_task_id bigint references tasks);
       create table logs(id bigint primary key,project_id bigint references projects,amount numeric);
+      create table app_user_sessions(session_id uuid primary key references auth.sessions(id) on delete cascade,user_id uuid references auth.users,started_at timestamptz,last_activity_at timestamptz,revoked_at timestamptz);
       create function handle_new_user() returns trigger language plpgsql security definer as $$begin
         if current_setting('fixture.invitation',true) is distinct from 'accepted' then raise exception 'An administrator invitation is required.'; end if;
         insert into public.profiles(id) values(new.id);return new;end$$;`);
@@ -64,6 +65,8 @@ test('native pg_dump/psql round trip works without superuser recovery privileges
     const actor='00000000-0000-4000-8000-000000000001';
     await client.query(`set fixture.invitation='accepted';insert into auth.users values('${actor}','super@example.test');
       update profiles set first_name='Saved',last_name='Administrator',role='super_admin' where id='${actor}';
+      insert into auth.sessions values('${actor}','${actor}');
+      insert into app_user_sessions values('${actor}','${actor}',now(),now(),null);
       insert into projects(name,created_by,archived_at) values('Fixture project','${actor}',now());
       insert into gantt_snapshots(project_id) values(1);update projects set gantt_undo_cursor_id=1;
       insert into tasks values(1,1,null),(2,1,1);insert into logs values(1,1,800);
@@ -90,6 +93,7 @@ test('native pg_dump/psql round trip works without superuser recovery privileges
     assert.equal((await client.query('select predecessor_task_id from tasks where id=2')).rows[0].predecessor_task_id,'1');
     assert.equal((await client.query('select last_value::text from projects_id_seq')).rows[0].last_value,'1');
     assert.equal((await describeDatabase(client)).fingerprint,database.fingerprint);
+    assert.equal((await client.query('select * from app_user_sessions')).rows.length,0,'Restored accounts must sign in again; old session activity must not survive recovery.');
     await client.query("set fixture.invitation=''");
     await assert.rejects(client.query("insert into auth.users values('00000000-0000-4000-8000-000000000002','blocked@example.test')"),/administrator invitation is required/);
     assert.equal((await client.query('select maintenance from system_backup_state')).rows[0].maintenance,true);

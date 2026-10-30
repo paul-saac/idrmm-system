@@ -1,7 +1,7 @@
 "use client";
 
 import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, useProjectCanEdit } from "@/components/projects/project-access-context";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   Diamond,
+  GripVertical,
   Plus,
   Redo2,
   Trash2,
@@ -27,6 +28,9 @@ import { ViewMenu, type ViewOption } from "@/components/ui/view-menu";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
+import { applyScheduleModalEdits, scheduleModalEdit, unconfirmedScheduleModalEdits, type PendingScheduleModalEdit, type ScheduleModalEdit } from "./schedule-modal-edits";
+import { moveScheduleRow } from "@/lib/cost-estimate/reorder-actions";
+import { applyPendingScheduleMoves, scheduleOrderForMove, unconfirmedScheduleMoves, type PendingScheduleMove, type ScheduleRowMove } from "@/lib/cost-estimate/schedule-order";
 import { AssignWorkersModalContent } from "@/components/projects/progress/assign-workers-modal-content";
 import { EquipmentTrackingPanel } from "@/components/projects/equipment/equipment-tracking-panel";
 import { loadEquipmentTracking } from "@/lib/equipment/tracking-actions";
@@ -52,6 +56,7 @@ import {
   updateCategoryPriority,
   createCategory,
   updateCategory,
+  updateSubtask,
   renameTask,
   createTask,
   deleteCategory,
@@ -748,6 +753,7 @@ export function GanttChartView({
   materialStocks?: MaterialStockItem[];
 }) {
   const router = useRouter();
+  const successorArrowId = useId();
   // Month is the default — unlike Week, its column labels are plain
   // month names with no "W##" numbering that could read as resetting
   // each time the visible range crosses a year boundary (an ISO-8601
@@ -867,6 +873,24 @@ export function GanttChartView({
       ? pendingNewTask
       : null;
   const [optimisticDeletions, setOptimisticDeletions] = useState<OptimisticScheduleDeletion[]>([]);
+  const [modalEdits, setModalEdits] = useState<PendingScheduleModalEdit[]>([]);
+  const modalSaveQueue = useRef(Promise.resolve());
+  const modalEditSequence = useRef(0);
+  const [modalSaveError, setModalSaveError] = useState<string | null>(null);
+  const activeModalEdits = useMemo(() => unconfirmedScheduleModalEdits(activeCategoriesOverride ?? categories, modalEdits),
+    [categories, activeCategoriesOverride, modalEdits]);
+  if (activeModalEdits !== modalEdits) setModalEdits(activeModalEdits);
+  const savingModalEdit = activeModalEdits.some(edit => edit.pending);
+  const [rowMoves, setRowMoves] = useState<PendingScheduleMove[]>([]);
+  const rowMoveQueue = useRef(Promise.resolve());
+  const rowMoveSequence = useRef(0);
+  const [rowMoveError, setRowMoveError] = useState<string | null>(null);
+  const draggedRow = useRef<{ kind: "category" | "task"; id: number; categoryId: number | null } | null>(null);
+  const dropMarker = useRef<HTMLElement | null>(null);
+  const activeRowMoves = useMemo(() => unconfirmedScheduleMoves(activeCategoriesOverride ?? categories, rowMoves),
+    [categories, activeCategoriesOverride, rowMoves]);
+  if (activeRowMoves !== rowMoves) setRowMoves(activeRowMoves);
+  const savingRowOrder = activeRowMoves.some(entry => entry.pending);
   // Keep rows hidden through unrelated refreshes while saving, and until
   // server data confirms their absence. Then discard the mask so Undo can
   // restore those IDs normally.
@@ -905,6 +929,9 @@ export function GanttChartView({
           : c
       );
     }
+    if (activeModalEdits.length > 0) {
+      result = applyScheduleModalEdits(result, activeModalEdits.map(entry => entry.edit));
+    }
     if (activeDeletions.length > 0) {
       const categoryIds = new Set(activeDeletions.flatMap((item) => item.categoryIds));
       const taskIds = new Set(activeDeletions.flatMap((item) => item.taskIds));
@@ -913,8 +940,9 @@ export function GanttChartView({
         tasks: category.tasks.filter((task) => !taskIds.has(task.id)),
       }));
     }
+    if (activeRowMoves.length > 0) result = applyPendingScheduleMoves(result, activeRowMoves);
     return result;
-  }, [categories, activeCategoriesOverride, activeNewPhase, activeNewTask, activeDeletions]);
+  }, [categories, activeCategoriesOverride, activeNewPhase, activeNewTask, activeDeletions, activeModalEdits, activeRowMoves]);
   // Same click-to-rename pattern as editingCategoryId above, just for a
   // subtask's own name cell — its pencil icon's SubtaskForm modal still
   // exists alongside it for everything else (dates, priority, milestone,
@@ -1156,6 +1184,35 @@ export function GanttChartView({
   // optimistic/error state by hand.
   const [isUndoRedoPending, setIsUndoRedoPending] = useState(false);
 
+  function clearRowDrag() {
+    if (dropMarker.current) delete dropMarker.current.dataset.ganttDrop;
+    dropMarker.current = null;
+    draggedRow.current = null;
+  }
+
+  function handleRowMove(move: ScheduleRowMove) {
+    if (!canEdit || deleting || isUndoRedoPending || move.id <= 0 || move.targetId <= 0) return;
+    if (!scheduleOrderForMove(categoriesForDisplay, move)) return;
+    const token = ++rowMoveSequence.current;
+    setRowMoveError(null);
+    // Update rows and bars before starting any network work. Keep later drops
+    // responsive while serializing writes to preserve their exact click order.
+    setRowMoves(previous => [...previous, { token, move, pending: true }]);
+    rowMoveQueue.current = rowMoveQueue.current.then(async () => {
+      try {
+        const result = await moveScheduleRow(projectId, move);
+        if (result.error || !result.order) throw new Error(result.error ?? "Could not save the task order.");
+        setRowMoves(previous => previous.map(entry => entry.token === token
+          ? { ...entry, pending: false, savedOrder: result.order } : entry));
+      } catch (error) {
+        setRowMoves(previous => previous.filter(entry => entry.token !== token));
+        setRowMoveError(error instanceof Error ? error.message : "Could not save the task order. Please try again.");
+      } finally {
+        router.refresh();
+      }
+    });
+  }
+
   // Undo/Redo is scoped to "actions taken in the current Gantt Chart
   // session" per an explicit request — reloading the page, or leaving
   // this tab and coming back (this component unmounts on every tab
@@ -1202,7 +1259,7 @@ export function GanttChartView({
   }, []);
 
   async function handleUndo() {
-    if (!canEdit || deleting) return;
+    if (!canEdit || deleting || savingModalEdit || savingRowOrder) return;
     if (!historyReady || !effectiveCanUndo || isUndoRedoPending) return;
     setIsUndoRedoPending(true);
     setScheduleError(null);
@@ -1219,6 +1276,8 @@ export function GanttChartView({
     // undoRedoOverride's own doc comment above for why *both* matter,
     // not just categories.
     if (result.categories) {
+      setRowMoves([]);
+      setModalEdits([]);
       setOptimisticDeletions([]);
       setUndoRedoOverride({
         categoriesAtSet,
@@ -1245,7 +1304,7 @@ export function GanttChartView({
   }
 
   async function handleRedo() {
-    if (!canEdit || deleting) return;
+    if (!canEdit || deleting || savingModalEdit || savingRowOrder) return;
     if (!historyReady || !effectiveCanRedo || isUndoRedoPending) return;
     setIsUndoRedoPending(true);
     setScheduleError(null);
@@ -1258,6 +1317,8 @@ export function GanttChartView({
     }
     // Same as handleUndo's own comment above.
     if (result.categories) {
+      setRowMoves([]);
+      setModalEdits([]);
       setOptimisticDeletions([]);
       setUndoRedoOverride({
         categoriesAtSet,
@@ -1315,6 +1376,8 @@ export function GanttChartView({
     effectiveCanUndo,
     effectiveCanRedo,
     isUndoRedoPending,
+    savingModalEdit,
+    savingRowOrder,
     categoryModal,
     taskModal,
   ]);
@@ -2343,7 +2406,8 @@ export function GanttChartView({
   // rows always sort after every real one. Kept separate from
   // effectiveTasks/visibleTasks (used everywhere else) so none of that
   // ever has to know filler rows exist.
-  const chartTasks = [...effectiveTasks.map(task => ({ ...task, isDisabled: !canEdit || task.isDisabled })), ...fillerTasks];
+  const chartTasks = [...effectiveTasks.map(task => ({ ...task, isDisabled: !canEdit || task.isDisabled })), ...fillerTasks]
+    .map((task, index) => ({ ...task, displayOrder: index + 1 }));
 
   // True for a brief moment right after a *real* bar drag (move/resize/
   // progress — actual mouse movement between mousedown and mouseup, not
@@ -2804,6 +2868,7 @@ export function GanttChartView({
       const draft = inlineNameDrafts.current.get(`category:${tempId}`);
       if (draft) {
         inlineNameDrafts.current.set(`category:${result.categoryId}`, draft);
+        inlineNameDrafts.current.delete(`category:${tempId}`);
         setCategoryNameOverride(result.categoryId, draft.value);
       }
       setEditingCategoryId(current => current === tempId ? result.categoryId! : current);
@@ -2902,6 +2967,7 @@ export function GanttChartView({
       const draft = inlineNameDrafts.current.get(`task:${tempId}`);
       if (draft) {
         inlineNameDrafts.current.set(`task:${result.taskId}`, draft);
+        inlineNameDrafts.current.delete(`task:${tempId}`);
         setNameOverride(result.taskId, draft.value);
       }
       setEditingTaskId(current => current === tempId ? result.taskId! : current);
@@ -2929,6 +2995,7 @@ export function GanttChartView({
     previousValue: string
   ) {
     setEditingCategoryId(null);
+    inlineNameDrafts.current.delete(`category:${categoryId}`);
     const trimmed = value.trim();
     if (!trimmed || trimmed === previousValue) return;
 
@@ -2970,6 +3037,7 @@ export function GanttChartView({
     previousValue: string
   ) {
     setEditingTaskId(null);
+    inlineNameDrafts.current.delete(`task:${taskId}`);
     const trimmed = value.trim();
     if (!trimmed || trimmed === previousValue) return;
 
@@ -2993,6 +3061,35 @@ export function GanttChartView({
       return;
     }
     router.refresh();
+  }
+
+  function handleModalSave(kind: ScheduleModalEdit["kind"], id: number, name: string, form: FormData) {
+    if (!canEdit) return;
+    const token = ++modalEditSequence.current;
+    const edit = scheduleModalEdit(kind, id, form);
+    setModalSaveError(null);
+    setModalEdits(current => [...current, { token, edit, pending: true }]);
+    if (kind === "category") setCategoryModal(null);
+    else setTaskModal(null);
+
+    // Preserve click order even when another modal is saved before the first
+    // request finishes. Only the existing authorized server actions persist it.
+    modalSaveQueue.current = modalSaveQueue.current.then(async () => {
+      try {
+        const result = kind === "category"
+          ? await updateCategory(id, projectId, {}, form)
+          : await updateSubtask(id, projectId, {}, form);
+        if (!result.success || result.error) throw new Error(result.error || "Please try again.");
+        setModalEdits(current => current.map(entry => entry.token === token ? { ...entry, pending: false } : entry));
+      } catch (error) {
+        setModalEdits(current => current.filter(entry => entry.token !== token));
+        setModalSaveError(`Could not save changes to ${name}. ${error instanceof Error ? error.message : "Please try again."}`);
+      } finally {
+        // Some existing server actions can partially change a relationship
+        // before failing. Reconcile with actual server data on either outcome.
+        router.refresh();
+      }
+    });
   }
 
   // A resizable column header cell + its drag handle at the right edge.
@@ -3133,10 +3230,44 @@ export function GanttChartView({
           const isGroup = isProject && (category?.hasTasks ?? true);
           // A milestone task, or a task-less category marked as one.
           const isMilestoneRow = !isFiller && row.type === "milestone";
+          const rowKind = isProject ? "category" : "task";
+          const savedRowId = category?.id ?? task?.id ?? 0;
+          const parentId = task?.categoryId ?? null;
+          const canReorder = canEdit && !isFiller && savedRowId > 0 && !deleting && !isUndoRedoPending;
+          function allowedDrop() {
+            const source = draggedRow.current;
+            return canReorder && source && source.kind === rowKind && source.id !== savedRowId &&
+              (rowKind === "category" || source.categoryId === parentId) ? source : null;
+          }
 
           return (
             <div
               key={row.id}
+              data-gantt-order-row={row.id}
+              onDragOver={(event) => {
+                if (!allowedDrop()) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                const element = event.currentTarget;
+                const bounds = element.getBoundingClientRect();
+                if (dropMarker.current && dropMarker.current !== element) delete dropMarker.current.dataset.ganttDrop;
+                element.dataset.ganttDrop = event.clientY >= bounds.top + bounds.height / 2 ? "after" : "before";
+                dropMarker.current = element;
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  delete event.currentTarget.dataset.ganttDrop;
+                }
+              }}
+              onDrop={(event) => {
+                const source = allowedDrop();
+                if (!source) { clearRowDrag(); return; }
+                event.preventDefault();
+                const bounds = event.currentTarget.getBoundingClientRect();
+                const after = event.clientY >= bounds.top + bounds.height / 2;
+                clearRowDrag();
+                handleRowMove({ kind: source.kind, id: source.id, targetId: savedRowId, after });
+              }}
               style={{ height: ROW_HEIGHT }}
               // Phase rows get a faint darker fill so the hierarchy reads
               // at a glance, not just from the bold name/chevron — task
@@ -3153,6 +3284,34 @@ export function GanttChartView({
                 className="flex h-full shrink-0 items-center gap-1 border-r border-zinc-200 px-2 text-zinc-900"
                 style={{ width: columnWidths.text }}
               >
+                {canReorder && (
+                  <button
+                    type="button"
+                    draggable
+                    aria-label={`Reorder ${category?.name ?? task?.name ?? row.name}`}
+                    title="Drag to reorder. Use Alt + Up or Down to move with the keyboard."
+                    onDragStart={(event) => {
+                      event.stopPropagation();
+                      draggedRow.current = { kind: rowKind, id: savedRowId, categoryId: parentId };
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", row.id);
+                      event.dataTransfer.setDragImage(event.currentTarget.closest("[data-gantt-order-row]")!, 16, ROW_HEIGHT / 2);
+                    }}
+                    onDragEnd={clearRowDrag}
+                    onKeyDown={(event) => {
+                      if (!event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+                      event.preventDefault();
+                      const siblings = rowKind === "category" ? categoriesForDisplay
+                        : categoriesForDisplay.find(item => item.id === parentId)?.tasks ?? [];
+                      const index = siblings.findIndex(item => item.id === savedRowId);
+                      const target = siblings[index + (event.key === "ArrowUp" ? -1 : 1)];
+                      if (target) handleRowMove({ kind: rowKind, id: savedRowId, targetId: target.id, after: event.key === "ArrowDown" });
+                    }}
+                    className="flex h-full w-3.5 shrink-0 cursor-grab items-center justify-center text-zinc-400 hover:text-zinc-700 active:cursor-grabbing"
+                  >
+                    <GripVertical aria-hidden="true" className="size-3.5" />
+                  </button>
+                )}
                 {/* Every row's leading slot, all the same size so names
                     line up: the chevron, only for a category that
                     actually has tasks to expand/collapse; a blue diamond
@@ -3227,6 +3386,7 @@ export function GanttChartView({
                     type="text"
                     autoFocus
                     defaultValue={
+                      inlineNameDrafts.current.get(`category:${category.id}`)?.value ??
                       pendingCategoryNameOverrides.get(category.id) ?? category.name
                     }
                     onFocus={(e) => {
@@ -3295,7 +3455,10 @@ export function GanttChartView({
                     key={task.id}
                     type="text"
                     autoFocus
-                    defaultValue={pendingNameOverrides.get(task.id) ?? task.name}
+                    // The table can remount during creation/revalidation. Its
+                    // draft survives both that refresh and the temporary-ID
+                    // handoff, even after optimistic overrides have expired.
+                    defaultValue={inlineNameDrafts.current.get(`task:${task.id}`)?.value ?? pendingNameOverrides.get(task.id) ?? task.name}
                     onFocus={(e) => {
                       const draft = inlineNameDrafts.current.get(`task:${task.id}`);
                       if (draft) e.currentTarget.setSelectionRange(draft.start, draft.end);
@@ -4127,6 +4290,7 @@ export function GanttChartView({
             {scheduleCounts.milestones}{" "}
             {scheduleCounts.milestones === 1 ? "milestone" : "milestones"}
           </span>
+          {(savingModalEdit || savingRowOrder) && <span role="status" className="text-xs text-zinc-500">Saving changes…</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -4149,6 +4313,8 @@ export function GanttChartView({
           </ProjectWriteButton>
         </div>
       </div>
+      {modalSaveError && <p role="alert" className="text-sm text-red-600">{modalSaveError}</p>}
+      {rowMoveError && <p role="alert" className="text-sm text-red-600">{rowMoveError}</p>}
       {/* Toolbar + whatever follows (the chart, or the empty-state
           placeholder) share this one un-gapped flex column so the
           toolbar sits flush against it, no visible seam — a plain
@@ -4174,7 +4340,7 @@ export function GanttChartView({
           <ProjectWriteButton
             type="button"
             onClick={handleUndo}
-            disabled={!historyReady || !effectiveCanUndo || isUndoRedoPending || deleting}
+            disabled={!historyReady || !effectiveCanUndo || isUndoRedoPending || deleting || savingModalEdit || savingRowOrder}
             aria-label="Undo"
             title="Undo (Ctrl+Z)"
             className="cursor-pointer rounded p-2 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
@@ -4184,7 +4350,7 @@ export function GanttChartView({
           <ProjectWriteButton
             type="button"
             onClick={handleRedo}
-            disabled={!historyReady || !effectiveCanRedo || isUndoRedoPending || deleting}
+            disabled={!historyReady || !effectiveCanRedo || isUndoRedoPending || deleting || savingModalEdit || savingRowOrder}
             aria-label="Redo"
             title="Redo (Ctrl+Y)"
             className="cursor-pointer rounded p-2 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
@@ -4340,9 +4506,17 @@ export function GanttChartView({
               // itself, milestone-label hiding, the date-input
               // calendar-icon/active-state rules).
               className="gantt-task-react-root"
+              style={{ "--gantt-successor-arrow": `url("#${successorArrowId}")` } as CSSProperties}
               // Month zoom hides the bars' own labels (see globals.css).
               data-zoom={view}
             >
+              <svg aria-hidden="true" focusable="false" width="0" height="0" className="absolute">
+                <defs>
+                  <marker id={successorArrowId} viewBox="0 0 6 6" markerWidth="6" markerHeight="6" refX="4.5" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+                    <path d="M1.5 1 4.5 3 1.5 5" fill="none" stroke="#71717a" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" />
+                  </marker>
+                </defs>
+              </svg>
               <div className="relative" onMouseDown={handleChartMouseDown}>
                 <WorkScheduleContext.Provider value={workSchedule}>
                 <Gantt
@@ -4353,18 +4527,19 @@ export function GanttChartView({
                   listCellWidth={showTaskList ? `${visiblePanelWidth}px` : ""}
                   columnWidth={effectiveColumnWidth}
                   todayColor="rgba(252, 211, 77, 0.15)"
+                  arrowColor="#71717a"
+                  arrowIndent={12}
                   // Blue like the task list's milestone diamond and name
                   // (Tailwind's blue-600 / blue-700).
                   milestoneBackgroundColor="#155dfc"
                   milestoneBackgroundSelectedColor="#1447e6"
                   // A phase's summary bar: a slate bracket (Tailwind's
-                  // slate-500 / slate-600). Its rolled-up progress remains
-                  // available to the table/tooltip, while globals.css hides
-                  // only the bracket's visual progress fill.
+                  // slate-500 / slate-600). globals.css shows its saved
+                  // rolled-up progress as a thin colored line inside it.
                   projectBackgroundColor="#62748e"
                   projectBackgroundSelectedColor="#45556c"
-                  projectProgressColor="#a3a3ff"
-                  projectProgressSelectedColor="#8282f5"
+                  projectProgressColor="#ffffff"
+                  projectProgressSelectedColor="#ffffff"
                   TooltipContent={GanttTooltipContent}
                   TaskListHeader={CustomTaskListHeader}
                   TaskListTable={CustomTaskListTable}
@@ -4532,6 +4707,7 @@ export function GanttChartView({
               )
             }
             onSuccess={() => setCategoryModal(null)}
+            onSave={form => handleModalSave("category", categoryModal.id, categoryModal.name, form)}
           />
         )}
       </Modal>
@@ -4547,7 +4723,7 @@ export function GanttChartView({
             categoryId={taskModal.categoryId}
             task={taskModal}
             siblingTasks={
-              categories.find((c) => c.id === taskModal.categoryId)?.tasks ??
+              categoriesForDisplay.find((c) => c.id === taskModal.categoryId)?.tasks ??
               []
             }
             onViewMaterials={() => {
@@ -4565,6 +4741,7 @@ export function GanttChartView({
               )
             }
             onSuccess={() => setTaskModal(null)}
+            onSave={form => handleModalSave("task", taskModal.id, taskModal.name, form)}
           />
         )}
       </Modal>

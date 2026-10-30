@@ -74,6 +74,7 @@ export function SubtaskForm({
   onViewMaterials,
   onRequestDelete,
   onSuccess,
+  onSave,
 }: {
   projectId: number;
   categoryId: number;
@@ -93,6 +94,8 @@ export function SubtaskForm({
   onViewMaterials?: () => void;
   onRequestDelete?: () => void;
   onSuccess?: () => void;
+  /** The parent retains the background save after the edit form closes. */
+  onSave?: (form: FormData) => void;
 }) {
   const isEdit = task !== undefined;
   const boundAction = isEdit
@@ -134,7 +137,10 @@ export function SubtaskForm({
 
   return (
     <div className="flex h-full min-h-full flex-col gap-4">
-      <form id={formId} action={formAction} className="flex flex-col gap-4" noValidate autoComplete="off">
+      <form id={formId} action={formAction} onSubmit={isEdit && onSave ? event => {
+        event.preventDefault();
+        onSave(new FormData(event.currentTarget));
+      } : undefined} className="flex flex-col gap-4" noValidate autoComplete="off">
         <input type="hidden" name="categoryId" value={categoryId} />
 
         {/* Create mode only — an existing task is renamed from the Gantt

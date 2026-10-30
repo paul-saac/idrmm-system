@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ResetPasswordForm } from "@/components/auth/reset-password-form";
+import { SessionGuard } from "@/components/auth/session-guard";
 
 export const metadata: Metadata = {
   title: "Reset Password",
@@ -8,6 +9,7 @@ export const metadata: Metadata = {
 export default function ResetPasswordPage() {
   return (
     <div className="flex flex-1 items-center justify-center bg-zinc-50 px-4 py-12">
+      <SessionGuard />
       <div className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-8 shadow-sm">
         <h1 className="font-serif text-2xl text-zinc-900">IDR M&amp;M</h1>
 

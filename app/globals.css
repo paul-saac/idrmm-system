@@ -258,6 +258,22 @@ input[type="date"][data-empty="true"] {
   display: none;
 }
 
+/* Compact successor connectors with fine strokes and small open arrowheads. */
+.gantt-task-react-root .arrows .arrow > path {
+  stroke-width: 1;
+  marker-end: var(--gantt-successor-arrow);
+}
+.gantt-task-react-root .arrows .arrow > polygon {
+  display: none;
+}
+
+.gantt-task-react-root [data-gantt-drop="before"] {
+  box-shadow: inset 0 2px var(--color-zinc-600);
+}
+.gantt-task-react-root [data-gantt-drop="after"] {
+  box-shadow: inset 0 -2px var(--color-zinc-600);
+}
+
 /*
  * The date-header row's own text (e.g. "Thu, 4" and the "June" month
  * label above it) — gantt-task-react's own default is 14px (its own
@@ -335,15 +351,15 @@ input[type="date"][data-empty="true"] {
  * A phase's own bar (a "project" row, i.e. a phase with tasks) as a
  * summary bracket: a thin slate band (colors from the <Gantt>'s
  * project* props in gantt-chart-view.tsx) with a small triangle hanging
- * from each end. A phase is only the grouping/summary for its subtasks,
- * so its own bar stays unfilled regardless of rolled-up progress; each
- * subtask bar remains responsible for showing its own progress.
+ * from each end. A narrow white line inside the band shows the saved
+ * progress rolled up from its subtasks.
  *
  * The library draws, in order: a full-height background rect, the
  * full-height progress rect, then its own half-height band — on top, so
  * it would hide the progress. So that band is hidden, and the background
- * rect, cut to its top half, stands in for it instead; the progress
- * rect is hidden. Corners square, and each end triangle shrinks to half
+ * rect, cut to its top half, stands in for it instead. The progress
+ * rect is clipped to a 2px line centered in that band, retaining the
+ * library's calculated progress width. Corners square, and each end triangle shrinks to half
  * from its own outer top corner. Its name
  * label is hidden — the band's too thin to hold it, and the task list
  * already names the phase. `_1KJ6x`/`_2RbVy`/`_2pZMF` are the library's
@@ -359,7 +375,10 @@ input[type="date"][data-empty="true"] {
 }
 
 .gantt-task-react-root ._1KJ6x > rect:nth-of-type(2) {
-  display: none;
+  /* Inset the white progress line 4px from both horizontal ends. */
+  clip-path: inset(calc(25% - 1px) 4px calc(75% - 1px) 4px) fill-box;
+  rx: 0;
+  ry: 0;
 }
 
 .gantt-task-react-root ._1KJ6x rect._2pZMF {

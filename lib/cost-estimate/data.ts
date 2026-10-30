@@ -242,6 +242,13 @@ export async function getCostEstimate(projectId: number, strict = false): Promis
     throw new Error("Could not verify the project's tasks and progress. Please try again.");
   }
 
+  // Read from select("*") so older databases can still show their existing
+  // ID order until 0107 is installed. New rows with no order append last.
+  const bySavedOrder = (a: { id: number; sort_order?: number | null }, b: { id: number; sort_order?: number | null }) =>
+    (a.sort_order ?? Infinity) - (b.sort_order ?? Infinity) || a.id - b.id;
+  categoryRows?.sort(bySavedOrder);
+  taskRows?.sort(bySavedOrder);
+
   // Falls back to the same Mon-Sat default the DB column itself defaults
   // to — projectRow can come back null only if the project row itself
   // somehow doesn't exist, in which case there's nothing to compute
