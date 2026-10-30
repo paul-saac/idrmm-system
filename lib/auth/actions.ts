@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { roleHome, type UserRole } from "@/lib/auth/roles";
 import { saveSetupPassword } from "./save-setup-password";
 import { readSessionState } from "./session-state";
+import { getPasswordError } from "./password-policy";
 
 export type AuthActionState = {
   error?: string;
@@ -107,9 +108,8 @@ export async function updatePassword(
   const password = String(formData.get("password") ?? "");
   const confirmPassword = String(formData.get("confirmPassword") ?? "");
 
-  if (password.length < 8) {
-    return { error: "Password must be at least 8 characters." };
-  }
+  const passwordError = getPasswordError(password);
+  if (passwordError) return { error: passwordError };
 
   if (password !== confirmPassword) {
     return { error: "Passwords do not match." };
@@ -146,9 +146,8 @@ export async function changePassword(
   if (!currentPassword) {
     return { error: "Enter your current password." };
   }
-  if (password.length < 8) {
-    return { error: "New password must be at least 8 characters." };
-  }
+  const passwordError = getPasswordError(password);
+  if (passwordError) return { error: passwordError };
   if (password !== confirmPassword) {
     return { error: "New passwords do not match." };
   }

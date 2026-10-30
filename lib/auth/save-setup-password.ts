@@ -1,9 +1,12 @@
 import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPasswordError } from "./password-policy";
 
 /** Never accept an account ID from the browser: finish only this session's user. */
 export async function saveSetupPassword(password: string) {
+  const passwordError = getPasswordError(password);
+  if (passwordError) return { error: passwordError };
   const client = await createClient();
   const { data: { user } } = await client.auth.getUser();
   if (!user || !user.email_confirmed_at) return { error: "Open a valid invitation or password-reset link first." };

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPasswordError } from "@/lib/auth/password-policy";
 import { MANAGED_ROLES, roleLabel, type UserRole } from "@/lib/auth/roles";
 import type { AccountEventAction } from "@/lib/supabase/types";
 import type {
@@ -586,9 +587,8 @@ export async function setTemporaryPassword(
     return { error: "Invited users must set their own password. Send a password setup/reset email instead." };
   }
 
-  if (typeof password !== "string" || password.length < 8) {
-    return { error: "Password must be at least 8 characters." };
-  }
+  const passwordError = getPasswordError(password);
+  if (passwordError) return { error: passwordError };
 
   let admin;
   try {

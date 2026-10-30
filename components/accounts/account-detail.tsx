@@ -2,8 +2,10 @@
 
 import { RequiredMark } from "@/components/ui/required-mark";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PasswordRequirements } from "@/components/auth/password-requirements";
+import { generateTemporaryPassword, getPasswordError, PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy";
 import { ProjectAccessEditor, type ProjectAccessChange } from "./project-access-editor";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { initials } from "@/lib/initials";
@@ -33,7 +35,6 @@ import { saveProjectAccess } from "@/lib/accounts/project-access";
 import { projectElsewhere } from "@/lib/accounts/availability";
 import type { AccountDetail as Detail, AccountRow } from "@/lib/accounts/data";
 import { roleLabel, type UserRole } from "@/lib/auth/roles";
-import type { AccountEventAction } from "@/lib/supabase/types";
 import { timeAgo } from "@/lib/time-ago";
 import { Modal, ModalFooter } from "@/components/ui/modal";
 
@@ -50,19 +51,6 @@ const SECONDARY =
   "cursor-pointer rounded border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50";
 const DANGER =
   "cursor-pointer rounded border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600 transition hover:border-red-600 hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50";
-
-const ACTION_LABEL: Record<AccountEventAction, string> = {
-  created: "Account created",
-  edited: "Details edited",
-  role_changed: "Role changed",
-  activated: "Activated",
-  deactivated: "Deactivated",
-  password_reset_sent: "Password reset email sent",
-  password_set: "Password set",
-  signed_out: "Signed out everywhere",
-  handed_over: "Project handed over",
-  deleted: "Deleted",
-};
 
 const PROJECT_STATUS: Record<"planning" | "ongoing" | "completed", { label: string; className: string }> = {
   planning: { label: "Planning", className: "bg-sky-50 text-sky-700" },
@@ -86,13 +74,6 @@ function formatDate(iso: string | null, withTime = false) {
   });
 }
 
-function generatePassword() {
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/[+/=]/g, "")
-    .slice(0, 12);
-}
-
 type Section = "details" | "role" | "password" | "access";
 
 /**
@@ -100,8 +81,7 @@ type Section = "details" | "role" | "password" | "access";
  * and email, change their role, reset their password or set one, sign
  * them out everywhere, see their projects and recent activity, deactivate
  * them (handing over any project they still run first) — and, for a super
- * admin, the account's change log and deleting it for good when it has
- * no history.
+ * admin, deleting it for good when it has no history.
  */
 export function AccountDetail({
   account,
@@ -142,6 +122,7 @@ export function AccountDetail({
   const [savedRole, setSavedRole] = useState<UserRole>(account.role);
   const [accessChanges, setAccessChanges] = useState<ProjectAccessChange[]>([]);
   const [password, setPassword] = useState("");
+  const requirementsId = useId();
   const [handovers, setHandovers] = useState<Record<number, string>>({});
   const [deactivateOpen, setDeactivateOpen] = useState(false);
 
@@ -426,18 +407,20 @@ export function AccountDetail({
               type="text"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
+              placeholder="15–64 characters"
+              minLength={PASSWORD_MIN_LENGTH}
+              aria-describedby={requirementsId}
               autoComplete="off"
               className={INPUT}
             />
           </label>
-          <button type="button" onClick={() => setPassword(generatePassword())} className={SECONDARY}>
+          <button type="button" disabled={busy !== null} onClick={() => setPassword(generateTemporaryPassword())} className={SECONDARY}>
             <RefreshCw className="mr-1.5 inline size-4" />
             Generate
           </button>
           <button
             type="button"
-            disabled={password.length < 8 || busy !== null}
+            disabled={Boolean(getPasswordError(password)) || busy !== null}
             onClick={() =>
               run("password", "password", () => setTemporaryPassword(account.id, password), () =>
                 setPassword("")
@@ -448,6 +431,7 @@ export function AccountDetail({
             {busy === "password" ? "Setting..." : "Set password"}
           </button>
         </div>
+        <PasswordRequirements password={password} id={requirementsId} />
           </>
         )}
         {note("password")}
@@ -526,33 +510,6 @@ export function AccountDetail({
           )}
         </section>
         </div>
-      )}
-
-      {/* Change log — a super admin's */}
-      {detail && isSuperAdmin && (
-        <section className="-mx-6 flex flex-col gap-2 border-t border-zinc-200 px-6 pt-5">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-            Change Log
-          </h3>
-          {detail.log.length === 0 ? (
-            <EmptyState compact className="text-sm text-zinc-400">No changes recorded yet.</EmptyState>
-          ) : (
-            <ul className="flex flex-col gap-2.5">
-              {detail.log.map((entry) => (
-                <li key={entry.id} className="flex items-baseline gap-3 text-sm">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-zinc-800">
-                      {ACTION_LABEL[entry.action]}
-                      {entry.details && <span className="text-zinc-500"> · {entry.details}</span>}
-                    </p>
-                    <p className="text-xs text-zinc-400">by {entry.actorName}</p>
-                  </div>
-                  <span className="shrink-0 text-xs text-zinc-400">{formatDate(entry.createdAt, true)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
       )}
 
       {/* Access */}

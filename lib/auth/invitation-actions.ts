@@ -5,10 +5,12 @@ import { createClient } from "@/lib/supabase/server";
 import { roleHome } from "./roles";
 import type { AuthActionState } from "./actions";
 import { saveSetupPassword } from "./save-setup-password";
+import { getPasswordError } from "./password-policy";
 
 export async function acceptInvitation(_state: AuthActionState, form: FormData): Promise<AuthActionState> {
   const password = String(form.get("password") ?? "");
-  if (password.length < 8) return { error: "Use at least 8 characters for your password." };
+  const passwordError = getPasswordError(password);
+  if (passwordError) return { error: passwordError };
   if (password !== form.get("confirmPassword")) return { error: "Passwords do not match." };
   const client = await createClient();
   const { data: { user } } = await client.auth.getUser();
