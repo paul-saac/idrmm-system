@@ -3,7 +3,7 @@
 import { RequiredMark } from "@/components/ui/required-mark";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PasswordRequirements } from "@/components/auth/password-requirements";
-import { generateTemporaryPassword, getPasswordError, PASSWORD_MIN_LENGTH } from "@/lib/auth/password-policy";
+import { generateTemporaryPassword, getPasswordError, PASSWORD_MIN_LENGTH, PASSWORD_MAX_LENGTH } from "@/lib/auth/password-policy";
 import { ProjectAccessEditor, type ProjectAccessChange } from "./project-access-editor";
 import { useEffect, useId, useState } from "react";
 import Link from "next/link";
@@ -407,7 +407,7 @@ export function AccountDetail({
               type="text"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="15–64 characters"
+              placeholder={`${PASSWORD_MIN_LENGTH}–${PASSWORD_MAX_LENGTH} characters`}
               minLength={PASSWORD_MIN_LENGTH}
               aria-describedby={requirementsId}
               autoComplete="off"
