@@ -11,6 +11,8 @@ import {
   updateTaskLaborEstimate,
 } from "@/lib/cost-estimate/actions";
 import type { CostCategory, CostTask } from "@/lib/cost-estimate/data";
+import { useEstimateSync } from "./estimate-sync-context";
+import type { EstimateRowPatch } from "@/lib/cost-estimate/live-estimate";
 import {
   DIVIDER,
   GROUP_ROW,
@@ -166,6 +168,7 @@ export function LaborBreakdownModalContent({
   highlightTarget?: LaborBreakdownHighlightTarget;
 }) {
   const router = useRouter();
+  const estimateSync = useEstimateSync();
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const [flashingKey, setFlashingKey] = useState<string | null>(null);
 
@@ -265,57 +268,59 @@ export function LaborBreakdownModalContent({
   // to do nothing despite its Material cost already being real.
   async function handleSave() {
     setError(null);
-    setPending(true);
-
-    if (rateDirty) {
-      const trimmed = ratePercentInput.trim();
-      const parsed = trimmed === "" ? null : Number(trimmed);
-      if (parsed != null && !Number.isFinite(parsed)) {
-        setPending(false);
-        setError("Enter a valid percentage.");
-        return;
-      }
-
-      const rateResult = await updateProjectDefaultLaborCostPercent(
-        projectId,
-        parsed
-      );
-      if (rateResult.error) {
-        setPending(false);
-        setError(rateResult.error);
-        return;
-      }
-
-      if (parsed != null) {
-        const applyResult = await applyLaborRateProjectWide(projectId, parsed);
-        if (applyResult.error) {
-          setPending(false);
-          setError(applyResult.error);
-          return;
-        }
-      }
-    }
-
-    const results = await Promise.all([
-      ...Array.from(dirtyTaskIds).map((taskId) => {
-        const percent = parsePercent(taskPercentDraft[taskId] ?? "0");
-        const newLaborEstimate = (percent / 100) * projectBase;
-        return updateTaskLaborEstimate(taskId, projectId, newLaborEstimate);
-      }),
-      ...Array.from(dirtyCategoryIds).map((categoryId) => {
-        const percent = parsePercent(categoryPercentDraft[categoryId] ?? "0");
-        const newLaborEstimate = (percent / 100) * projectBase;
-        return updateCategoryLaborEstimate(categoryId, projectId, newLaborEstimate);
-      }),
-    ]);
-    setPending(false);
-    const failed = results.find((r) => r.error);
-    if (failed?.error) {
-      setError(failed.error);
+    const parsed = ratePercentInput.trim() === "" ? null : Number(ratePercentInput.trim());
+    if (rateDirty && parsed != null && !Number.isFinite(parsed)) {
+      setError("Enter a valid percentage.");
       return;
     }
-    router.refresh();
-    onClose();
+    setPending(true);
+    const ratePatches: EstimateRowPatch[] = rateDirty && parsed != null ? categories.flatMap<EstimateRowPatch>(category => [
+      ...(!category.tasks.length ? [{ kind: "category" as const, id: category.id, values: { categoryLaborEstimate: parsed / 100 * projectBase } }] : []),
+      ...category.tasks.map(task => ({ kind: "task" as const, id: task.id, values: { laborEstimate: parsed / 100 * projectBase } })),
+    ]) : [];
+    const rateToken = ratePatches.length ? estimateSync?.begin(ratePatches) : undefined;
+    let rateCompleted = false;
+    const edits = [
+      ...Array.from(dirtyTaskIds, id => ({ kind: "task" as const, id, amount: parsePercent(taskPercentDraft[id] ?? "0") / 100 * projectBase })),
+      ...Array.from(dirtyCategoryIds, id => ({ kind: "category" as const, id, amount: parsePercent(categoryPercentDraft[id] ?? "0") / 100 * projectBase })),
+    ].map(edit => ({ ...edit, token: estimateSync?.begin([edit.kind === "task"
+      ? { kind: "task", id: edit.id, values: { laborEstimate: edit.amount } }
+      : { kind: "category", id: edit.id, values: { categoryLaborEstimate: edit.amount } }]) }));
+    try {
+      if (rateDirty) {
+        const rateResult = await updateProjectDefaultLaborCostPercent(projectId, parsed);
+        if (rateResult.error) throw new Error(rateResult.error);
+        if (parsed != null) {
+          const result = await applyLaborRateProjectWide(projectId, parsed);
+          if (result.error) throw new Error(result.error);
+        }
+      }
+      if (rateToken !== undefined) estimateSync?.complete(rateToken);
+      rateCompleted = true;
+      const results = await Promise.all(edits.map(async edit => {
+        try {
+          const result = edit.kind === "task" ? await updateTaskLaborEstimate(edit.id, projectId, edit.amount)
+            : await updateCategoryLaborEstimate(edit.id, projectId, edit.amount);
+          if (edit.token !== undefined) {
+            if (result.error) estimateSync?.rollback(edit.token); else estimateSync?.complete(edit.token);
+          }
+          return result;
+        } catch {
+          if (edit.token !== undefined) estimateSync?.rollback(edit.token);
+          return { error: "Could not save labor costs. Please try again." };
+        }
+      }));
+      const failed = results.find(result => result.error);
+      if (failed?.error) { setError(failed.error); return; }
+      onClose();
+    } catch (error) {
+      if (!rateCompleted && rateToken !== undefined) estimateSync?.rollback(rateToken);
+      for (const edit of edits) if (edit.token !== undefined) estimateSync?.rollback(edit.token);
+      setError(error instanceof Error ? error.message : "Could not save labor costs. Please try again.");
+    } finally {
+      setPending(false);
+      router.refresh();
+    }
   }
 
   const grandTotal = categories.reduce(

@@ -24,6 +24,7 @@ import {
   type WeightBreakdownTarget,
 } from "@/components/projects/cost-estimate/weight-breakdown-modal-content";
 import type { CostEstimate } from "@/lib/cost-estimate/data";
+import { useEstimateSync } from "./estimate-sync-context";
 import {
   updateCategoryEstimatedQuantity,
   updateTaskEstimatedQuantity,
@@ -69,16 +70,19 @@ function EditableCell({
   label,
   numeric = false,
   onSave,
+  disabled = false,
 }: {
   value: string;
   label: string;
   numeric?: boolean;
   onSave: (next: string) => Promise<boolean>;
+  disabled?: boolean;
 }) {
   return (
     <ProjectWriteInput
       key={value}
       type="text"
+      disabled={disabled}
       inputMode={numeric ? "decimal" : undefined}
       defaultValue={value}
       aria-label={label}
@@ -177,6 +181,7 @@ export function CostEstimateView({
   onNavigateToCostEstimate?: (target: CostNavigateDestination) => void;
   costEstimateHighlight?: (CostNavigateDestination & { timestamp: number }) | null;
 }) {
+  const estimateSync = useEstimateSync();
   // Project-wide, not per-task — see the two modal components' own doc
   // comments for why a column-header trigger replaced an earlier
   // per-task-row version of this.
@@ -360,15 +365,19 @@ export function CostEstimateView({
     }
     setSaveError(null);
     const input = { estimatedQuantity: fields.estimatedQuantity, unit: fields.unit };
-    const result =
-      target.kind === "task"
+    const token = estimateSync?.begin([{ ...target, values: input }]);
+    try {
+      const result = target.kind === "task"
         ? await updateTaskEstimatedQuantity(target.id, projectId, input)
         : await updateCategoryEstimatedQuantity(target.id, projectId, input);
-    if (result.error) {
-      setSaveError(result.error);
+      if (result.error) throw new Error(result.error);
+      if (token !== undefined) estimateSync?.complete(token);
+      return true;
+    } catch (error) {
+      if (token !== undefined) estimateSync?.rollback(token);
+      setSaveError(error instanceof Error ? error.message : "Could not save this value. Please try again.");
       return false;
     }
-    return true;
   }
 
   return (
@@ -552,6 +561,7 @@ export function CostEstimateView({
                           {category.tasks.length === 0 ? (
                             <EditableCell
                               value={String(category.estimatedQuantity)}
+                              disabled={category.id <= 0}
                               label={`${category.name} estimated quantity`}
                               numeric
                               onSave={(next) =>
@@ -573,6 +583,7 @@ export function CostEstimateView({
                           {category.tasks.length === 0 ? (
                             <EditableCell
                               value={category.unit ?? ""}
+                              disabled={category.id <= 0}
                               label={`${category.name} unit`}
                               onSave={(next) =>
                                 saveEstimatedQuantity(
@@ -672,6 +683,7 @@ export function CostEstimateView({
                             <td className={EDITABLE_TD}>
                               <EditableCell
                                 value={String(task.estimatedQuantity)}
+                                disabled={task.id <= 0}
                                 label={`${task.name} estimated quantity`}
                                 numeric
                                 onSave={(next) =>
@@ -685,6 +697,7 @@ export function CostEstimateView({
                             <td className={EDITABLE_TD}>
                               <EditableCell
                                 value={task.unit ?? ""}
+                                disabled={task.id <= 0}
                                 label={`${task.name} unit`}
                                 onSave={(next) =>
                                   saveEstimatedQuantity(

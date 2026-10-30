@@ -83,6 +83,7 @@ export type CostTask = {
    * 0029_estimate_task_predecessor.sql) — draws as a dependency arrow
    * in the Gantt Chart. Null means no predecessor set. */
   predecessorTaskId: number | null;
+  predecessorCategoryId?: number | null;
   /** Manually flagged by the admin (see
    * 0030_estimate_task_milestone.sql) — a real point-in-time event
    * ("Permit Approved", "Client Sign-off") rather than a task with
@@ -146,6 +147,7 @@ export type CostCategory = {
    * has tasks. See 0072_estimate_category_milestone.sql. */
   isMilestone: boolean;
   predecessorCategoryId?: number | null;
+  predecessorTaskId?: number | null;
   /** This category's own direct labor cost — same "only meaningful
    * while it has no tasks yet" rule as plannedStartDate/plannedEndDate
    * above, one level up from CostTask's own laborEstimate. See
@@ -445,6 +447,7 @@ export async function getCostEstimate(projectId: number, strict = false): Promis
       plannedStartDate: row.planned_start_date,
       plannedEndDate: row.planned_end_date,
       predecessorTaskId: row.predecessor_task_id,
+      predecessorCategoryId: row.predecessor_category_id ?? null,
       isMilestone: row.is_milestone ?? false,
       priority: toTaskPriority(row.priority),
       // Computed from saved progress entries (see lib/task-progress/
@@ -508,6 +511,7 @@ export async function getCostEstimate(projectId: number, strict = false): Promis
       // Undefined until 0072 has run — then just not a milestone.
       isMilestone: row.is_milestone ?? false,
       predecessorCategoryId: row.predecessor_category_id ?? null,
+      predecessorTaskId: row.predecessor_task_id ?? null,
       categoryLaborEstimate: row.category_labor_estimate ?? 0,
       categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
       categoryOtherEstimate: row.category_other_estimate ?? 0,

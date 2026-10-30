@@ -253,31 +253,29 @@ export async function restoreGanttSnapshot(
   if (categoriesToUpsert.length > 0) {
     await supabase
       .from("estimate_categories")
-      .upsert(categoriesToUpsert as never[], { onConflict: "id" });
+      .upsert(categoriesToUpsert.map(category => ({ ...category, predecessor_task_id: null, predecessor_category_id: null })) as never[], { onConflict: "id" });
   }
 
-  // Pass 1: every task row, predecessor_task_id forced null so no
-  // insert/update can reference a task id that doesn't exist yet.
+  // Pass 1: restore task rows without dependencies until both row types exist.
   const tasksToUpsertPass1 = [...tasksDiff.toInsert, ...tasksDiff.toUpdate].map(
-    (task) => ({ ...task, predecessor_task_id: null })
+    (task) => ({ ...task, predecessor_task_id: null, predecessor_category_id: null })
   );
   if (tasksToUpsertPass1.length > 0) {
     await supabase
       .from("estimate_tasks")
       .upsert(tasksToUpsertPass1 as never[], { onConflict: "id" });
   }
-  // Pass 2: now that every task in the snapshot exists as a row (pass 1
-  // above), set the real predecessor links — a partial-row upsert
-  // (just id + predecessor_task_id) only ever updates that one column
-  // on conflict, exactly like the original per-row `.update()` calls
-  // did; it can't accidentally insert a bare/incomplete row here since
-  // every id it targets is already guaranteed to exist post-pass-1.
+  // Pass 2: both row types now exist. Restore cross-type links only now,
+  // using complete snapshot rows so required columns also satisfy upsert.
+  const categoryLinks = categoriesToUpsert.filter(category => category.predecessor_task_id != null || category.predecessor_category_id != null);
+  if (categoryLinks.length > 0) {
+    await supabase.from("estimate_categories").upsert(categoryLinks as never[], { onConflict: "id" });
+  }
   const predecessorLinks = snapshot.tasks
     .filter(
       (task) =>
-        task.predecessor_task_id !== null && task.predecessor_task_id !== undefined
-    )
-    .map((task) => ({ id: task.id, predecessor_task_id: task.predecessor_task_id }));
+        task.predecessor_task_id != null || task.predecessor_category_id != null
+    );
   if (predecessorLinks.length > 0) {
     await supabase
       .from("estimate_tasks")

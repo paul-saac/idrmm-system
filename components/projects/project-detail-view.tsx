@@ -16,6 +16,7 @@ import { useProjectCanEdit } from "@/components/projects/project-access-context"
 import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { ProjectHeader } from "@/components/projects/project-header";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
+import { EstimateSyncProvider, useEstimateSync } from "@/components/projects/cost-estimate/estimate-sync-context";
 import type { CostNavigateDestination } from "@/components/projects/cost-estimate/weight-breakdown-modal-content";
 import {
   ImportBomModalContent,
@@ -195,11 +196,20 @@ function ArchiveProjectModalContent({
   );
 }
 
-export function ProjectDetailView({
+export function ProjectDetailView(props: Parameters<typeof ProjectDetailContent>[0]) {
+  const progress = useMemo(() => ({ task: props.taskProgressToday, category: props.categoryProgressToday,
+    workingDays: props.project.workingDays, holidays: props.project.holidays }),
+  [props.taskProgressToday, props.categoryProgressToday, props.project.workingDays, props.project.holidays]);
+  return <EstimateSyncProvider key={props.project.id} estimate={props.costEstimate} progress={progress}>
+    <ProjectDetailContent {...props} />
+  </EstimateSyncProvider>;
+}
+
+function ProjectDetailContent({
   project,
   projectManagers,
   foremen,
-  costEstimate,
+  costEstimate: serverCostEstimate,
   materialsCounts,
   materialPurchases = [],
   materialRecords,
@@ -296,6 +306,7 @@ export function ProjectDetailView({
   /** Preloaded equipment tracking so the Assign Equipment and Progress modals render immediately. */
   equipmentTracking?: EquipmentTracking | null;
 }) {
+  const costEstimate = useEstimateSync()!.estimate;
   // Reading the initial tab/sub-tab from the URL lets a link *into* this
   // page (e.g. a Daily Log detail page's back button) land on the exact
   // tab it came from, instead of always resetting to Overview — this is
@@ -898,7 +909,7 @@ export function ProjectDetailView({
               onNavigateInsight={navigateFromInsight}
               projectId={project.id}
               projectName={project.name}
-              categories={costEstimate.categories}
+              categories={serverCostEstimate.categories}
               projectStartDate={project.startDate}
               projectEndDate={project.targetEndDate}
               workingDays={project.workingDays}

@@ -2,7 +2,7 @@
 
 import { RequiredMark } from "@/components/ui/required-mark";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useActionState, useEffect, useId } from "react";
+import { useActionState, useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronDown, Trash2 } from "lucide-react";
 import { ModalFooter } from "@/components/ui/modal";
@@ -13,6 +13,7 @@ import {
   type CostEstimateActionState,
 } from "@/lib/cost-estimate/actions";
 import type { CostCategory, TaskMaterialAssignment } from "@/lib/cost-estimate/data";
+import { currentProjectSuccessor, projectSuccessorOptions, scheduleRowKey } from "@/lib/cost-estimate/successor-options";
 
 const initialState: CostEstimateActionState = {};
 
@@ -20,6 +21,7 @@ export function CategoryForm({
   projectId,
   category,
   siblingCategories,
+  projectCategories,
   onViewMaterials,
   showDeleteButton,
   onRequestDelete,
@@ -39,6 +41,7 @@ export function CategoryForm({
     name: string;
     predecessorCategoryId: number | null;
   }[];
+  projectCategories?: CostCategory[];
   onViewMaterials?: () => void;
   /** Adds a Delete button (edit mode only) to this same modal — the
    * Gantt Chart's own task list (the only place this form is used;
@@ -54,6 +57,10 @@ export function CategoryForm({
    * the save result or its error handler. Create mode keeps its normal action. */
   onSave?: (form: FormData) => void;
 }) {
+  const [milestone, setMilestone] = useState(category?.isMilestone ?? false);
+  const [successorSelection, setSuccessorSelection] = useState(() => category && projectCategories
+    ? currentProjectSuccessor(projectCategories, { kind: "category", id: category.id }) : "");
+  const projectOptions = category && projectCategories ? projectSuccessorOptions(projectCategories, { kind: "category", id: category.id }, milestone) : [];
   const boundAction = category
     ? updateCategory.bind(null, category.id, projectId)
     : createCategory.bind(null, projectId);
@@ -146,7 +153,13 @@ export function CategoryForm({
                   id={`${formId}-isMilestone`}
                   name="isMilestone"
                   type="checkbox"
-                  defaultChecked={category.isMilestone ?? false}
+                  checked={milestone}
+                  onChange={event => {
+                    const checked = event.target.checked;
+                    setMilestone(checked);
+                    if (projectCategories && !projectSuccessorOptions(projectCategories, { kind: "category", id: category.id }, checked)
+                      .some(option => scheduleRowKey(option) === successorSelection)) setSuccessorSelection("");
+                  }}
                   className="peer size-4 cursor-pointer appearance-none rounded-sm border border-zinc-300 bg-zinc-100 transition checked:border-zinc-900 checked:bg-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-300 focus-visible:outline-none"
                 />
                 <Check
@@ -172,12 +185,16 @@ export function CategoryForm({
               <div className="relative">
                 <select
                   id={`${formId}-relationship`}
-                  name="successorCategoryId"
-                  defaultValue={currentSuccessor?.id ?? ""}
+                  name={projectCategories ? "successorRowKey" : "successorCategoryId"}
+                  value={projectCategories ? successorSelection : undefined}
+                  defaultValue={projectCategories ? undefined : currentSuccessor?.id ?? ""}
+                  onChange={projectCategories ? event => setSuccessorSelection(event.target.value) : undefined}
                   className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
                 >
-                  <option value="">None — no successor</option>
-                  {relationshipOptions.map((c) => (
+                  <option value="">Select a successor task</option>
+                  {projectCategories ? projectOptions.map(option => (
+                    <option key={scheduleRowKey(option)} value={scheduleRowKey(option)}>{option.name}</option>
+                  )) : relationshipOptions.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>

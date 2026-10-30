@@ -195,6 +195,26 @@ export async function createCategory(
   });
 }
 
+async function saveProjectSuccessor(
+  supabase: Awaited<ReturnType<typeof createClient>>, projectId: number,
+  kind: "category" | "task", id: number, form: FormData
+): Promise<CostEstimateActionState> {
+  const key = String(form.get("successorRowKey") ?? "").trim();
+  const match = /^(category|task):([1-9][0-9]*)$/.exec(key);
+  if (key && (!match || !Number.isSafeInteger(Number(match[2])))) return { error: "Select a valid successor task." };
+  const { error } = await supabase.rpc("save_estimate_successor", {
+    p_project_id: projectId, p_source_kind: kind, p_source_id: id,
+    p_successor_kind: match?.[1] ?? null, p_successor_id: match ? Number(match[2]) : null,
+    p_milestone: kind === "task" || form.has("milestoneField") ? form.get("isMilestone") === "on" : null,
+    p_name: kind === "category" ? String(form.get("categoryName") ?? "").trim() : null,
+  });
+  if (error) {
+    if (["PGRST202", "42883", "42703", "PGRST204"].includes(error.code)) return { error: "Project-wide milestone successors need migration 0108_milestone_project_successors.sql. Apply it and retry." };
+    return { error: error.code === "22023" ? error.message : "Could not save the milestone and successor. Please try again." };
+  }
+  return { success: true };
+}
+
 export async function updateCategory(
   categoryId: number,
   projectId: number,
@@ -223,6 +243,13 @@ export async function updateCategory(
     }
 
     const supabase = await createClient();
+    if (formData.has("successorRowKey")) {
+      const result = await saveProjectSuccessor(supabase, projectId, "category", categoryId, formData);
+      if (result.error) return result;
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
+      revalidateProjectPaths(projectId);
+      return result;
+    }
     const { data: savedCategory, error } = await supabase
       .from("estimate_categories")
       .update(update)
@@ -1163,6 +1190,13 @@ export async function updateSubtask(
     const successorTaskId = parseOptionalId(formData.get("successorTaskId"));
 
     const supabase = await createClient();
+    if (formData.has("successorRowKey")) {
+      const result = await saveProjectSuccessor(supabase, projectId, "task", taskId, formData);
+      if (result.error) return result;
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
+      revalidateProjectPaths(projectId);
+      return result;
+    }
 
     const { data: currentSuccessors } = await supabase
       .from("estimate_tasks")

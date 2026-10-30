@@ -21,7 +21,7 @@ function formatDateRange(start: Date, end: Date) {
  * Opened from a row's own "Assigned" cell in the Gantt task list (see
  * gantt-chart-view.tsx) — a checkbox picker over the whole company Team
  * (the admin's Team page; there's no per-project roster any more), each
- * member shown with their title. Project management stays checked;
+ * member shown with their title. Management is assigned at project level;
  * other members may be selected on multiple tasks. Scoped to whichever
  * one row opened it — a task or, one level up, a category with no tasks
  * yet (see CategoryWorkerAssignments's own doc comment) — via `onSave`, so
@@ -63,28 +63,29 @@ export function AssignWorkersModalContent({
   onClose: () => void;
 }) {
   const { isAdmin } = usePortal();
+  const defaults = new Set(defaultWorkerIds);
+  const assignableWorkers = workers.filter(worker => worker.category !== "management" && !defaults.has(worker.id));
+  const workerIds = new Set(assignableWorkers.map(worker => worker.id));
   const [selected, setSelected] = useState<Set<number>>(
-    () => new Set([...assignedWorkerIds, ...defaultWorkerIds])
+    () => new Set(assignedWorkerIds.filter(id => workerIds.has(id)))
   );
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const defaults = new Set(defaultWorkerIds);
-
   const q = query.trim().toLowerCase();
   const sections = memberSections(
     q
-      ? workers.filter(
+      ? assignableWorkers.filter(
           (worker) =>
             worker.fullName.toLowerCase().includes(q) ||
             (worker.title ?? "").toLowerCase().includes(q)
         )
-      : workers
+      : assignableWorkers
   );
 
   function toggle(workerId: number) {
-    if (defaults.has(workerId) || pending) return;
+    if (!workerIds.has(workerId) || pending) return;
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(workerId)) {
@@ -96,8 +97,8 @@ export function AssignWorkersModalContent({
     });
   }
 
-  // Only groups with someone on the Team still in them.
-  const workerIds = new Set(workers.map((worker) => worker.id));
+  // Group shortcuts use the same eligible list, so management cannot be
+  // selected indirectly through a mixed group.
   const crews = groups
     .map((group) => ({
       id: group.id,
@@ -112,7 +113,7 @@ export function AssignWorkersModalContent({
       const next = new Set(prev);
       const all = ids.every((id) => next.has(id));
       for (const id of ids) {
-        if (defaults.has(id)) continue;
+        if (!workerIds.has(id)) continue;
         if (all) next.delete(id);
         else next.add(id);
       }
@@ -124,7 +125,7 @@ export function AssignWorkersModalContent({
     setError(null);
     setPending(true);
     try {
-      const result = await onSave(Array.from(new Set([...selected, ...defaultWorkerIds])));
+      const result = await onSave(Array.from(selected).filter(id => workerIds.has(id)));
       if (result.error) {
         setError(result.error);
         return;
@@ -149,8 +150,8 @@ export function AssignWorkersModalContent({
         </span>
       </div>
 
-      {workers.length === 0 ? (
-        <EmptyState compact className="py-4 text-center text-sm text-zinc-400">No team members yet.</EmptyState>
+      {assignableWorkers.length === 0 ? (
+        <EmptyState compact className="py-4 text-center text-sm text-zinc-400">No workers available.</EmptyState>
       ) : (
         <>
           <div className="relative">
@@ -224,10 +225,9 @@ export function AssignWorkersModalContent({
                       className="flex cursor-pointer items-center gap-2.5 rounded px-2 py-1.5 text-sm text-zinc-700 transition hover:bg-zinc-50"
                     >
                       <span className="relative inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center">
-                        <input type="checkbox" checked={defaults.has(worker.id) || selected.has(worker.id)}
-                          disabled={pending || defaults.has(worker.id)}
+                        <input type="checkbox" checked={selected.has(worker.id)}
+                          disabled={pending}
                           onChange={() => toggle(worker.id)} aria-label={`Select ${worker.fullName}`}
-                          title={defaults.has(worker.id) ? "Assigned project management" : undefined}
                           className="peer m-0 block h-[14px] w-[14px] shrink-0 cursor-pointer appearance-none rounded-[2px] border border-zinc-300 bg-white p-0 transition-colors checked:border-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:outline-none disabled:cursor-default" />
                         <span className="pointer-events-none absolute left-[4px] top-[4px] block h-[6px] w-[6px] rounded-[1px] bg-zinc-900 opacity-0 peer-checked:opacity-100" />
                       </span>

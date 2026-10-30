@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { saveOtherCostBreakdown, saveEquipmentCostBreakdown } from "@/lib/cost-estimate/actions";
 import type { CostCategory, OtherCostItem } from "@/lib/cost-estimate/data";
+import { useEstimateSync } from "./estimate-sync-context";
+import type { EstimateRowPatch } from "@/lib/cost-estimate/live-estimate";
 import { otherCostAmount, validOtherCostChanges, type OtherCostChange } from "@/lib/cost-estimate/other-cost-lines";
 import {
   DIVIDER, GROUP_ROW, GroupLabel, MAIN_TASK_ROW, STICKY_FOOTER,
@@ -67,6 +69,7 @@ export function OtherBreakdownModalContent({
   costType?: "other" | "equipment";
 }) {
   const router = useRouter();
+  const estimateSync = useEstimateSync();
   const label = costType === "equipment" ? "Equipment" : "Other";
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const [flashingKey, setFlashingKey] = useState<string | null>(null);
@@ -113,12 +116,23 @@ export function OtherBreakdownModalContent({
     }
     setPending(true);
     setError(null);
+    const patches: EstimateRowPatch[] = changes.map(change => {
+      const items = change.lines.map((line, index) => ({ id: -(index + 1), costName: line.costName.trim(), amount: otherCostAmount(line) }));
+      const total = items.reduce((sum, item) => sum + item.amount, 0);
+      return change.kind === "task" ? { kind: "task", id: change.id, values: costType === "equipment"
+        ? { equipmentEstimate: total, equipmentCostItems: items } : { otherCostEstimate: total, otherCostItems: items } }
+        : { kind: "category", id: change.id, values: costType === "equipment"
+          ? { categoryEquipmentEstimate: total, equipmentCostItems: items } : { categoryOtherEstimate: total, otherCostItems: items } };
+    });
+    const token = estimateSync?.begin(patches);
     try {
       const result = await (costType === "equipment" ? saveEquipmentCostBreakdown : saveOtherCostBreakdown)(projectId, changes);
-      if (result.error) { setError(result.error); return; }
+      if (result.error) { if (token !== undefined) estimateSync?.rollback(token); setError(result.error); return; }
+      if (token !== undefined) estimateSync?.complete(token);
       router.refresh();
       onClose();
     } catch {
+      if (token !== undefined) estimateSync?.rollback(token);
       setError(`Could not save ${label.toLowerCase()} costs. Your edits are still here; please try again.`);
     } finally { setPending(false); }
   }

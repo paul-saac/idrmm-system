@@ -252,11 +252,7 @@ function LaborToday({
         </span>
       </div>
 
-      {rows.length === 0 ? (
-        <EmptyState compact className="rounded-md border border-dashed border-zinc-200 px-3 py-4">
-          No skilled workers are assigned to this task — add whoever worked today.
-        </EmptyState>
-      ) : (
+      {rows.length > 0 && (
         <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
           <div
             className={`${LABOR_COLUMNS} border-b border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
@@ -1195,7 +1191,8 @@ export function ProgressTrackingModalContent({
   const router = useRouter();
   const savedToday = progressToday.today;
   const [reportingIncident, setReportingIncident] = useState(false);
-  const [summaryCollapsed, setSummaryCollapsed] = useState(false);
+  const [summaryCollapsed, setSummaryCollapsed] = useState(true);
+  const [summaryHasToggled, setSummaryHasToggled] = useState(false);
   const [incidentsOpen, setIncidentsOpen] = useState(false);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [incidentsLoading, setIncidentsLoading] = useState(true);
@@ -2159,7 +2156,7 @@ export function ProgressTrackingModalContent({
   return (
     // Equipment records use one scrolling column; editing keeps the
     // form and history side by side on wide screens.
-    <div data-progress-summary-collapsed={readOnly ? undefined : summaryCollapsed && !incidentOpen ? "true" : "false"} className={[
+    <div data-progress-summary-collapsed={readOnly ? undefined : summaryCollapsed && !incidentOpen ? "true" : "false"} data-progress-summary-animated={!readOnly && summaryHasToggled ? "true" : undefined} className={[
       "compact-text relative h-full overflow-y-auto",
       !readOnly && "lg:grid lg:overflow-hidden",
       !readOnly && (summaryCollapsed && !incidentOpen
@@ -2185,7 +2182,10 @@ export function ProgressTrackingModalContent({
             aria-expanded={incidentOpen ? undefined : !summaryCollapsed}
             aria-controls={incidentOpen ? undefined : "progress-summary-panel"}
             aria-label={incidentOpen ? "Close" : summaryCollapsed ? "Show Planned, Actual, and Log history" : "Hide Planned, Actual, and Log history"}
-            onClick={incidentOpen ? onClose : () => setSummaryCollapsed((collapsed) => !collapsed)}
+            onClick={incidentOpen ? onClose : () => {
+              setSummaryHasToggled(true);
+              setSummaryCollapsed((collapsed) => !collapsed);
+            }}
             className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
           >
             {incidentOpen ? <X aria-hidden className="size-5" /> : <PanelRight aria-hidden className="size-5" />}
@@ -2483,11 +2483,7 @@ export function ProgressTrackingModalContent({
                 </>
               )}
             </div>
-          ) : (
-            <EmptyState compact className="rounded-md border border-dashed border-zinc-200 px-3 py-4">
-              No planned equipment cost items on this task — add any equipment costs for today (rental, maintenance, repair, etc.).
-            </EmptyState>
-          )}
+          ) : null}
 
           <datalist id="progress-equipment-cost-suggestions">
             {equipmentSuggestions.map((item) => (
@@ -2529,7 +2525,10 @@ export function ProgressTrackingModalContent({
               <h3 className="text-base font-semibold text-zinc-900">Materials used</h3>
             </div>
 
+            {(hasItemizedMaterials || unplannedRows.length > 0) && (
             <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
+                {hasItemizedMaterials && (
+                <>
                 <div
                   className={`${MATERIAL_COLUMNS} border-b border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
                 >
@@ -2591,6 +2590,8 @@ export function ProgressTrackingModalContent({
                     );
                   })}
                 </ul>
+                </>
+                )}
 
                 {/* Materials used that aren't on the task's own lines —
                     typed, each at its own unit cost; in the day's material
@@ -2598,9 +2599,9 @@ export function ProgressTrackingModalContent({
                 {unplannedRows.length > 0 && (
                   <>
                     <div
-                      className={`${UNPLANNED_COLUMNS} border-y border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
+                      className={`${UNPLANNED_COLUMNS} ${hasItemizedMaterials ? "border-y" : "border-b"} border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
                     >
-                      <span>Unplanned</span>
+                      <span>{hasItemizedMaterials ? "Unplanned" : "Material"}</span>
                       <span>Unit</span>
                       <span>Quantity</span>
                       <span className="sr-only">Remove</span>
@@ -2660,6 +2661,7 @@ export function ProgressTrackingModalContent({
                   </>
                 )}
               </div>
+              )}
 
               <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                 <button
@@ -2792,11 +2794,7 @@ export function ProgressTrackingModalContent({
                 </>
               )}
             </div>
-          ) : (
-            <EmptyState compact className="rounded-md border border-dashed border-zinc-200 px-3 py-4">
-              No planned other cost items on this task — add any itemized other costs for today.
-            </EmptyState>
-          )}
+          ) : null}
 
           <datalist id="progress-other-cost-suggestions">
             {otherSuggestions.map((item) => (

@@ -7,44 +7,47 @@ export type ScheduleModalEdit = {
   isMilestone?: boolean;
   /** Undefined means this form does not expose the relationship. */
   successorId?: number | null;
+  successorKind?: "category" | "task";
 };
 export type PendingScheduleModalEdit = { token: number; edit: ScheduleModalEdit; pending: boolean };
 
 export function scheduleModalEdit(kind: ScheduleModalEdit["kind"], id: number, form: FormData): ScheduleModalEdit {
   const successorField = kind === "task" ? "successorTaskId" : "successorCategoryId";
   const successor = Number(form.get(successorField));
+  const projectSuccessor = /^(category|task):([1-9][0-9]*)$/.exec(String(form.get("successorRowKey") ?? ""));
   return {
     kind, id,
     ...(kind === "category" && form.has("categoryName") ? { name: String(form.get("categoryName")).trim() } : {}),
     ...(kind === "task" || form.has("milestoneField") ? { isMilestone: form.get("isMilestone") === "on" } : {}),
-    ...(form.has(successorField) ? { successorId: Number.isSafeInteger(successor) && successor > 0 ? successor : null } : {}),
+    ...(form.has("successorRowKey") ? { successorId: projectSuccessor ? Number(projectSuccessor[2]) : null,
+      successorKind: (projectSuccessor?.[1] ?? kind) as "category" | "task" }
+      : form.has(successorField) ? { successorId: Number.isSafeInteger(successor) && successor > 0 ? successor : null } : {}),
   };
 }
 
 /** Patch only fields owned by the Edit modal. Dates, costs, progress, priority,
  * assignments and the edited row's own predecessor are preserved. */
 export function applyScheduleModalEdits(categories: CostCategory[], edits: readonly ScheduleModalEdit[]): CostCategory[] {
+  function dependency<T extends { id: number; predecessorCategoryId?: number | null; predecessorTaskId?: number | null }>(row: T, kind: "category" | "task", edit: ScheduleModalEdit): T {
+    if (edit.successorId === undefined) return row;
+    if (kind === (edit.successorKind ?? edit.kind) && row.id === edit.successorId) return { ...row,
+      predecessorCategoryId: edit.kind === "category" ? edit.id : null,
+      predecessorTaskId: edit.kind === "task" ? edit.id : null,
+    };
+    if (edit.kind === "category" && row.predecessorCategoryId === edit.id) return { ...row, predecessorCategoryId: null };
+    if (edit.kind === "task" && row.predecessorTaskId === edit.id) return { ...row, predecessorTaskId: null };
+    return row;
+  }
   return edits.reduce((current, edit) => current.map(category => {
-    if (edit.kind === "category") {
-      let next = category;
-      if (category.id === edit.id) next = { ...next,
+    let next = dependency(category, "category", edit);
+    if (edit.kind === "category" && category.id === edit.id) next = { ...next,
         ...(edit.name !== undefined ? { name: edit.name } : {}),
         ...(edit.isMilestone !== undefined ? { isMilestone: edit.isMilestone } : {}),
-      };
-      if (edit.successorId !== undefined) {
-        if (category.id === edit.successorId) next = { ...next, predecessorCategoryId: edit.id };
-        else if (category.predecessorCategoryId === edit.id) next = { ...next, predecessorCategoryId: null };
-      }
-      return next;
-    }
-    return { ...category, tasks: category.tasks.map(task => {
-      let next = task;
-      if (task.id === edit.id && edit.isMilestone !== undefined) next = { ...next, isMilestone: edit.isMilestone };
-      if (edit.successorId !== undefined) {
-        if (task.id === edit.successorId) next = { ...next, predecessorTaskId: edit.id };
-        else if (task.predecessorTaskId === edit.id) next = { ...next, predecessorTaskId: null };
-      }
-      return next;
+    };
+    return { ...next, tasks: next.tasks.map(task => {
+      let updated = dependency(task, "task", edit);
+      if (edit.kind === "task" && task.id === edit.id && edit.isMilestone !== undefined) updated = { ...updated, isMilestone: edit.isMilestone };
+      return updated;
     }) };
   }), categories);
 }
@@ -54,8 +57,10 @@ function sameModalFields(left: CostCategory[], right: CostCategory[]) {
     const next = right[index];
     return category.name === next.name && category.isMilestone === next.isMilestone &&
       (category.predecessorCategoryId ?? null) === (next.predecessorCategoryId ?? null) &&
+      (category.predecessorTaskId ?? null) === (next.predecessorTaskId ?? null) &&
       category.tasks.every((task, taskIndex) => task.isMilestone === next.tasks[taskIndex].isMilestone &&
-        task.predecessorTaskId === next.tasks[taskIndex].predecessorTaskId);
+        (task.predecessorTaskId ?? null) === (next.tasks[taskIndex].predecessorTaskId ?? null) &&
+        (task.predecessorCategoryId ?? null) === (next.tasks[taskIndex].predecessorCategoryId ?? null));
   });
 }
 

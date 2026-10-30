@@ -252,6 +252,7 @@ export interface Database {
            * category's own; ignored once it has tasks. */
           is_milestone: boolean;
           predecessor_category_id: number | null;
+          predecessor_task_id: number | null;
           /** See 0047_category_labor_estimate.sql's own comment — only
            * used while this category has no tasks yet; once it does,
            * the Labor Breakdown modal shows their rolled-up total
@@ -291,6 +292,7 @@ export interface Database {
           priority?: string;
           is_milestone?: boolean;
           predecessor_category_id?: number | null;
+          predecessor_task_id?: number | null;
           category_labor_estimate?: number;
           category_equipment_estimate?: number;
           category_other_estimate?: number;
@@ -310,6 +312,7 @@ export interface Database {
           priority?: string;
           is_milestone?: boolean;
           predecessor_category_id?: number | null;
+          predecessor_task_id?: number | null;
           category_labor_estimate?: number;
           category_equipment_estimate?: number;
           category_other_estimate?: number;
@@ -369,6 +372,7 @@ export interface Database {
           planned_start_date?: string | null;
           planned_end_date?: string | null;
           predecessor_task_id?: number | null;
+          predecessor_category_id?: number | null;
           is_milestone?: boolean;
           priority?: string;
           material_direct_quantity?: number;
@@ -390,6 +394,7 @@ export interface Database {
           planned_start_date?: string | null;
           planned_end_date?: string | null;
           predecessor_task_id?: number | null;
+          predecessor_category_id?: number | null;
           is_milestone?: boolean;
           priority?: string;
           material_direct_quantity?: number;
@@ -1592,6 +1597,11 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      save_estimate_successor: {
+        Args: { p_project_id: number; p_source_kind: string; p_source_id: number; p_successor_kind: string | null;
+          p_successor_id: number | null; p_milestone?: boolean | null; p_name?: string | null };
+        Returns: undefined;
+      };
       move_estimate_row: {
         Args: { p_project_id: number; p_kind: string; p_row_id: number; p_target_id: number; p_after: boolean };
         Returns: { category_id: number | null; ids: number[] };

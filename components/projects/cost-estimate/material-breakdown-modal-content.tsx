@@ -10,6 +10,8 @@ import {
   updateCategoryMaterialAssignments,
 } from "@/lib/cost-estimate/actions";
 import type { CostCategory, TaskMaterialAssignment } from "@/lib/cost-estimate/data";
+import { useEstimateSync } from "./estimate-sync-context";
+import type { EstimateRowPatch } from "@/lib/cost-estimate/live-estimate";
 import {
   DIVIDER,
   GROUP_ROW,
@@ -313,6 +315,7 @@ export function MaterialBreakdownModalContent({
   highlightTarget?: MaterialBreakdownHighlightTarget;
 }) {
   const router = useRouter();
+  const estimateSync = useEstimateSync();
   // One ref per task row, keyed by task id — set via each row's own
   // ref callback below, read only by the scroll-to-highlight effect.
   const taskRowRefs = useRef(new Map<number, HTMLTableRowElement>());
@@ -574,30 +577,40 @@ export function MaterialBreakdownModalContent({
   async function handleSave() {
     setError(null);
     setPending(true);
-    const [taskResults, categoryResults] = await Promise.all([
-      Promise.all(
-        Array.from(dirtyTaskIds).map((taskId) => {
-          return updateTaskMaterialAssignments(
-            taskId,
-            projectId,
-            toDirectInput(directByTask[taskId] ?? EMPTY_DIRECT),
-            (draftByTask[taskId] ?? []).map(toLineInput)
-          );
-        })
-      ),
-      Promise.all(
-        Array.from(dirtyCategoryIds).map((categoryId) => {
-          return updateCategoryMaterialAssignments(
-            categoryId,
-            projectId,
-            toDirectInput(directByCategory[categoryId] ?? EMPTY_DIRECT),
-            (draftByCategory[categoryId] ?? []).map(toLineInput)
-          );
-        })
-      ),
+    async function saveOwner(owner: LineOwner) {
+      const direct = toDirectInput((owner.kind === "task" ? directByTask[owner.id] : directByCategory[owner.id]) ?? EMPTY_DIRECT);
+      const lines = ((owner.kind === "task" ? draftByTask[owner.id] : draftByCategory[owner.id]) ?? []).map(toLineInput);
+      const materialAssignments = lines.map((line, index) => ({ ...line, id: -(index + 1),
+        materialName: line.materialName.trim(), specification: line.specification?.trim() || null, unit: line.unit?.trim() || null,
+      })).filter(line => line.materialName.length > 0);
+      const total = (direct.amountOverride ?? direct.quantity * direct.unitCost) + materialAssignments.reduce((sum, line) =>
+        sum + (line.amountOverride ?? line.plannedQuantity * line.unitCost), 0);
+      const values = { materialDirectQuantity: direct.quantity, materialDirectUnit: direct.unit?.trim() || null,
+        materialUnitCost: direct.unitCost, materialDirectAmountOverride: direct.amountOverride, materialAssignments };
+      const patch: EstimateRowPatch = owner.kind === "task"
+        ? { ...owner, kind: "task", values: { ...values, materialEstimate: total } }
+        : { ...owner, kind: "category", values: { ...values, categoryMaterialEstimate: total } };
+      const token = estimateSync?.begin([patch]);
+      try {
+        const result = owner.kind === "task"
+          ? await updateTaskMaterialAssignments(owner.id, projectId, direct, lines)
+          : await updateCategoryMaterialAssignments(owner.id, projectId, direct, lines);
+        if (token !== undefined) {
+          if (result.error) estimateSync?.rollback(token); else estimateSync?.complete(token);
+        }
+        return result;
+      } catch {
+        if (token !== undefined) estimateSync?.rollback(token);
+        return { error: "Could not save the material list. Please try again." };
+      }
+    }
+    const results = await Promise.all([
+      ...Array.from(dirtyTaskIds, id => saveOwner({ kind: "task", id })),
+      ...Array.from(dirtyCategoryIds, id => saveOwner({ kind: "category", id })),
     ]);
     setPending(false);
-    const failed = [...taskResults, ...categoryResults].find((r) => r.error);
+    router.refresh();
+    const failed = results.find((r) => r.error);
     if (failed?.error) {
       setError(failed.error);
       return;
@@ -608,7 +621,6 @@ export function MaterialBreakdownModalContent({
     // to trigger a refresh — confirmed directly as the cause of the
     // Labor Rate % field appearing to compute against ₱0 right after a
     // Material Breakdown save in the same session.
-    router.refresh();
     onClose();
   }
 

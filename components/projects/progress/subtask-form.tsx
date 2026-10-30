@@ -4,7 +4,7 @@ import { RequiredMark } from "@/components/ui/required-mark";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ModalFooter } from "@/components/ui/modal";
 
-import { useActionState, useEffect, useId } from "react";
+import { useActionState, useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronDown } from "lucide-react";
 import {
@@ -12,7 +12,8 @@ import {
   updateSubtask,
   type CostEstimateActionState,
 } from "@/lib/cost-estimate/actions";
-import type { TaskMaterialAssignment } from "@/lib/cost-estimate/data";
+import type { CostCategory, TaskMaterialAssignment } from "@/lib/cost-estimate/data";
+import { currentProjectSuccessor, projectSuccessorOptions, scheduleRowKey } from "@/lib/cost-estimate/successor-options";
 
 const initialState: CostEstimateActionState = {};
 
@@ -58,9 +59,8 @@ const initialState: CostEstimateActionState = {};
  *    after this task" — pre-filled with whichever sibling (if any)
  *    already has its own predecessor pointing here (see
  *    applyPredecessor in lib/cost-estimate/actions.ts).
- * Either way, the dropdown only ever offers `siblingTasks` — every
- * other task already in this same phase — matching the same
- * same-phase-only rule enforced both client- and server-side.
+ * Normal tasks retain sibling choices. Milestones may select any saved
+ * main task or subtask in this project through the typed project picker.
  *
  * Deleting an existing task is in this modal's own ⋮ menu (see
  * gantt-chart-view.tsx's Edit Task modal), not a control on the task
@@ -71,6 +71,7 @@ export function SubtaskForm({
   categoryId,
   task,
   siblingTasks,
+  projectCategories,
   onViewMaterials,
   onRequestDelete,
   onSuccess,
@@ -88,6 +89,7 @@ export function SubtaskForm({
     materialAssignments: TaskMaterialAssignment[];
   };
   siblingTasks: { id: number; name: string; predecessorTaskId: number | null }[];
+  projectCategories?: CostCategory[];
   /** Closes this modal and opens the Material Breakdown modal with this
    * task's own row highlighted — undefined in create mode (nothing to
    * highlight yet), same "edit mode only" gating Delete already uses. */
@@ -98,6 +100,11 @@ export function SubtaskForm({
   onSave?: (form: FormData) => void;
 }) {
   const isEdit = task !== undefined;
+  const projectLinkMode = isEdit && projectCategories !== undefined;
+  const [milestone, setMilestone] = useState(task?.isMilestone ?? false);
+  const [successorSelection, setSuccessorSelection] = useState(() => task && projectCategories
+    ? currentProjectSuccessor(projectCategories, { kind: "task", id: task.id }) : "");
+  const projectOptions = task && projectCategories ? projectSuccessorOptions(projectCategories, { kind: "task", id: task.id }, milestone) : [];
   const boundAction = isEdit
     ? updateSubtask.bind(null, task.id, projectId)
     : createTask.bind(null, projectId);
@@ -170,7 +177,13 @@ export function SubtaskForm({
               id={`${formId}-isMilestone`}
               name="isMilestone"
               type="checkbox"
-              defaultChecked={task?.isMilestone ?? false}
+              checked={milestone}
+              onChange={event => {
+                const checked = event.target.checked;
+                setMilestone(checked);
+                if (task && projectCategories && !projectSuccessorOptions(projectCategories, { kind: "task", id: task.id }, checked)
+                  .some(option => scheduleRowKey(option) === successorSelection)) setSuccessorSelection("");
+              }}
               className="peer size-4 cursor-pointer appearance-none rounded-sm border border-zinc-300 bg-zinc-100 transition checked:border-zinc-900 checked:bg-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-300 focus-visible:outline-none"
             />
             <Check
@@ -196,14 +209,18 @@ export function SubtaskForm({
           <div className="relative">
             <select
               id={`${formId}-relationship`}
-              name={isEdit ? "successorTaskId" : "predecessorTaskId"}
-              defaultValue={isEdit ? (currentSuccessor?.id ?? "") : ""}
+              name={projectLinkMode ? "successorRowKey" : isEdit ? "successorTaskId" : "predecessorTaskId"}
+              value={projectLinkMode ? successorSelection : undefined}
+              defaultValue={projectLinkMode ? undefined : isEdit ? (currentSuccessor?.id ?? "") : ""}
+              onChange={projectLinkMode ? event => setSuccessorSelection(event.target.value) : undefined}
               className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             >
               <option value="">
-                {isEdit ? "None — no successor" : "None — starts independently"}
+                {isEdit ? "Select a successor task" : "None — starts independently"}
               </option>
-              {relationshipOptions.map((t) => (
+              {projectLinkMode ? projectOptions.map(option => (
+                <option key={scheduleRowKey(option)} value={scheduleRowKey(option)}>{option.name}</option>
+              )) : relationshipOptions.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
                 </option>

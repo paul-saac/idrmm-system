@@ -567,16 +567,22 @@ input[type="date"][data-empty="true"] {
 @media (min-width: 64rem) {
   dialog:has([data-progress-summary-collapsed]) {
     width: min(100vw, var(--container-6xl, 72rem));
+  }
+  /* The dialog mounts its content after opening. Only animate explicit
+     toggles, so the initial collapsed layout never slides in and out. */
+  dialog:has([data-progress-summary-animated="true"]) {
     transition: width 120ms ease-out;
   }
   [data-progress-summary-collapsed] {
     grid-template-columns: calc(min(100vw, var(--container-6xl, 72rem)) - 28rem) 28rem;
   }
   [data-progress-summary-collapsed] > .progress-summary {
-    transition: transform 120ms ease-out, opacity 120ms ease-out, visibility 120ms;
     transform: translateX(0);
     opacity: 1;
     visibility: visible;
+  }
+  [data-progress-summary-animated="true"] > .progress-summary {
+    transition: transform 120ms ease-out, opacity 120ms ease-out, visibility 120ms;
   }
   [data-progress-summary-collapsed="true"] > .progress-summary {
     transform: translateX(100%);
