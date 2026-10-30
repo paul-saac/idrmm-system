@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useId, useState, type ReactNode } from "react";
 import {
   ArrowRight,
@@ -111,7 +112,7 @@ function Field({
     <div className={`flex min-w-0 flex-col gap-1.5 ${className}`}>
       <label htmlFor={htmlFor} className="text-sm font-medium text-zinc-900">
         {label}
-        {required && <span className="ml-0.5 text-red-500">*</span>}
+        {required && <RequiredMark />}
         {optional && <span className="ml-1 font-normal text-zinc-400">(optional)</span>}
       </label>
       {children}
@@ -245,7 +246,7 @@ export function MaterialRequestEditForm({
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-base font-semibold text-zinc-900">Request details</h3>
             <span className="text-xs text-zinc-500">
-              <span className="text-red-500">*</span> Required
+              <RequiredMark /> Required
             </span>
           </div>
 

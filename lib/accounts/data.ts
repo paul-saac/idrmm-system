@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import type { UserRole } from "@/lib/auth/roles";
 import type { AccountEventAction } from "@/lib/supabase/types";
+import type { AccessLevel, ProjectAccessSettings } from "./project-access";
 
 export type AssignedProject = {
   id: number;
@@ -25,6 +26,8 @@ export type AccountRow = {
   /** Projects and recent activity loaded with the table so the detail
    * panel does not open with an empty/loading delay. */
   detailPreview: Pick<AccountDetail, "projects" | "activity">;
+  /** Preloaded project access settings so the Access section renders immediately. */
+  accessPreview?: ProjectAccessSettings;
 };
 
 /** One project someone runs or ran, for their account's detail window. */
@@ -41,7 +44,7 @@ export type AccountProject = {
 /** Something they did in the app — a progress update, a daily log, a
  * material request. */
 export type AccountActivity = {
-  kind: "progress" | "daily_log" | "material_request";
+  kind: "progress" | "material_request";
   label: string;
   projectName: string | null;
   at: string;
@@ -107,18 +110,38 @@ async function mapAssignedProjects(
  * slower, privileged change-log/history checks remain in getAccountDetail. */
 async function accountDetailPreviews(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  accountIds: string[]
+  accounts: {
+    id: string;
+    role: UserRole;
+    status: "active" | "inactive";
+    invitation_pending: boolean;
+  }[]
 ) {
-  const previews = new Map<string, Pick<AccountDetail, "projects" | "activity">>(
-    accountIds.map((id) => [id, { projects: [], activity: [] }])
+  const accountIds = accounts.map((a) => a.id);
+  const previews = new Map<
+    string,
+    Pick<AccountDetail, "projects" | "activity"> & { access: ProjectAccessSettings }
+  >(
+    accounts.map((a) => [
+      a.id,
+      {
+        projects: [],
+        activity: [],
+        access: { eligible: a.status === "active" && !a.invitation_pending, projects: [] },
+      },
+    ])
   );
   if (accountIds.length === 0) return previews;
 
-  const [projectRows, taskEntries, categoryEntries, dailyLogs, materialRequests] =
+  const [projectRows, accessRows, taskEntries, categoryEntries, materialRequests] =
     await Promise.all([
       supabase
         .from("projects")
         .select("id, project_name, location, status, start_date, target_end_date, actual_end_date, project_manager_id, foreman_id"),
+      supabase
+        .from("project_account_access")
+        .select("project_id, profile_id, access_level")
+        .in("profile_id", accountIds),
       supabase
         .from("task_progress_entries")
         .select("task_id, recorded_by, created_at")
@@ -132,18 +155,57 @@ async function accountDetailPreviews(
         .order("created_at", { ascending: false })
         .limit(250),
       supabase
-        .from("daily_logs")
-        .select("project_id, log_date, submitted_by, created_at")
-        .in("submitted_by", accountIds)
-        .order("created_at", { ascending: false })
-        .limit(250),
-      supabase
         .from("material_requests")
         .select("project_id, mr_no, requested_by, created_at")
         .in("requested_by", accountIds)
         .order("created_at", { ascending: false })
         .limit(250),
     ]);
+
+  const explicitAccess = new Map<string, AccessLevel>();
+  for (const row of accessRows.data ?? []) {
+    if (row.access_level === "none" || row.access_level === "view" || row.access_level === "edit") {
+      explicitAccess.set(`${row.profile_id}:${row.project_id}`, row.access_level);
+    }
+  }
+  const sortedProjects = [...(projectRows.data ?? [])].sort(
+    (a, b) => a.project_name.localeCompare(b.project_name) || a.id - b.id
+  );
+  for (const account of accounts) {
+    const preview = previews.get(account.id);
+    if (!preview) continue;
+    const eligible = account.status === "active" && !account.invitation_pending;
+    preview.access = {
+      eligible,
+      projects: sortedProjects.map((project) => {
+        const assigned =
+          project.project_manager_id === account.id || project.foreman_id === account.id;
+        let level: AccessLevel = "none";
+        if (eligible) {
+          if (account.role === "admin" || account.role === "super_admin") {
+            level = "edit";
+          } else if (account.role === "project_manager" || account.role === "foreman") {
+            const saved = explicitAccess.get(`${account.id}:${project.id}`);
+            if (saved) {
+              level = saved;
+            } else if (
+              (account.role === "project_manager" && project.project_manager_id === account.id) ||
+              (account.role === "foreman" && project.foreman_id === account.id)
+            ) {
+              level = "edit";
+            }
+          }
+        }
+        return {
+          id: project.id,
+          name: project.project_name,
+          location: project.location,
+          level,
+          assigned,
+        };
+      }),
+    };
+  }
 
   const projectName = new Map((projectRows.data ?? []).map((row) => [row.id, row.project_name]));
   for (const row of projectRows.data ?? []) {
@@ -205,14 +267,6 @@ async function accountDetailPreviews(
       at: entry.created_at,
     });
   }
-  for (const log of dailyLogs.data ?? []) {
-    previews.get(log.submitted_by)?.activity.push({
-      kind: "daily_log",
-      label: `Submitted the daily log for ${log.log_date}`,
-      projectName: projectName.get(log.project_id) ?? null,
-      at: log.created_at,
-    });
-  }
   for (const request of materialRequests.data ?? []) {
     previews.get(request.requested_by)?.activity.push({
       kind: "material_request",
@@ -246,24 +300,29 @@ export async function listAccountsByRole(
 
   if (error || !data) return [];
 
-  const accountIds = data.map((row) => row.id);
   const [assignedByAccount, signIns, previews] = await Promise.all([
     mapAssignedProjects(supabase),
     lastSignIns(supabase),
-    accountDetailPreviews(supabase, accountIds),
+    accountDetailPreviews(supabase, data),
   ]);
 
-  return data.map((row) => ({
-    id: row.id,
-    email: row.email,
-    firstName: row.first_name,
-    lastName: row.last_name,
-    role: row.role,
-    status: row.status,
-    invitationPending: row.invitation_pending,
-    createdAt: row.created_at,
-    assignedProjects: assignedByAccount.get(row.id) ?? [],
-    lastSignInAt: signIns.get(row.id) ?? null,
-    detailPreview: previews.get(row.id) ?? { projects: [], activity: [] },
-  }));
+  return data.map((row) => {
+    const preview = previews.get(row.id);
+    return {
+      id: row.id,
+      email: row.email,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      role: row.role,
+      status: row.status,
+      invitationPending: row.invitation_pending,
+      createdAt: row.created_at,
+      assignedProjects: assignedByAccount.get(row.id) ?? [],
+      lastSignInAt: signIns.get(row.id) ?? null,
+      detailPreview: preview
+        ? { projects: preview.projects, activity: preview.activity }
+        : { projects: [], activity: [] },
+      accessPreview: preview?.access,
+    };
+  });
 }

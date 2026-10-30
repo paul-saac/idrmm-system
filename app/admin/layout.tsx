@@ -4,6 +4,7 @@ import { getSessionProfile } from "@/lib/auth/session";
 import { PortalSidebar } from "@/components/admin/sidebar";
 import { PortalProvider } from "@/components/portal/portal-context";
 import { roleLabel, isAdminRole } from "@/lib/auth/roles";
+import { MaintenanceNotice } from "@/components/settings/maintenance-notice";
 
 export default async function AdminLayout({
   children,
@@ -28,7 +29,7 @@ export default async function AdminLayout({
     >
       <div className="flex h-screen overflow-hidden bg-zinc-50">
         <PortalSidebar basePath="/admin" />
-        <div className="flex flex-1 flex-col overflow-hidden">{children}</div>
+        <div className="flex flex-1 flex-col overflow-hidden"><MaintenanceNotice />{children}</div>
       </div>
     </PortalProvider>
   );

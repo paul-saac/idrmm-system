@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/empty-state";
 import Link from "next/link";
 import { FolderPlus, PackageSearch, TrendingUp, Wrench } from "lucide-react";
 import type { PortalBasePath } from "@/components/portal/portal-context";
@@ -26,7 +27,7 @@ export function RecentActivityCard({
       <h2 className="mb-4 text-sm font-semibold text-zinc-900">Recent Activity</h2>
 
       {items.length === 0 ? (
-        <p className="text-sm text-zinc-500">No recent activity yet.</p>
+        <EmptyState compact className="text-sm text-zinc-500">No recent activity yet.</EmptyState>
       ) : (
         <ul className="-mx-2 flex flex-col gap-1">
           {items.map((item) => {

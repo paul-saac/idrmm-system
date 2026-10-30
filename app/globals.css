@@ -569,7 +569,51 @@ input[type="date"][data-empty="true"] {
   }
 }
 
+.login-truck-enter {
+  animation: login-truck-enter 5500ms cubic-bezier(0.4, 0, 0.2, 1) 100ms both;
+}
+
+.login-crane-arm {
+  transform-origin: 405px 65px;
+  animation: login-crane-arm 8000ms ease-in-out infinite alternate both;
+}
+
+.login-crane-load {
+  animation: login-crane-load 8000ms ease-in-out infinite alternate both;
+}
+
+.login-crane-support {
+  animation: login-crane-support 8000ms ease-in-out infinite alternate both;
+}
+
+@keyframes login-truck-enter {
+  from { transform: translateX(-200px); }
+  to { transform: translateX(0); }
+}
+
+@keyframes login-crane-arm {
+  from { transform: rotate(12deg); }
+  to { transform: rotate(0); }
+}
+
+@keyframes login-crane-load {
+  from { transform: translate(45px, -43px); }
+  to { transform: translate(0, 0); }
+}
+
+@keyframes login-crane-support {
+  from { d: path("M224-179 405-50"); }
+  to { d: path("M179-136 405-50"); }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .login-truck-enter,
+  .login-crane-arm,
+  .login-crane-load,
+  .login-crane-support {
+    animation: none;
+  }
+
   dialog:has([data-progress-summary-collapsed]),
   [data-progress-summary-collapsed] > .progress-summary {
     transition: none;
@@ -805,4 +849,9 @@ select[data-calendar-dropdown]::-webkit-scrollbar {
   select:not([multiple]) option {
     transition-duration: 1ms;
   }
+}
+
+/* Empty state graphics are hidden inside modals (<dialog>); only empty state text is shown. */
+dialog .empty-state-illustration {
+  display: none;
 }

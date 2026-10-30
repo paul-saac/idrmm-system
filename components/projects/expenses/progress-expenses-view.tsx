@@ -1,5 +1,7 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { useMemo, useState } from "react";
 import { ChevronRight, Receipt } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
@@ -126,7 +128,7 @@ export function ProgressExpensesView({ entries, planned, onOpenProgressLog }: {
                 </td>
                 <td className="px-5 py-4 align-top text-zinc-500">{(category === "material" ? entry.supplier : entry.savedByName) ?? "—"}</td>
                 <td className="px-5 py-4 align-top text-right font-medium tabular-nums">{money(entry.costs[category])}</td>
-              </tr>) : <tr><td colSpan={4} className="px-5 py-10 text-center text-zinc-400">No {labels[category].toLowerCase()} expenses recorded yet.</td></tr>}</tbody>
+              </tr>) : <tr><td colSpan={4} className="px-5 py-10"><EmptyState compact>No {labels[category].toLowerCase()} expenses recorded yet.</EmptyState></td></tr>}</tbody>
             </table>
           </div>
         </section>;

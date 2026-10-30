@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useId, useState } from "react";
 import {
   createProjectMaterial,
@@ -76,8 +77,7 @@ export function MaterialForm({
           htmlFor={`${formId}-materialName`}
           className="text-sm font-medium text-zinc-900"
         >
-          Material Name
-        </label>
+          Material Name<RequiredMark /></label>
         <input
           id={`${formId}-materialName`}
           name="materialName"
@@ -128,7 +128,7 @@ export function MaterialForm({
           htmlFor={`${formId}-unit`}
           className="text-sm font-medium text-zinc-900"
         >
-          Unit
+          Unit{selectedUnit === OTHER_UNIT && <RequiredMark />}
         </label>
         <select
           id={`${formId}-unit`}

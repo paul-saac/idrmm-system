@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useRef } from "react";
 import { ChevronDown } from "lucide-react";
 import { createProject, type ProjectActionState } from "@/lib/projects/actions";
@@ -60,8 +61,7 @@ export function CreateProjectForm({
           htmlFor="projectName"
           className="text-sm font-medium text-zinc-900"
         >
-          Project name
-        </label>
+          Project name<RequiredMark /></label>
         <input
           id="projectName"
           name="projectName"
@@ -133,15 +133,18 @@ export function CreateProjectForm({
           htmlFor="projectManagerId"
           className="text-sm font-medium text-zinc-900"
         >
-          Project Manager
-        </label>
+          Project Manager<RequiredMark /></label>
         <div className="relative">
           <select
             id="projectManagerId"
             name="projectManagerId"
             required
+            defaultValue=""
             className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
+            <option value="" disabled>
+              Select Project Manager
+            </option>
             {/* Someone already on an unfinished project can't be picked
                 (see projectElsewhere). */}
             {eligibleProjectManagers.map((pm) => {
@@ -171,15 +174,18 @@ export function CreateProjectForm({
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="foremanId" className="text-sm font-medium text-zinc-900">
-          Foreman
-        </label>
+          Foreman<RequiredMark /></label>
         <div className="relative">
           <select
             id="foremanId"
             name="foremanId"
             required
+            defaultValue=""
             className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           >
+            <option value="" disabled>
+              Select Foreman
+            </option>
             {eligibleForemen.map((f) => {
               const elsewhere = projectElsewhere(f);
               return (

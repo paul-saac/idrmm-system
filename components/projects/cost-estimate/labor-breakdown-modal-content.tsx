@@ -1,5 +1,6 @@
 "use client";
 
+import { ProjectWriteInput, ProjectWriteButton } from "@/components/projects/project-access-context";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Calculator } from "lucide-react";
@@ -85,7 +86,7 @@ function PercentCell({
 }) {
   return (
     <div className="group/cell flex h-9 items-center justify-end gap-1 px-4 transition hover:not-focus-within:bg-zinc-900">
-      <input
+      <ProjectWriteInput
         type="text"
         inputMode="decimal"
         autoComplete="off"
@@ -341,7 +342,7 @@ export function LaborBreakdownModalContent({
             Labor Rate
           </label>
           <div className="relative">
-            <input
+            <ProjectWriteInput
               id="defaultLaborRatePercent"
               type="number"
               min={0}
@@ -479,7 +480,7 @@ export function LaborBreakdownModalContent({
             >
               Cancel
             </button>
-            <button
+            <ProjectWriteButton
               type="button"
               onClick={handleSave}
               disabled={
@@ -491,7 +492,7 @@ export function LaborBreakdownModalContent({
               className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {pending ? "Saving..." : "Save Changes"}
-            </button>
+            </ProjectWriteButton>
           </div>
         </div>
       </div>

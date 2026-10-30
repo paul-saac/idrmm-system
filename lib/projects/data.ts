@@ -9,6 +9,9 @@ export type ProjectRow = {
   name: string;
   location: string | null;
   status: ProjectStatus;
+  archivedAt: string | null;
+  archivedBy: string | null;
+  archiveReason: string | null;
   startDate: string | null;
   targetEndDate: string | null;
   actualEndDate: string | null;
@@ -70,6 +73,9 @@ function toProjectRow(
     project_name: string;
     location: string | null;
     status: ProjectStatus;
+    archived_at?: string | null;
+    archived_by?: string | null;
+    archive_reason?: string | null;
     start_date: string | null;
     target_end_date: string | null;
     actual_end_date: string | null;
@@ -89,6 +95,9 @@ function toProjectRow(
     name: row.project_name,
     location: row.location,
     status: row.status,
+    archivedAt: row.archived_at ?? null,
+    archivedBy: row.archived_by ?? null,
+    archiveReason: row.archive_reason ?? null,
     startDate: row.start_date,
     targetEndDate: row.target_end_date,
     actualEndDate: row.actual_end_date,
@@ -104,7 +113,7 @@ function toProjectRow(
   };
 }
 
-export async function listProjects(): Promise<ProjectRow[]> {
+export async function listProjects({ includeArchived = false }: { includeArchived?: boolean } = {}): Promise<ProjectRow[]> {
   const supabase = await createClient();
 
   const { data, error } = await supabase
@@ -114,16 +123,18 @@ export async function listProjects(): Promise<ProjectRow[]> {
 
   if (error || !data) return [];
 
-  const namesById = await attachAssigneeNames(supabase, data);
+  const visible = includeArchived ? data : data.filter((row) => !row.archived_at);
+  const namesById = await attachAssigneeNames(supabase, visible);
 
-  return Promise.all(data.map(async (row) => {
+  return Promise.all(visible.map(async (row) => {
     const project = toProjectRow(row, namesById);
+    if (project.archivedAt) return project;
     const { lifecycle } = await getCostEstimate(row.id, true);
-    const status = deriveProjectStatusFromProgress(lifecycle, project.actualEndDate);
-    if (status !== project.status || (status !== "completed" && project.actualEndDate)) {
+    const status = deriveProjectStatusFromProgress(lifecycle);
+    if (status !== project.status) {
       await syncProjectStatusFromProgress(row.id, lifecycle);
     }
-    return { ...project, status, actualEndDate: status === "completed" ? project.actualEndDate : null };
+    return { ...project, status };
   }));
 }
 

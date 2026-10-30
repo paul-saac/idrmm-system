@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, Search } from "lucide-react";
@@ -47,7 +48,7 @@ export function ProjectPicker({
         </div>
         <div className="flex flex-col divide-y divide-zinc-100">
           {filtered.length === 0 ? (
-            <p className="py-6 text-center text-sm text-zinc-400">No projects match.</p>
+            <EmptyState compact className="py-6 text-center text-sm text-zinc-400">No projects match.</EmptyState>
           ) : (
             filtered.map((project) => (
               <Link

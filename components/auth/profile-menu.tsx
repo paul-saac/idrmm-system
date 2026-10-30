@@ -49,7 +49,7 @@ export function ProfileMenu() {
         aria-expanded={open}
         className="flex cursor-pointer items-center gap-2 py-1 pr-1.5 pl-1 text-sm font-medium text-zinc-700 transition hover:text-zinc-900"
       >
-        <span className={`flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${profileColor}`}>
+        <span className={`flex size-8 shrink-0 items-center justify-center rounded-[1px] text-xs font-semibold ${profileColor}`}>
           {userInitials}
         </span>
         {/* Name, and their role under it. */}
@@ -69,7 +69,7 @@ export function ProfileMenu() {
       {open && (
         <div className="absolute top-full right-0 z-50 mt-2 w-72 rounded-md border border-zinc-200 bg-white p-2 shadow-xl">
           <div className="flex items-center gap-3 border-b border-zinc-200 px-3 pt-2 pb-3">
-            <span className={`flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${profileColor}`}>
+            <span className={`flex size-10 shrink-0 items-center justify-center rounded-[1px] text-sm font-semibold ${profileColor}`}>
               {userInitials}
             </span>
             <div className="min-w-0">

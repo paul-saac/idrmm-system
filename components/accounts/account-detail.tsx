@@ -1,23 +1,19 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ProjectAccessEditor, type ProjectAccessChange } from "./project-access-editor";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { initials } from "@/lib/initials";
 import { avatarColor } from "@/components/ui/list-table";
 import {
   Building2,
   ChevronDown,
-  ClipboardList,
-  Folder,
-  History,
-  KeyRound,
-  LockKeyhole,
   Mail,
   RefreshCw,
-  ScrollText,
-  ShieldCheck,
   TrendingUp,
-  UserRound,
   PackageSearch,
 } from "lucide-react";
 import {
@@ -33,18 +29,23 @@ import {
   updateAccountDetails,
   type AccountActionState,
 } from "@/lib/accounts/actions";
+import { saveProjectAccess } from "@/lib/accounts/project-access";
 import { projectElsewhere } from "@/lib/accounts/availability";
 import type { AccountDetail as Detail, AccountRow } from "@/lib/accounts/data";
 import { roleLabel, type UserRole } from "@/lib/auth/roles";
 import type { AccountEventAction } from "@/lib/supabase/types";
 import { timeAgo } from "@/lib/time-ago";
-import { ModalFooter } from "@/components/ui/modal";
+import { Modal, ModalFooter } from "@/components/ui/modal";
 
 const INPUT =
   "w-full rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
 const LABEL = "text-xs font-medium text-zinc-500";
 const PRIMARY =
   "cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50";
+// Compact, tab-like action — for low-emphasis account actions (reset
+// email, sign out everywhere) that shouldn't read as full form buttons.
+const TAB_BUTTON =
+  "inline-flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50";
 const SECONDARY =
   "cursor-pointer rounded border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50";
 const DANGER =
@@ -71,7 +72,6 @@ const PROJECT_STATUS: Record<"planning" | "ongoing" | "completed", { label: stri
 
 const ACTIVITY_ICON = {
   progress: TrendingUp,
-  daily_log: ClipboardList,
   material_request: PackageSearch,
 } as const;
 
@@ -133,9 +133,17 @@ export function AccountDetail({
   const [firstName, setFirstName] = useState(account.firstName);
   const [lastName, setLastName] = useState(account.lastName);
   const [email, setEmail] = useState(account.email);
+  const [savedDetails, setSavedDetails] = useState({
+    firstName: account.firstName,
+    lastName: account.lastName,
+    email: account.email,
+  });
   const [role, setRole] = useState<UserRole>(account.role);
+  const [savedRole, setSavedRole] = useState<UserRole>(account.role);
+  const [accessChanges, setAccessChanges] = useState<ProjectAccessChange[]>([]);
   const [password, setPassword] = useState("");
   const [handovers, setHandovers] = useState<Record<number, string>>({});
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -191,34 +199,87 @@ export function AccountDetail({
   // they're deactivated.
   const running = detail.projects.filter((project) => project.status !== "completed");
   const detailsChanged =
-    firstName.trim() !== account.firstName ||
-    lastName.trim() !== account.lastName ||
-    email.trim().toLowerCase() !== account.email.toLowerCase();
-  const initials = `${account.firstName.charAt(0)}${account.lastName.charAt(0)}`.toUpperCase() ||
-    account.email.charAt(0).toUpperCase();
+    firstName.trim() !== savedDetails.firstName ||
+    lastName.trim() !== savedDetails.lastName ||
+    email.trim().toLowerCase() !== savedDetails.email.toLowerCase();
+  const roleChanged = roleOptions.length > 1 && role !== savedRole;
+  const canManageAccess = role === "project_manager" || role === "foreman";
+  const accessChanged = canManageAccess && accessChanges.length > 0;
 
-  function deactivateAccount() {
-    if (!window.confirm(`Deactivate ${name}? They won't be able to sign in until reactivated.`)) {
+  async function handleSave() {
+    setMessage(null);
+    if (!detailsChanged && !roleChanged && !accessChanged) {
+      onClose();
       return;
     }
-    run("access", "deactivate", () =>
-      running.length > 0
-        ? deactivateWithHandover(
-            account.id,
-            running.map((project) => ({
-              projectId: project.id,
-              replacementId: handovers[project.id],
-            }))
-          )
-        : setAccountsStatus([account.id], "inactive")
+    setBusy("save");
+    let didMutate = false;
+    try {
+      if (detailsChanged) {
+        const res = await updateAccountDetails(account.id, { firstName, lastName, email });
+        if (res.error) {
+          setMessage({ section: "details", tone: "error", text: res.error });
+          return;
+        }
+        setSavedDetails({
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          email: email.trim(),
+        });
+        didMutate = true;
+      }
+      if (roleChanged) {
+        const res = await changeAccountRole(account.id, role);
+        if (res.error) {
+          setMessage({ section: "role", tone: "error", text: res.error });
+          return;
+        }
+        setSavedRole(role);
+        didMutate = true;
+      }
+      if (accessChanged) {
+        const res = await saveProjectAccess(account.id, accessChanges);
+        if (res.error) {
+          setMessage({ section: "access", tone: "error", text: res.error });
+          return;
+        }
+        setAccessChanges([]);
+        didMutate = true;
+      }
+      onClose();
+    } finally {
+      setBusy(null);
+      if (didMutate) {
+        router.refresh();
+        setVersion((value) => value + 1);
+      }
+    }
+  }
+  const userInitial = initials(name || account.email);
+
+  function confirmDeactivate() {
+    run(
+      "access",
+      "deactivate",
+      () =>
+        running.length > 0
+          ? deactivateWithHandover(
+              account.id,
+              running.map((project) => ({
+                projectId: project.id,
+                replacementId: handovers[project.id],
+              }))
+            )
+          : setAccountsStatus([account.id], "inactive"),
+      () => setDeactivateOpen(false)
     );
   }
 
   return (
     <div className="flex flex-col gap-0">
       <div className="-mx-6 -mt-5 flex items-center gap-4 border-b border-zinc-200 px-6 py-5">
-        <div className={`flex size-12 shrink-0 items-center justify-center rounded-full text-sm font-medium ${avatarColor(name || account.email)}`}>
-          {initials}
+        <div className={`flex size-12 shrink-0 items-center justify-center rounded-[1px] text-sm font-medium ${avatarColor(name || account.email)}`}>
+          {userInitial}
         </div>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -238,8 +299,11 @@ export function AccountDetail({
         {active && (
           <button
             type="button"
-            disabled={!detail || busy !== null || running.some((project) => !handovers[project.id])}
-            onClick={deactivateAccount}
+            disabled={!detail || busy !== null}
+            onClick={() => {
+              setMessage(null);
+              setDeactivateOpen(true);
+            }}
             className={`${DANGER} ml-auto shrink-0`}
           >
             {busy === "deactivate" ? "Deactivating..." : "Deactivate"}
@@ -268,40 +332,35 @@ export function AccountDetail({
       <section className="flex flex-col gap-3 px-6 py-5">
         <div>
           <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-            <UserRound className="size-4 text-zinc-500" /> Account details
+            Account details
           </h3>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex flex-col gap-1.5">
-            <span className={LABEL}>First name</span>
+            <span className={LABEL}>First name<RequiredMark /></span>
             <input value={firstName} onChange={(e) => setFirstName(e.target.value)} className={INPUT} />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className={LABEL}>Last name</span>
+            <span className={LABEL}>Last name<RequiredMark /></span>
             <input value={lastName} onChange={(e) => setLastName(e.target.value)} className={INPUT} />
           </label>
           <label className="flex flex-col gap-1.5 sm:col-span-2">
-            <span className={LABEL}>Email address</span>
+            <span className={LABEL}>Email address<RequiredMark /></span>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={INPUT} />
           </label>
         </div>
         {note("details")}
-        <div className="mt-auto">
-          <button type="button" disabled={!detailsChanged || busy !== null} onClick={() => run("details", "details", () => updateAccountDetails(account.id, { firstName, lastName, email }))} className={PRIMARY}>
-            {busy === "details" ? "Saving..." : "Save details"}
-          </button>
-        </div>
       </section>
 
       {roleOptions.length > 1 && (
         <section className="flex flex-col gap-3 px-6 py-5 lg:border-l lg:border-zinc-200">
           <div>
             <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-              <ShieldCheck className="size-4 text-zinc-500" /> Roles
+              Roles
             </h3>
           </div>
           <label className="flex flex-col gap-1.5">
-            <span className={LABEL}>Role</span>
+            <span className={LABEL}>Role<RequiredMark /></span>
             <span className="relative">
               <select value={role} onChange={(e) => setRole(e.target.value as UserRole)} aria-label="Role" className={`${INPUT} cursor-pointer appearance-none pr-9`}>
                 {roleOptions.map((option) => <option key={option} value={option}>{roleLabel(option)}</option>)}
@@ -310,11 +369,6 @@ export function AccountDetail({
             </span>
           </label>
           {note("role")}
-          <div className="mt-auto">
-            <button type="button" disabled={role === account.role || busy !== null} onClick={() => run("role", "role", () => changeAccountRole(account.id, role))} className={PRIMARY}>
-              {busy === "role" ? "Changing..." : "Change role"}
-            </button>
-          </div>
         </section>
       )}
       </div>
@@ -327,11 +381,6 @@ export function AccountDetail({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-              {account.invitationPending ? (
-                <Mail className="size-4 text-zinc-500" />
-              ) : (
-                <KeyRound className="size-4 text-zinc-500" />
-              )}
               {account.invitationPending ? "Invitation" : "Password & sign-in"}
             </h3>
             {account.invitationPending && (
@@ -339,14 +388,14 @@ export function AccountDetail({
             )}
           </div>
           {!account.invitationPending && (
-            <div className="flex flex-wrap gap-2">
-              <button type="button" disabled={busy !== null} onClick={() => run("password", "reset", () => sendPasswordReset(account.id))} className={SECONDARY}>
-                <Mail className="mr-1.5 inline size-4" />
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button type="button" disabled={busy !== null} onClick={() => run("password", "reset", () => sendPasswordReset(account.id))} className={TAB_BUTTON}>
+                <Mail className="size-3.5" />
                 {busy === "reset" ? "Sending..." : "Send reset email"}
               </button>
               <button type="button" disabled={busy !== null} onClick={() => {
                 if (window.confirm(`Sign ${name} out of every device?`)) run("password", "signout", () => signOutEverywhere(account.id));
-              }} className={SECONDARY}>
+              }} className={TAB_BUTTON}>
                 {busy === "signout" ? "Signing out..." : "Sign out everywhere"}
               </button>
             </div>
@@ -415,11 +464,10 @@ export function AccountDetail({
         <div className="-mx-6 grid border-t border-zinc-200 lg:grid-cols-2">
         <section className="flex flex-col gap-3 px-6 py-5">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-            <Folder className="size-4 text-zinc-500" />
             Projects <span className="text-xs font-normal text-zinc-400">{detail.projects.length} assigned</span>
           </h3>
           {detail.projects.length === 0 ? (
-            <p className="text-sm text-zinc-400">No projects yet.</p>
+            <EmptyState compact className="text-sm text-zinc-400">No projects yet.</EmptyState>
           ) : (
             <ul className="-mx-2 flex flex-col gap-1">
               {detail.projects.map((project) => (
@@ -452,10 +500,10 @@ export function AccountDetail({
         </section>
         <section className="flex flex-col gap-3 px-6 py-5 lg:border-l lg:border-zinc-200">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-            <History className="size-4 text-zinc-500" /> Recent activity
+            Recent activity
           </h3>
           {detail.activity.length === 0 ? (
-            <p className="text-sm text-zinc-400">No activity yet.</p>
+            <EmptyState compact className="text-sm text-zinc-400">No activity yet.</EmptyState>
           ) : (
             <ul className="-mx-2 flex flex-col gap-1">
               {detail.activity.map((item, index) => {
@@ -484,10 +532,10 @@ export function AccountDetail({
       {detail && isSuperAdmin && (
         <section className="-mx-6 flex flex-col gap-2 border-t border-zinc-200 px-6 pt-5">
           <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-            <ScrollText className="size-4 text-zinc-500" /> Change Log
+            Change Log
           </h3>
           {detail.log.length === 0 ? (
-            <p className="text-sm text-zinc-400">No changes recorded yet.</p>
+            <EmptyState compact className="text-sm text-zinc-400">No changes recorded yet.</EmptyState>
           ) : (
             <ul className="flex flex-col gap-2.5">
               {detail.log.map((entry) => (
@@ -510,60 +558,21 @@ export function AccountDetail({
       {/* Access */}
       <section className="-mx-6 flex flex-col gap-3 border-t border-zinc-200 px-6 pt-5">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-zinc-900">
-          <LockKeyhole className="size-4 text-zinc-500" /> Access
+          Access
         </h3>
-        {active ? (
-          <>
-            {running.length > 0 && (
-              <div className="flex flex-col gap-3">
-                {running.map((project) => {
-                  const needed: UserRole =
-                    project.as === "Project Manager" ? "project_manager" : "foreman";
-                  // Active, free (someone's on one project at a time), not
-                  // already picked for another of these.
-                  const candidates = accounts.filter(
-                    (person) =>
-                      person.id !== account.id &&
-                      person.role === needed &&
-                      person.status === "active" &&
-                      projectElsewhere(person, project.id) === null &&
-                      !Object.entries(handovers).some(
-                        ([projectId, id]) => id === person.id && Number(projectId) !== project.id
-                      )
-                  );
-                  return (
-                    <label key={project.id} className="flex flex-col gap-1.5">
-                      <span className={LABEL}>
-                        {project.name} — new {project.as}
-                      </span>
-                      <span className="relative">
-                        <select
-                          value={handovers[project.id] ?? ""}
-                          onChange={(e) =>
-                            setHandovers((prev) => ({ ...prev, [project.id]: e.target.value }))
-                          }
-                          className={`${INPUT} cursor-pointer appearance-none pr-9`}
-                        >
-                          <option value="" disabled>
-                            {candidates.length === 0
-                              ? `No free ${roleLabel(needed)} right now`
-                              : `Select a ${roleLabel(needed)}`}
-                          </option>
-                          {candidates.map((person) => (
-                            <option key={person.id} value={person.id}>
-                              {`${person.firstName} ${person.lastName}`.trim() || person.email}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-zinc-400" />
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-          </>
+        {canManageAccess ? (
+          <ProjectAccessEditor
+            key={account.id}
+            accountId={account.id}
+            initialSettings={account.accessPreview}
+            showHeading={false}
+            disabled={busy !== null}
+            onChangesChange={setAccessChanges}
+          />
         ) : (
+          <p className="text-xs text-zinc-500">Administrators have access to all projects.</p>
+        )}
+        {!active && (
           <div>
             <button
               type="button"
@@ -607,10 +616,105 @@ export function AccountDetail({
         {note("access")}
       </section>
       <ModalFooter>
-        <p className="mr-auto text-xs text-zinc-400">Changes are saved within each section.</p>
-        <button type="button" onClick={onClose} className={SECONDARY}>Cancel</button>
-        <button type="button" onClick={onClose} className={PRIMARY}>Save</button>
+        {message?.tone === "error" && (
+          <p role="alert" className="mr-auto text-sm text-red-600">
+            {message.text}
+          </p>
+        )}
+        <button type="button" disabled={busy !== null} onClick={onClose} className={SECONDARY}>Cancel</button>
+        <button type="button" disabled={busy !== null} onClick={handleSave} className={PRIMARY}>
+          {busy === "save" ? "Saving..." : "Save"}
+        </button>
       </ModalFooter>
+      <Modal
+        open={deactivateOpen}
+        onClose={() => {
+          if (busy !== "deactivate") setDeactivateOpen(false);
+        }}
+        title="Deactivate account"
+        variant="centered"
+        size="small"
+      >
+        <div className="flex flex-col gap-5">
+          <p className="text-sm text-zinc-600">
+            Deactivate {name}? They won&apos;t be able to sign in until reactivated.
+          </p>
+          {running.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3.5">
+              <p className="text-xs font-medium text-zinc-700">
+                Project handover before deactivation
+              </p>
+              {running.map((project) => {
+                const needed: UserRole =
+                  project.as === "Project Manager" ? "project_manager" : "foreman";
+                // Active, free (someone's on one project at a time), not
+                // already picked for another of these.
+                const candidates = accounts.filter(
+                  (person) =>
+                    person.id !== account.id &&
+                    person.role === needed &&
+                    person.status === "active" &&
+                    projectElsewhere(person, project.id) === null &&
+                    !Object.entries(handovers).some(
+                      ([projectId, id]) => id === person.id && Number(projectId) !== project.id
+                    )
+                );
+                return (
+                  <label key={project.id} className="flex flex-col gap-1.5">
+                    <span className={LABEL}>
+                      {project.name} — new {project.as}
+                    </span>
+                    <span className="relative">
+                      <select
+                        value={handovers[project.id] ?? ""}
+                        onChange={(e) =>
+                          setHandovers((prev) => ({ ...prev, [project.id]: e.target.value }))
+                        }
+                        className={`${INPUT} cursor-pointer appearance-none bg-white pr-9`}
+                      >
+                        <option value="" disabled>
+                          {candidates.length === 0
+                            ? `No free ${roleLabel(needed)} right now`
+                            : `Select a ${roleLabel(needed)}`}
+                        </option>
+                        {candidates.map((person) => (
+                          <option key={person.id} value={person.id}>
+                            {`${person.firstName} ${person.lastName}`.trim() || person.email}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-zinc-400" />
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+          {message?.section === "access" && message.tone === "error" && (
+            <p role="alert" className="text-sm text-red-600">
+              {message.text}
+            </p>
+          )}
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              disabled={busy === "deactivate"}
+              onClick={() => setDeactivateOpen(false)}
+              className={SECONDARY}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null || running.some((project) => !handovers[project.id])}
+              onClick={confirmDeactivate}
+              className="cursor-pointer rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busy === "deactivate" ? "Deactivating..." : "Deactivate"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

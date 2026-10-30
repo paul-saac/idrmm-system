@@ -174,27 +174,3 @@ export async function listMaterialRequests(
   if (error || !data) return [];
   return withDetails(supabase, data);
 }
-
-/**
- * The Add Daily Log modal's "Select Material Request" / "Select Material
- * Request Item" pickers (Material Procurement Log) — every request on
- * this project that can still receive a delivery against it, with their
- * items. "Can still receive a delivery" means approved or already
- * partially fulfilled; submitted (not yet reviewed), canceled, and fully
- * fulfilled requests have nothing left to pick.
- */
-export async function listFulfillableMaterialRequests(
-  projectId: number
-): Promise<MaterialRequestDetail[]> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("material_requests")
-    .select(REQUEST_COLUMNS)
-    .eq("project_id", projectId)
-    .in("status", ["approved", "partially_fulfilled"])
-    .order("request_date", { ascending: false });
-
-  if (error || !data) return [];
-  return withDetails(supabase, data);
-}

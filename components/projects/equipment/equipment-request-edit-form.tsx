@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
@@ -113,8 +114,7 @@ function ItemForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5 sm:col-span-2">
           <label className="text-sm font-medium text-zinc-900">
-            Equipment Name
-          </label>
+            Equipment Name<RequiredMark /></label>
           <input
             value={draft.equipmentName}
             onChange={(e) => patch({ equipmentName: e.target.value })}
@@ -136,8 +136,7 @@ function ItemForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium text-zinc-900">
-            Quantity Needed
-          </label>
+            Quantity Needed</label>
           <input
             type="number"
             min="0"
@@ -447,7 +446,7 @@ export function EquipmentRequestEditForm({
               >
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <div className="col-span-2 flex flex-col gap-1">
-                    <label className={fieldLabel}>Equipment Name</label>
+                    <label className={fieldLabel}>Equipment Name<RequiredMark /></label>
                     <input
                       value={item.equipmentName}
                       onChange={(e) =>

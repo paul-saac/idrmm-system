@@ -1,5 +1,7 @@
 "use client";
 
+import { ProjectWriteButton } from "@/components/projects/project-access-context";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Search, X } from "lucide-react";
 import { ViewMenu, type ViewOption } from "@/components/ui/view-menu";
@@ -273,14 +275,14 @@ export function EquipmentRecordView({
           )}
         </div>
         {view === "requests" && (
-          <button
+          <ProjectWriteButton
             type="button"
             onClick={() => setRequestOpen(true)}
             className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
           >
             <Plus className="size-4" />
             Request Equipment
-          </button>
+          </ProjectWriteButton>
         )}
       </div>
 
@@ -358,19 +360,19 @@ export function EquipmentRecordView({
 
         {view === "monitoring" ? (
           movementsShown.length === 0 ? (
-            <p className="py-10 text-center text-sm text-zinc-400">
+            <EmptyState className="py-10 text-center text-sm text-zinc-400">
               {taskMovements.length === 0 ? "No equipment task movements yet." : "No movements match your search."}
-            </p>
+            </EmptyState>
           ) : (
             <EquipmentMonitoringTable movements={movementsShown} />
           )
         ) : view === "requests" ? (
           requestsShown.length === 0 ? (
-            <p className="py-10 text-center text-sm text-zinc-400">
+            <EmptyState className="py-10 text-center text-sm text-zinc-400">
               {requests.length === 0
                 ? "No equipment requests yet."
                 : "No equipment requests match your filters."}
-            </p>
+            </EmptyState>
           ) : (
             <EquipmentRequestsTable
               requests={requestsShown}
@@ -381,20 +383,20 @@ export function EquipmentRecordView({
           )
         ) : view === "assigned" ? (
           assignedShown.length === 0 ? (
-            <p className="py-10 text-center text-sm text-zinc-400">
+            <EmptyState className="py-10 text-center text-sm text-zinc-400">
               {assignments.length === 0
                 ? "No equipment assigned yet - it is assigned from the Inventory page."
                 : "No equipment matches your filters."}
-            </p>
+            </EmptyState>
           ) : (
             <AssignedEquipmentTable projectId={projectId} assignments={assignedShown} tasks={tasks} />
           )
         ) : costLogsShown.length === 0 ? (
-          <p className="py-10 text-center text-sm text-zinc-400">
+          <EmptyState className="py-10 text-center text-sm text-zinc-400">
             {costLogs.length === 0
               ? "No equipment costs have been logged in Progress Tracking Overrides yet."
               : "No equipment cost logs match your search."}
-          </p>
+          </EmptyState>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[48rem] text-left text-sm">

@@ -1,5 +1,8 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
+import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, ProjectWriteTextarea } from "@/components/projects/project-access-context";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useState, useTransition, type FormEvent } from "react";
 import { ChevronDown, ClipboardList, Plus } from "lucide-react";
 import { ModalFooter } from "@/components/ui/modal";
@@ -97,7 +100,7 @@ export function PunchListManager({
             );
           })}
           {!data.punchItems.length && (
-            <p className="px-4 py-8 text-center text-xs text-zinc-400">No punch-list items yet.</p>
+            <EmptyState compact className="px-4 py-8 text-center text-xs text-zinc-400">No punch-list items yet.</EmptyState>
           )}
         </div>
       </aside>
@@ -107,18 +110,17 @@ export function PunchListManager({
           disabled={pending}
           className="grid gap-4.5 p-6 disabled:opacity-60 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-start"
         >
-          <input type="hidden" name="itemId" value={selected?.id ?? ""} />
-          <input type="hidden" name="priority" value={selected?.priority ?? "medium"} />
-          <input type="hidden" name="relatedWorkKey" value="" />
-          <input type="hidden" name="dueDate" value="" />
-          <input type="hidden" name="correctionNotes" value={selected?.correction_notes ?? ""} />
-          <input type="hidden" name="verificationNotes" value={selected?.verification_notes ?? ""} />
+          <ProjectWriteInput type="hidden" name="itemId" value={selected?.id ?? ""} />
+          <ProjectWriteInput type="hidden" name="priority" value={selected?.priority ?? "medium"} />
+          <ProjectWriteInput type="hidden" name="relatedWorkKey" value="" />
+          <ProjectWriteInput type="hidden" name="dueDate" value="" />
+          <ProjectWriteInput type="hidden" name="correctionNotes" value={selected?.correction_notes ?? ""} />
+          <ProjectWriteInput type="hidden" name="verificationNotes" value={selected?.verification_notes ?? ""} />
 
           <label htmlFor="punch-type" className="pt-2 text-sm font-medium text-zinc-900">
-            Type of issue
-          </label>
+            Type of issue<RequiredMark /></label>
           <div className="relative">
-            <select
+            <ProjectWriteSelect
               id="punch-type"
               name="issueType"
               defaultValue={selected?.issue_type ?? "incomplete"}
@@ -129,7 +131,7 @@ export function PunchListManager({
                   {ISSUE_TYPE_LABELS[value]}
                 </option>
               ))}
-            </select>
+            </ProjectWriteSelect>
             <ChevronDown
               aria-hidden
               className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400"
@@ -139,7 +141,7 @@ export function PunchListManager({
           <label htmlFor="punch-trade" className="pt-2 text-sm font-medium text-zinc-900">
             Trade and party responsible
           </label>
-          <input
+          <ProjectWriteInput
             id="punch-trade"
             name="responsibleTrade"
             maxLength={200}
@@ -149,9 +151,8 @@ export function PunchListManager({
           />
 
           <label htmlFor="punch-area" className="pt-2 text-sm font-medium text-zinc-900">
-            Area *
-          </label>
-          <input
+            Area<RequiredMark /></label>
+          <ProjectWriteInput
             id="punch-area"
             name="area"
             required
@@ -164,7 +165,7 @@ export function PunchListManager({
           <label htmlFor="punch-location" className="pt-2 text-sm font-medium text-zinc-900">
             Specific location
           </label>
-          <input
+          <ProjectWriteInput
             id="punch-location"
             name="specificLocation"
             maxLength={500}
@@ -173,8 +174,7 @@ export function PunchListManager({
           />
 
           <label htmlFor="punch-date" className="pt-2 text-sm font-medium text-zinc-900">
-            Date identified
-          </label>
+            Date identified<RequiredMark /></label>
           <DatePicker
             id="punch-date"
             name="identifiedOn"
@@ -185,9 +185,8 @@ export function PunchListManager({
           />
 
           <label htmlFor="punch-description" className="pt-2 text-sm font-medium text-zinc-900">
-            Description *
-          </label>
-          <textarea
+            Description<RequiredMark /></label>
+          <ProjectWriteTextarea
             id="punch-description"
             name="description"
             required
@@ -201,7 +200,7 @@ export function PunchListManager({
             Photo and video
           </label>
           <div className="space-y-2">
-            <input
+            <ProjectWriteInput
               id="punch-evidence"
               type="file"
               name="beforePhoto"
@@ -224,7 +223,7 @@ export function PunchListManager({
             Action person
           </label>
           <div className="relative">
-            <select
+            <ProjectWriteSelect
               id="punch-assignee"
               name="assignedTo"
               defaultValue={selected?.assigned_to ?? ""}
@@ -236,7 +235,7 @@ export function PunchListManager({
                   {person.name || person.role} — {person.role}
                 </option>
               ))}
-            </select>
+            </ProjectWriteSelect>
             <ChevronDown
               aria-hidden
               className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400"
@@ -244,10 +243,9 @@ export function PunchListManager({
           </div>
 
           <label htmlFor="punch-status" className="pt-2 text-sm font-medium text-zinc-900">
-            Current status
-          </label>
+            Current status<RequiredMark /></label>
           <div className="relative">
-            <select
+            <ProjectWriteSelect
               id="punch-status"
               name="status"
               defaultValue={selected?.status === "closed" ? "closed" : "open"}
@@ -258,7 +256,7 @@ export function PunchListManager({
                   {PUNCH_STATUS_LABELS[value]}
                 </option>
               ))}
-            </select>
+            </ProjectWriteSelect>
             <ChevronDown
               aria-hidden
               className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400"
@@ -280,7 +278,7 @@ export function PunchListManager({
           >
             Cancel
           </button>
-          <button
+          <ProjectWriteButton
             type="submit"
             form="punch-item-form"
             disabled={pending}
@@ -288,7 +286,7 @@ export function PunchListManager({
           >
             <ClipboardList className="size-4" />
             {pending ? "Saving…" : selected ? "Save changes" : "Add punch item"}
-          </button>
+          </ProjectWriteButton>
         </ModalFooter>
       </div>
     </form>

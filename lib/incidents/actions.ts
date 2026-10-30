@@ -17,7 +17,7 @@ export async function listTodayIncidents(
   context: { kind: "task" | "category"; id: number },
   date?: string
 ): Promise<{ items: Incident[]; error?: string }> {
-  if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(context.id) || context.id <= 0 || !await requireProjectAccess(projectId)) {
+  if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(context.id) || context.id <= 0 || !await requireProjectAccess(projectId, "view")) {
     return { items: [], error: "Incident records are not available." };
   }
   const client = await createClient();
@@ -122,7 +122,7 @@ export async function reportIncident(projectId: number, form: FormData): Promise
 }
 
 export async function loadIncident(projectId: number, id: number) {
-  if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(id) || id <= 0 || !await requireProjectAccess(projectId)) return { error: "Incident not available." };
+  if (!Number.isSafeInteger(projectId) || projectId <= 0 || !Number.isSafeInteger(id) || id <= 0 || !await requireProjectAccess(projectId, "view")) return { error: "Incident not available." };
   const client = await createClient();
   const { data, error } = await client.from("project_safety_incidents").select("*").eq("id", id).eq("project_id", projectId).maybeSingle();
   if (error || !data) return { error: "This incident could not be loaded." };

@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { useState, type ReactNode } from "react";
 import {
   Boxes,
@@ -120,9 +121,9 @@ function MaterialRequests({
       {/* Room for REQUESTS_SHOWN rows, however many there are. */}
       <div className="flex flex-col" style={{ minHeight: REQUESTS_TABLE_MIN_HEIGHT }}>
         {shown.length === 0 ? (
-          <p className="flex flex-1 items-center justify-center border-t border-zinc-200 text-sm text-zinc-400">
+          <EmptyState className="flex flex-1 items-center justify-center border-t border-zinc-200 text-sm text-zinc-400">
             No material requests yet.
-          </p>
+          </EmptyState>
         ) : (
           <MaterialRequestsTable requests={shown} onOpen={onOpen} />
         )}
@@ -178,10 +179,10 @@ function RecentActivity({ entries }: { entries: ProgressMaterialUsage[] }) {
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {entries.length === 0 ? (
-          <p className="py-10 text-center text-sm text-zinc-400">
+          <EmptyState className="py-10 text-center text-sm text-zinc-400">
             No materials used yet. They show here once they&apos;re logged in a task&apos;s
             progress.
-          </p>
+          </EmptyState>
         ) : (
           <div className="flex flex-col gap-5 px-5 pt-4 pb-5">
             {days.map((day, dayIndex) => (

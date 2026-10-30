@@ -1,7 +1,12 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ModalFooter } from "@/components/ui/modal";
+
 import { useActionState, useEffect, useId } from "react";
 import { useRouter } from "next/navigation";
+import { Check, ChevronDown } from "lucide-react";
 import {
   createTask,
   updateSubtask,
@@ -67,6 +72,7 @@ export function SubtaskForm({
   task,
   siblingTasks,
   onViewMaterials,
+  onRequestDelete,
   onSuccess,
 }: {
   projectId: number;
@@ -85,6 +91,7 @@ export function SubtaskForm({
    * task's own row highlighted — undefined in create mode (nothing to
    * highlight yet), same "edit mode only" gating Delete already uses. */
   onViewMaterials?: () => void;
+  onRequestDelete?: () => void;
   onSuccess?: () => void;
 }) {
   const isEdit = task !== undefined;
@@ -139,8 +146,7 @@ export function SubtaskForm({
               htmlFor={`${formId}-taskName`}
               className="text-sm font-medium text-zinc-900"
             >
-              Task Name
-            </label>
+              Task Name<RequiredMark /></label>
             <input
               id={`${formId}-taskName`}
               name="taskName"
@@ -153,13 +159,19 @@ export function SubtaskForm({
         )}
 
         <div className="flex items-center gap-2">
-          <input
-            id={`${formId}-isMilestone`}
-            name="isMilestone"
-            type="checkbox"
-            defaultChecked={task?.isMilestone ?? false}
-            className="size-4 cursor-pointer rounded border-zinc-300 text-zinc-900 focus:ring-2 focus:ring-zinc-200"
-          />
+          <span className="relative flex size-4 shrink-0">
+            <input
+              id={`${formId}-isMilestone`}
+              name="isMilestone"
+              type="checkbox"
+              defaultChecked={task?.isMilestone ?? false}
+              className="peer size-4 cursor-pointer appearance-none rounded-sm border border-zinc-300 bg-zinc-100 transition checked:border-zinc-900 checked:bg-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-300 focus-visible:outline-none"
+            />
+            <Check
+              strokeWidth={3}
+              className="pointer-events-none absolute inset-0 m-auto size-3 text-white opacity-0 peer-checked:opacity-100"
+            />
+          </span>
           <label
             htmlFor={`${formId}-isMilestone`}
             className="cursor-pointer text-sm font-medium text-zinc-900"
@@ -175,25 +187,28 @@ export function SubtaskForm({
           >
             Successor
           </label>
-          <select
-            id={`${formId}-relationship`}
-            name={isEdit ? "successorTaskId" : "predecessorTaskId"}
-            defaultValue={isEdit ? (currentSuccessor?.id ?? "") : ""}
-            className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-          >
-            <option value="">
-              {isEdit ? "None — no successor" : "None — starts independently"}
-            </option>
-            {relationshipOptions.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
+          <div className="relative">
+            <select
+              id={`${formId}-relationship`}
+              name={isEdit ? "successorTaskId" : "predecessorTaskId"}
+              defaultValue={isEdit ? (currentSuccessor?.id ?? "") : ""}
+              className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
+            >
+              <option value="">
+                {isEdit ? "None — no successor" : "None — starts independently"}
               </option>
-            ))}
-          </select>
+              {relationshipOptions.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
+          </div>
         </div>
 
         {isEdit && (
-          <div className="flex flex-col gap-2 border-t border-zinc-200 pt-4">
+          <div className="-mx-6 flex flex-col gap-2 border-t border-zinc-200 px-6 pt-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-zinc-900">
                 Assigned Resources
@@ -209,9 +224,9 @@ export function SubtaskForm({
               )}
             </div>
             {task.materialAssignments.length === 0 ? (
-              <p className="text-xs text-zinc-400">
+              <EmptyState compact className="py-3">
                 No materials assigned to this task yet.
-              </p>
+              </EmptyState>
             ) : (
               <div className="max-h-48 overflow-y-auto rounded-md border border-zinc-200">
                 <table className="w-full text-left text-sm">
@@ -262,27 +277,32 @@ export function SubtaskForm({
           {state.error}
         </p>
       )}
-      {/* Deleting an existing task is in the modal's own ⋮ menu (see
-          gantt-chart-view.tsx), not here. */}
-      <div className="mt-auto flex items-center justify-end gap-3">
-        <div className="flex items-center gap-3">
+      <ModalFooter>
+        <button
+          type="button"
+          onClick={onSuccess}
+          className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+        >
+          Cancel
+        </button>
+        {isEdit && onRequestDelete && (
           <button
             type="button"
-            onClick={onSuccess}
-            className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+            onClick={onRequestDelete}
+            className="cursor-pointer rounded border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
           >
-            Cancel
+            Delete
           </button>
-          <button
-            type="submit"
-            form={formId}
-            disabled={pending}
-            className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {pending ? "Saving..." : "Save"}
-          </button>
-        </div>
-      </div>
+        )}
+        <button
+          type="submit"
+          form={formId}
+          disabled={pending}
+          className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {pending ? "Saving..." : "Save"}
+        </button>
+      </ModalFooter>
     </div>
   );
 }

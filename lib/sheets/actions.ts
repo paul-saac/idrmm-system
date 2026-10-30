@@ -1,17 +1,16 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { getSessionProfile } from "@/lib/auth/session";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { requireProjectAccess } from "@/lib/auth/project-access";
 import { isAdminRole } from "@/lib/auth/roles";
 import { readSheetMetadata, type Sheet } from "./model";
 import { revalidateProjectPaths, revalidateReports } from "@/lib/projects/revalidate";
 
-async function access(projectId: number) {
-  const profile = await getSessionProfile();
+async function access(projectId: number, mode: "view" | "edit" = "view") {
+  const profile = await requireProjectAccess(projectId, mode);
   if (!profile || !Number.isSafeInteger(projectId) || projectId <= 0) throw new Error("Project access denied.");
   const client = await createClient();
-  const { data, error } = await client.from("projects").select("id,foreman_id,project_manager_id").eq("id", projectId).maybeSingle();
-  if (error || !data || (!isAdminRole(profile.role) && !(profile.role === "foreman" && data.foreman_id === profile.id) && !(profile.role === "project_manager" && data.project_manager_id === profile.id))) throw new Error("Project access denied.");
   return { client, profile };
 }
 const message = (e: unknown) => e instanceof Error ? e.message : "The operation failed. Please try again.";
@@ -36,11 +35,14 @@ async function validateFile(file: FormDataEntryValue | null, required: boolean):
 
 export async function submitSheet(projectId: number, form: FormData) {
   try {
-    const { client, profile } = await access(projectId);
+    const { client, profile } = await access(projectId, "edit");
     const metadata = readSheetMetadata(form);
     const drawing = (await validateFile(form.get("drawing"), true))!;
-    const evidence = form.get("signed_document") === "on" ? drawing : await validateFile(form.get("evidence"), false);
-    if ((evidence || metadata.external_name || metadata.external_role || metadata.approval_date) && !(evidence && metadata.external_name && metadata.external_role && metadata.approval_date)) throw new Error("Supply the professional's name, role, approval date, and evidence together, or leave all four blank for a pending submission.");
+    const signed = form.get("signed_document") === "on";
+    const approval = signed
+      ? { external_name: metadata.external_name, external_role: metadata.external_role, approval_date: metadata.approval_date }
+      : { external_name: null, external_role: null, approval_date: null };
+    if (signed && !(approval.external_name && approval.external_role && approval.approval_date)) throw new Error("Supply the professional's name, role, and approval date, or uncheck the approval option for a pending submission.");
     const paths: string[] = [];
     const upload = async (file: File) => {
       const ext = file.type === "application/pdf" ? "pdf" : file.type === "image/png" ? "png" : "jpg";
@@ -51,8 +53,8 @@ export async function submitSheet(projectId: number, form: FormData) {
     };
     try {
       const file_path = await upload(drawing);
-      const evidence_path = evidence === drawing ? file_path : evidence ? await upload(evidence) : null;
-      const { error } = await client.from("project_sheets").insert({ ...metadata, project_id: projectId, revision: 1, file_path, file_name: drawing.name.slice(0, 255), evidence_path, status: "submitted", submitted_by: profile.id, submitted_name: `${profile.firstName} ${profile.lastName}` });
+      const evidence_path = signed ? file_path : null;
+      const { error } = await client.from("project_sheets").insert({ ...metadata, ...approval, project_id: projectId, revision: 1, file_path, file_name: drawing.name.slice(0, 255), evidence_path, status: "submitted", submitted_by: profile.id, submitted_name: `${profile.firstName} ${profile.lastName}` });
       if (error) throw new Error(error.code === "P0001" ? error.message : "Could not save the sheet. Please retry.");
     } catch (e) { if (paths.length) await client.storage.from("project-sheets").remove(paths); throw e; }
     revalidateProjectPaths(projectId); revalidateReports(); return { success: true, error: null };
@@ -61,7 +63,7 @@ export async function submitSheet(projectId: number, form: FormData) {
 
 export async function reviewSheet(projectId: number, sheetId: number, status: Sheet["status"], notes: string, expectedReview: string | null) {
   try {
-    const { client, profile } = await access(projectId);
+    const { client, profile } = await access(projectId, "edit");
     if (!isAdminRole(profile.role)) throw new Error("Only administrators can review submissions.");
     if (!["accepted", "changes_requested", "rejected"].includes(status) || !notes.trim() || notes.length > 2000) throw new Error("Choose a decision and enter review comments (up to 2,000 characters).");
     let query = client.from("project_sheets").update({ status, review_notes: notes.trim() }).eq("id", sheetId).eq("project_id", projectId);
@@ -86,4 +88,59 @@ export async function sheetDetails(projectId: number, sheetId: number) {
     if (history.error) throw new Error("Could not load review history.");
     return { sheet, drawingUrl, evidenceUrl, reviews: history.data ?? [], error: null };
   } catch (e) { return { sheet: null, drawingUrl: null, evidenceUrl: null, reviews: [], error: message(e) }; }
+}
+
+export async function deleteSheet(projectId: number, sheetId: number) {
+  try {
+    const { profile } = await access(projectId, "edit");
+    if (!isAdminRole(profile.role)) throw new Error("Only administrators can delete documents.");
+    if (!Number.isSafeInteger(sheetId) || sheetId <= 0) throw new Error("Document not found.");
+    const admin = createAdminClient();
+    const { data: target, error: readError } = await admin
+      .from("project_sheets")
+      .select("id, sheet_number")
+      .eq("id", sheetId)
+      .eq("project_id", projectId)
+      .maybeSingle();
+    if (readError || !target) throw new Error("Document not found.");
+
+    const { data: rows, error: listError } = await admin
+      .from("project_sheets")
+      .select("id, file_path, evidence_path")
+      .eq("project_id", projectId)
+      .eq("sheet_number", target.sheet_number);
+    if (listError || !rows?.length) throw new Error("Could not load document versions for deletion.");
+
+    const ids = rows.map(row => row.id);
+    const { error: deleteError } = await admin
+      .from("project_sheets")
+      .delete()
+      .in("id", ids)
+      .eq("project_id", projectId);
+    if (deleteError) throw new Error("Could not delete the document. Please retry.");
+
+    await admin
+      .from("notifications")
+      .delete()
+      .eq("project_id", projectId)
+      .eq("item_kind", "sheet")
+      .in("item_id", ids);
+
+    const paths = Array.from(
+      new Set(
+        rows
+          .flatMap(row => [row.file_path, row.evidence_path])
+          .filter((p): p is string => Boolean(p))
+      )
+    );
+    if (paths.length) {
+      await admin.storage.from("project-sheets").remove(paths);
+    }
+
+    revalidateProjectPaths(projectId);
+    revalidateReports();
+    return { error: null };
+  } catch (e) {
+    return { error: message(e) };
+  }
 }

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { EmptyState } from "@/components/ui/empty-state";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 import type { DashboardProject } from "@/lib/dashboard/data";
 import type { ScheduleStatus } from "@/lib/task-progress/calculate";
@@ -53,7 +54,7 @@ export function ActiveProjectsCard({
       </div>
 
       {projects.length === 0 ? (
-        <p className="px-5 py-8 text-sm text-zinc-500">No active projects.</p>
+        <EmptyState compact className="px-5 py-8">No active projects.</EmptyState>
       ) : (
         <ul className="divide-y divide-zinc-100">
           {projects.map((project) => {

@@ -125,6 +125,9 @@ export interface Database {
           target_end_date: string | null;
           actual_end_date: string | null;
           status: ProjectStatus;
+          archived_at: string | null;
+          archived_by: string | null;
+          archive_reason: string | null;
           project_manager_id: string;
           foreman_id: string;
           created_by: string;
@@ -152,6 +155,9 @@ export interface Database {
           target_end_date?: string | null;
           actual_end_date?: string | null;
           status?: ProjectStatus;
+          archived_at?: string | null;
+          archived_by?: string | null;
+          archive_reason?: string | null;
           project_manager_id: string;
           foreman_id: string;
           created_by: string;
@@ -167,6 +173,9 @@ export interface Database {
           target_end_date?: string | null;
           actual_end_date?: string | null;
           status?: ProjectStatus;
+          archived_at?: string | null;
+          archived_by?: string | null;
+          archive_reason?: string | null;
           project_manager_id?: string;
           foreman_id?: string;
           gantt_undo_cursor_id?: number | null;
@@ -241,6 +250,7 @@ export interface Database {
           /** See 0072_estimate_category_milestone.sql — only a task-less
            * category's own; ignored once it has tasks. */
           is_milestone: boolean;
+          predecessor_category_id: number | null;
           /** See 0047_category_labor_estimate.sql's own comment — only
            * used while this category has no tasks yet; once it does,
            * the Labor Breakdown modal shows their rolled-up total
@@ -278,6 +288,7 @@ export interface Database {
           planned_end_date?: string | null;
           priority?: string;
           is_milestone?: boolean;
+          predecessor_category_id?: number | null;
           category_labor_estimate?: number;
           category_equipment_estimate?: number;
           category_other_estimate?: number;
@@ -295,6 +306,7 @@ export interface Database {
           planned_end_date?: string | null;
           priority?: string;
           is_milestone?: boolean;
+          predecessor_category_id?: number | null;
           category_labor_estimate?: number;
           category_equipment_estimate?: number;
           category_other_estimate?: number;
@@ -323,6 +335,7 @@ export interface Database {
           planned_end_date: string | null;
           predecessor_task_id: number | null;
           is_milestone: boolean;
+          predecessor_category_id: number | null;
           priority: string;
           /** See 0041_material_line_costs.sql's own comment — a task's
            * own direct BOM line (no material breakdown), deliberately
@@ -1367,12 +1380,8 @@ export interface Database {
         };
         Relationships: [];
       };
-      // Named "requisitions" to avoid colliding with the pre-existing,
-      // unused public.equipment_requests table from 0007_equipment.sql
-      // (dropped by 0025_schema_cleanup.sql) — see
-      // 0020_equipment_requests.sql's header comment for why this is a
-      // separate table rather than a rename.
-      equipment_requisitions: {
+      // Current request header/items tables; renamed by migration 0099.
+      equipment_requests: {
         Row: {
           id: number;
           project_id: number;
@@ -1411,7 +1420,7 @@ export interface Database {
         };
         Relationships: [];
       };
-      equipment_requisition_items: {
+      equipment_request_items: {
         Row: {
           id: number;
           equipment_request_id: number;
@@ -1508,6 +1517,12 @@ export interface Database {
         };
         Relationships: [];
       };
+      equipment_task_plans: {
+        Row: { project_id: number; item_key: string; equipment_id: number };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       equipment_task_assignments: {
         Row: {
           id: number;
@@ -1543,10 +1558,53 @@ export interface Database {
         };
         Relationships: [];
       };
+      project_account_access: {
+        Row: {
+          project_id: number;
+          profile_id: string;
+          access_level: string;
+          granted_by: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          project_id: number;
+          profile_id: string;
+          access_level: string;
+          granted_by?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          project_id?: number;
+          profile_id?: string;
+          access_level?: string;
+          granted_by?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      system_backup_status: { Args: Record<string, never>; Returns: unknown };
+      system_backup_request: { Args: { p_kind: string; p_snapshot_id?: string; p_confirmation?: string }; Returns: string };
+      system_backup_maintenance: { Args: Record<string, never>; Returns: boolean };
+      set_project_archived: {
+        Args: { p_project_id: number; p_archived: boolean; p_reason?: string | null };
+        Returns: undefined;
+      };
+      project_access_level: {
+        Args: { p_project_id: number };
+        Returns: string;
+      };
+      project_account_access_editor: {
+        Args: { p_profile_id: string };
+        Returns: unknown;
+      };
+      save_project_account_access: {
+        Args: { p_profile_id: string; p_changes: unknown };
+        Returns: undefined;
+      };
       save_equipment_task_plans: {
         Args: { p_project_id: number; p_item_key: string; p_selected: number[]; p_previous: number[] };
         Returns: undefined;
@@ -1554,10 +1612,6 @@ export interface Database {
       equipment_tracking_data: {
         Args: { p_project_id: number };
         Returns: unknown;
-      };
-      record_equipment_operation: {
-        Args: { p_project_id: number; p_input: unknown };
-        Returns: undefined;
       };
       save_equipment_cost_breakdown: {
         Args: { p_project_id: number; p_changes: unknown };

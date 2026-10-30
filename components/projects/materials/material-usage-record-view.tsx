@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { useMemo, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { ViewMenu, type ViewOption } from "@/components/ui/view-menu";
@@ -78,11 +79,11 @@ export function MaterialUsageRecordView({ entries, records, onViewChange, onOpen
         </div>
       </div>
       {shown.length === 0 ? (
-        <p className="py-10 text-center text-sm text-zinc-400">
+        <EmptyState className="py-10 text-center text-sm text-zinc-400">
           {entries.length
             ? "No usage entries match your filters."
             : "No materials have been recorded in Today's Log yet."}
-        </p>
+        </EmptyState>
       ) : (
         <>
           <div className="overflow-x-auto">

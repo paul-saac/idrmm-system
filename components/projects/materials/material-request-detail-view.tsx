@@ -1,5 +1,6 @@
 "use client";
 
+import { ProjectWriteButton } from "@/components/projects/project-access-context";
 import { useActionState, useState, type ReactNode } from "react";
 import { PackageCheck } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
@@ -196,13 +197,13 @@ function ApproveButton({ requestId, projectId }: { requestId: number; projectId:
   return (
     <span className="relative inline-flex">
       <form action={formAction}>
-        <button
+        <ProjectWriteButton
           type="submit"
           disabled={pending}
           className="cursor-pointer rounded border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Approve
-        </button>
+        </ProjectWriteButton>
       </form>
       {state?.error && (
         <span
@@ -229,13 +230,13 @@ function CancelButton({ requestId, projectId }: { requestId: number; projectId: 
           }
         }}
       >
-        <button
+        <ProjectWriteButton
           type="submit"
           disabled={pending}
           className="cursor-pointer rounded border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
           Cancel request
-        </button>
+        </ProjectWriteButton>
       </form>
       {state?.error && (
         <span
@@ -289,17 +290,17 @@ export function MaterialRequestDetails({ request }: { request: MaterialRequestDe
             <ApproveButton requestId={request.id} projectId={projectId} />
           )}
           {canReceive && (
-            <button
+            <ProjectWriteButton
               type="button"
               onClick={() => setDeliveryOpen(true)}
               className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
             >
               <PackageCheck className="size-4" />
               Fulfill
-            </button>
+            </ProjectWriteButton>
           )}
           {!isTerminal && <CancelButton requestId={request.id} projectId={projectId} />}
-          <button
+          <ProjectWriteButton
             type="button"
             onClick={() => {
               setEditSession((session) => session + 1);
@@ -309,7 +310,7 @@ export function MaterialRequestDetails({ request }: { request: MaterialRequestDe
           >
             <EditIcon className="size-3.5" />
             Edit
-          </button>
+          </ProjectWriteButton>
         </div>
       </div>
 

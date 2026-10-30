@@ -1,5 +1,7 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { useMemo, useState } from "react";
 import { Search, Users, X } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/modal";
@@ -141,13 +143,13 @@ export function WorkerPickerModal({
         {/* Member list / table without Action column */}
         <div key={activeTab} className="tab-content-enter min-h-0 flex-1 overflow-hidden rounded-lg border border-zinc-200 bg-white">
           {filteredWorkers.length === 0 ? (
-            <div className="flex h-full items-center justify-center px-6 text-center text-sm text-zinc-400">
+            <EmptyState className="h-full px-6">
               {workers.length === 0 ? (
                 <p>All available team members have already been added to this task.</p>
               ) : (
                 <p>No team members matching &ldquo;{search}&rdquo;</p>
               )}
-            </div>
+            </EmptyState>
           ) : (
             <div className="h-full overflow-auto">
               <table className="w-full min-w-[32rem] text-left text-sm">

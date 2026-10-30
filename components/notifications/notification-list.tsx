@@ -5,6 +5,7 @@ import { Check, Flag, Mail, MoreHorizontal, Package, Trash2, TrendingUp, Wrench 
 import type { AppNotification } from "@/lib/notifications/actions";
 import { initials } from "@/lib/initials";
 import { avatarColor } from "@/components/ui/list-table";
+import { EmptyState } from "@/components/ui/empty-state";
 import { notificationTime } from "@/lib/time-ago";
 
 function formatDay(iso: string) {
@@ -81,10 +82,10 @@ function NotificationCard({
     >
       <div className="flex items-start gap-3">
         <span className="relative shrink-0">
-          <span className={`flex size-9 items-center justify-center rounded-full text-xs font-semibold ${avatarColor(notification.actorName ?? "?")}`}>
+          <span className={`flex size-9 items-center justify-center rounded-[1px] text-xs font-semibold ${avatarColor(notification.actorName ?? "?")}`}>
             {initials(notification.actorName)}
           </span>
-          <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border border-white bg-orange-100 text-orange-600">
+          <span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-[1px] border border-white bg-orange-100 text-orange-600">
             <Icon className="size-2.5" />
           </span>
         </span>
@@ -180,7 +181,7 @@ export function NotificationList({
 }) {
   if (items.length === 0) {
     return (
-      <p className={`py-10 text-center ${TEXT[textSize].empty} text-zinc-400`}>{emptyText}</p>
+      <EmptyState compact={textSize === "small"} className={`py-10 ${className}`}>{emptyText}</EmptyState>
     );
   }
   return (

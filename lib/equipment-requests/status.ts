@@ -12,9 +12,7 @@ import type { EquipmentRequestStatus } from "@/lib/equipment-requests/data";
  * Plain sync helper, deliberately kept out of actions.ts — that file is
  * "use server", and Next.js requires every export from a "use server"
  * file to be an async Server Action, which this isn't (it does no I/O).
- * Shared between lib/equipment-requests/actions.ts (editing a request's
- * own items) and lib/daily-logs/actions.ts (crediting fulfillment when a
- * linked Equipment Acquisition Log entry is approved).
+ * Used when request item fulfillment is updated.
  */
 export function deriveEquipmentRequestStatus(
   currentStatus: EquipmentRequestStatus,

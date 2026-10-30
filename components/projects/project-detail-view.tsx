@@ -6,12 +6,13 @@ import { useActionState, useEffect, useLayoutEffect, useMemo, useRef, useState, 
 import { flushSync } from "react-dom";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Trash2, LayoutGrid, CircleDollarSign, CalendarDays, PiggyBank, ChevronRight, Wallet } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { LayoutGrid, CircleDollarSign, CalendarDays, PiggyBank, ChevronRight, Wallet } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import { HeaderActions } from "@/components/auth/header-actions";
 import { usePortal } from "@/components/portal/portal-context";
+import { useProjectCanEdit } from "@/components/projects/project-access-context";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { ProjectHeader } from "@/components/projects/project-header";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
@@ -20,7 +21,7 @@ import {
   ImportBomModalContent,
   type ImportBomStep,
 } from "@/components/projects/cost-estimate/import-bom-modal-content";
-import { ProgressView } from "@/components/projects/progress/progress-view";
+import type { ProjectInsightDestination } from "@/components/projects/progress/gantt-chart-view";
 import { ProgressTrackingModal, type ProgressModalTarget } from "@/components/projects/progress/progress-tracking-modal";
 import { IncidentDetailModal } from "@/components/projects/progress/incident-detail-modal";
 // gantt-task-react renders its timeline as an SVG sized from
@@ -39,7 +40,6 @@ const GanttChartView = dynamic(
     ),
   }
 );
-import { DailyLogsView } from "@/components/projects/daily-logs/daily-logs-view";
 import { MaterialsOverviewView } from "@/components/projects/materials/materials-overview-view";
 import { MaterialPurchasesView } from "@/components/projects/materials/material-purchases-view";
 import {
@@ -62,7 +62,6 @@ import type { ProgressExpense } from "@/lib/expenses/progress";
 import type {
   MaterialsOverviewCounts,
   ProgressMaterialUsage,
-  ProjectMaterial,
 } from "@/lib/materials/data";
 import type { MaterialRecord } from "@/lib/materials/records";
 import type { MaterialRequestDetail } from "@/lib/material-requests/data";
@@ -70,13 +69,10 @@ import type { EquipmentRequestDetail } from "@/lib/equipment-requests/data";
 import type { EquipmentAssignmentRow, EquipmentTaskMovementRow, ProgressEquipmentCost } from "@/lib/equipment/data";
 import type { EquipmentCostRecord } from "@/lib/equipment/records";
 import type { EquipmentTracking } from "@/lib/equipment/tracking-types";
-import { deleteProject, type ProjectActionState } from "@/lib/projects/actions";
+import { setProjectArchived, type ProjectActionState } from "@/lib/projects/actions";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
 import type { CostEstimate } from "@/lib/cost-estimate/data";
-import type { ProjectProgress } from "@/lib/progress/data";
-import type { DelayRiskAssessment } from "@/lib/forecasting/data";
-import type { DailyLogSummary, SurveyQuestion } from "@/lib/daily-logs/data";
 import type {
   Worker,
   WorkerAssignment,
@@ -91,33 +87,13 @@ import type { ProjectEvent } from "@/lib/project-events/types";
 
 const MAIN_TABS = [
   { value: "overview", label: "Overview" },
-  { value: "progress", label: "Progress" },
   { value: "materials", label: "Materials" },
   { value: "equipment", label: "Equipment" },
   { value: "expenses", label: "Expenses" },
 ] as const;
 type MainTab = (typeof MAIN_TABS)[number]["value"];
 
-// "Progress" (the Gantt Chart, Daily Logs, Progress Tracking, etc.) is
-// on hold per an explicit request — everything underneath it stays in
-// the codebase untouched (this is purely a nav-visibility change, not a
-// removal), since where each of its own features eventually lands is
-// still undecided. Only the visible tab BAR filters it out below;
-// MAIN_TABS itself (and MainTab/activeTab's own type) still includes
-// "progress" so the tab's own content-rendering branch, the breadcrumb
-// label lookup, and a deep link into it (e.g. a Daily Log detail page's
-// own back button, see initialTab below) all keep working exactly as
-// before — there's just no button here to click into it from.
-const VISIBLE_MAIN_TABS = MAIN_TABS.filter((tab) => tab.value !== "progress");
-
-const PROGRESS_SUB_TABS = [
-  { value: "overview", label: "Progress Overview" },
-  { value: "daily-logs", label: "Daily Logs" },
-] as const;
-type ProgressSubTab = (typeof PROGRESS_SUB_TABS)[number]["value"];
-
-
-const deleteInitialState: ProjectActionState = {};
+const archiveInitialState: ProjectActionState = {};
 
 function formatCurrency(amount: number | null) {
   return amount != null ? `₱${amount.toLocaleString("en-PH")}` : "—";
@@ -135,52 +111,6 @@ function scrollAreaTo(area: HTMLElement, target: Element, behavior: ScrollBehavi
     top: area.scrollTop + target.getBoundingClientRect().top - area.getBoundingClientRect().top - margin,
     behavior,
   });
-}
-
-/**
- * A main tab's row of sub-tab pills, plus a slot on the right for that
- * sub-tab's own toolbar (filters, "Add X" buttons) to portal into — see
- * DailyLogsView/MaterialsMonitoringView/MaterialRequestsView/
- * EquipmentRequestsView's own `toolbarSlot` prop. Portaling instead of
- * lifting each view's filter/modal state up here keeps every one of
- * those views' internals untouched; only where their existing toolbar
- * JSX renders changes. `items-start` (not `items-center`) is
- * deliberate: the toolbar's buttons should align to the tabs' top edge,
- * not float centered against them.
- */
-function SubTabsRow<T extends string>({
-  tabs,
-  active,
-  onChange,
-  toolbarRef,
-}: {
-  tabs: readonly { value: T; label: string }[];
-  active: T;
-  onChange: (value: T) => void;
-  toolbarRef: (el: HTMLDivElement | null) => void;
-}) {
-  return (
-    <div className="mt-4 mb-4 flex flex-wrap items-start justify-between gap-3">
-      <div role="tablist" className="flex items-center gap-2">
-        {tabs.map((tab) => (
-          <button
-            key={tab.value}
-            role="tab"
-            aria-selected={active === tab.value}
-            type="button"
-            onClick={() => onChange(tab.value)}
-            className={`cursor-pointer rounded border px-4 py-0.5 text-xs font-medium transition ${active === tab.value
-              ? "border-zinc-900 bg-zinc-900 text-white"
-              : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-              }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      <div ref={toolbarRef} className="flex flex-wrap items-center gap-2" />
-    </div>
-  );
 }
 
 function StatCard({
@@ -203,34 +133,41 @@ function StatCard({
   );
 }
 
-// Rendered inside a centered Modal (see the delete-confirm Modal below),
-// never a window.confirm() — an admin deleting an entire project is a
-// real, hard-to-reverse action worth a proper dialog, not a bare browser
-// alert. Opened only from the Edit Project panel's own Delete button,
-// which closes the Edit Project modal in the same click that opens this
-// one (see EditProjectForm's onRequestDelete below) so the two never
-// stack.
-function DeleteProjectModalContent({
+function ArchiveProjectModalContent({
   projectId,
   projectName,
+  archived,
   onClose,
 }: {
   projectId: number;
   projectName: string;
+  archived: boolean;
   onClose: () => void;
 }) {
-  const boundAction = deleteProject.bind(null, projectId);
+  const router = useRouter();
+  const boundAction = setProjectArchived.bind(null, projectId, !archived);
   const [state, formAction, pending] = useActionState(
     boundAction,
-    deleteInitialState
+    archiveInitialState
   );
+  useEffect(() => {
+    if (state.success) { onClose(); router.refresh(); }
+    // The action result is the completion signal, not the inline callback.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, router]);
 
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-zinc-600">
-        Delete <span className="font-medium text-zinc-900">{projectName}</span>
-        ? This cannot be undone.
+        {archived ? "Unarchive " : "Archive "}<span className="font-medium text-zinc-900">{projectName}</span>?
+        {archived ? " It will return to Projects with its existing status and permissions." : " Its records and attachments will be retained for viewing and reports. Changes will be blocked until it is unarchived."}
       </p>
+      <form id="project-archive-form" action={formAction}>
+        {!archived && <label className="flex flex-col gap-1.5 text-sm text-zinc-700">
+          Reason <span className="text-xs text-zinc-400">Optional</span>
+          <textarea name="reason" maxLength={1000} rows={3} disabled={pending} className="w-full rounded border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400" />
+        </label>}
+      </form>
       {state?.error && (
         <p role="alert" className="text-sm text-red-600">
           {state.error}
@@ -240,20 +177,19 @@ function DeleteProjectModalContent({
         <button
           type="button"
           onClick={onClose}
+          disabled={pending}
           className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
         >
           Cancel
         </button>
-        <form action={formAction}>
           <button
             type="submit"
+            form="project-archive-form"
             disabled={pending}
-            className="flex cursor-pointer items-center gap-1.5 rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <Trash2 className="size-3.5" />
-            {pending ? "Deleting..." : "Delete"}
+            {pending ? archived ? "Unarchiving..." : "Archiving..." : archived ? "Unarchive" : "Archive"}
           </button>
-        </form>
       </div>
     </div>
   );
@@ -264,19 +200,12 @@ export function ProjectDetailView({
   projectManagers,
   foremen,
   costEstimate,
-  progress,
-  risk,
-  dailyLogs,
-  surveyQuestions,
-  materials,
   materialsCounts,
   materialPurchases = [],
   materialRecords,
   recentMaterialUsage,
   materialRequests,
-  fulfillableMaterialRequests,
   equipmentRequests,
-  fulfillableEquipmentRequests,
   progressExpenses,
   currentUserName,
   projectEquipmentAssignments,
@@ -302,11 +231,6 @@ export function ProjectDetailView({
   projectManagers: AccountRow[];
   foremen: AccountRow[];
   costEstimate: CostEstimate;
-  progress: ProjectProgress;
-  risk: DelayRiskAssessment;
-  dailyLogs: DailyLogSummary[];
-  surveyQuestions: SurveyQuestion[];
-  materials: ProjectMaterial[];
   materialsCounts: MaterialsOverviewCounts;
   materialPurchases?: MaterialPurchase[];
   /** Every material the project has, each once — planned, used, in
@@ -319,16 +243,10 @@ export function ProjectDetailView({
    * Materials tab's count, its Material requests panel and its Material
    * record's requests, each opening in its row. */
   materialRequests: MaterialRequestDetail[];
-  /** Requests that can still receive a delivery — for the Add Daily
-   * Log modal's Material Procurement "Select Material Request" picker. */
-  fulfillableMaterialRequests: MaterialRequestDetail[];
   /** The project's equipment requests, newest first, in full — the
    * Equipment tab's count, its requests panel and its record's requests,
    * each opening in its row. */
   equipmentRequests: EquipmentRequestDetail[];
-  /** Requests that can still receive an acquisition — for the Add Daily
-   * Log modal's Equipment Acquisition "Select Equipment Request" picker. */
-  fulfillableEquipmentRequests: EquipmentRequestDetail[];
   progressExpenses: ProgressExpense[];
   currentUserName: string;
   projectEquipmentAssignments: EquipmentAssignmentRow[];
@@ -396,13 +314,8 @@ export function ProjectDetailView({
     ? (tabParam as MainTab)
     : "overview";
 
-  // In the foreman portal the project itself is read-only (no Edit/Delete
-  // Project), and — DAILY LOGS ON HOLD — the Daily Logs sub-tab is left out
-  // entirely, even for a deep link straight into it.
   const { basePath, isAdmin } = usePortal();
-  const progressSubTabs = isAdmin
-    ? PROGRESS_SUB_TABS
-    : PROGRESS_SUB_TABS.filter((tab) => tab.value !== "daily-logs");
+  const canEditProject = useProjectCanEdit();
 
   const [activeTab, setActiveTab] = useState<MainTab>(initialTab);
   const [previousTabParam, setPreviousTabParam] = useState(tabParam);
@@ -457,28 +370,9 @@ export function ProjectDetailView({
     setHandledProgressTarget(progressTarget);
     if (progressTarget) setActiveTab("overview");
   }
-  const [activeProgressSubTab, setActiveProgressSubTab] =
-    useState<ProgressSubTab>(
-      initialTab === "progress" &&
-        progressSubTabs.some((tab) => tab.value === subtabParam)
-        ? (subtabParam as ProgressSubTab)
-        : "overview"
-    );
   const [editOpen, setEditOpen] = useState(false);
-  // The Delete Project confirmation modal — a separate piece of state
-  // from editOpen (not a second "screen" inside the same Modal) so the
-  // two can never both be true at once and stack; the ⋮ menu's Delete below
-  // always flips both in the same click.
-  const [deleteProjectConfirmOpen, setDeleteProjectConfirmOpen] =
+  const [archiveProjectConfirmOpen, setArchiveProjectConfirmOpen] =
     useState(false);
-  // The DOM node the active sub-tab's own toolbar (filters, "Add X"
-  // buttons) portals into — see SubTabsRow below. Only one sub-view is
-  // ever mounted at a time, so one shared slot is enough; a callback
-  // ref (not useRef) so its first non-null value still triggers the
-  // re-render the portaled child needs to actually appear.
-  const [toolbarSlotEl, setToolbarSlotEl] = useState<HTMLDivElement | null>(
-    null
-  );
   // The Project Overview sub-tab's stat cards + cost chart are merged
   // into one collapsible card (per adviser feedback) — PM/Foreman/
   // progress/dates used to sit in their own "General Information" card
@@ -689,18 +583,38 @@ export function ProjectDetailView({
     setCostEstimateHighlight({ ...target, timestamp: Date.now() });
   }
 
-  // The breadcrumb tracks only the main tab (Overview/Progress/
-  // Materials/Equipment/Expenses) — switching a sub-tab within one of
-  // those (e.g. Progress Overview -> Daily Logs) must not change it.
+  const [insightNavigation, setInsightNavigation] = useState<{ destination: ProjectInsightDestination; request: number } | null>(null);
+  const insightSequence = useRef(0);
+
+  function navigateFromInsight(destination: ProjectInsightDestination) {
+    selectWorkspaceTab(destination === "resources" ? "equipment" : "overview");
+    if (destination === "costs") setCostOverviewOpen(true);
+    setInsightNavigation({ destination, request: ++insightSequence.current });
+  }
+
+  useEffect(() => {
+    if (!insightNavigation) return;
+    const frame = requestAnimationFrame(() => {
+      const target = pageScrollRef.current?.querySelector<HTMLElement>(`[data-insight-target~="${insightNavigation.destination}"]`);
+      if (!target) return;
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      target.scrollIntoView({ block: "center", behavior: reducedMotion ? "instant" : "smooth" });
+      target.focus({ preventScroll: true });
+      animation = target.animate([
+        { boxShadow: "inset 0 0 0 2px #f59e0b", backgroundColor: "#fffbeb" },
+        { boxShadow: "inset 0 0 0 2px #f59e0b", backgroundColor: "#fffbeb", offset: 0.7 },
+        { boxShadow: "inset 0 0 0 0px transparent", backgroundColor: "transparent" },
+      ], { duration: 2800, easing: "ease-out" });
+    });
+    let animation: Animation | undefined;
+    return () => { cancelAnimationFrame(frame); animation?.cancel(); };
+  }, [insightNavigation]);
+
+  // Match the breadcrumb to the visible workspace tab.
   const breadcrumbLabel = MAIN_TABS.find((tab) => tab.value === activeTab)!
     .label;
 
-  // What's been spent, from the Daily Progress Updates: every task's (and
-  // task-less phase's) cost to date — the labor, equipment and other cost
-  // typed into its updates and the materials logged there, plus each
-  // working day without an update counting its planned share (see
-  // CostEstimateSummary.costsToDate). Not the Expenses tab's ledgers,
-  // which only daily logs (on hold) fill.
+  // Actual spending uses saved task/category progress totals only.
   const actualExpenseTotal = sumCosts(costEstimate.summary.costsToDate);
 
   const remainingBudget =
@@ -736,13 +650,21 @@ export function ProjectDetailView({
       </header>
 
       <main>
+        {project.archivedAt ? (
+          <div role="status" className="border-b border-zinc-200 bg-zinc-50 px-8 py-3 text-sm text-zinc-600">
+            <p className="font-medium">Archived project — records are available for viewing only.</p>
+            <p className="mt-1 text-xs text-zinc-500">Archived on {new Date(project.archivedAt).toLocaleDateString("en-PH", { timeZone: "Asia/Manila", month: "short", day: "numeric", year: "numeric" })}</p>
+            {project.archiveReason && <p className="mt-1 text-xs text-zinc-500">Reason: {project.archiveReason}</p>}
+          </div>
+        ) : !canEditProject && <div role="status" className="border-b border-zinc-200 bg-zinc-50 px-8 py-2 text-xs text-zinc-500">View-only project access</div>}
         {/* Project workspace header above the sticky navigation. */}
         <ProjectHeader
           project={project}
           categories={costEstimate.categories}
           workers={workers}
           workerAssignments={workerAssignments}
-          onEdit={isAdmin ? () => setEditOpen(true) : undefined}
+          onEdit={isAdmin && canEditProject && !project.archivedAt ? () => setEditOpen(true) : undefined}
+          onArchive={isAdmin && (project.archivedAt || project.status === "completed") ? () => setArchiveProjectConfirmOpen(true) : undefined}
         />
 
         {/* Pinned so the main tabs stay reachable while everything below
@@ -758,7 +680,7 @@ export function ProjectDetailView({
             layer) so Edit Project etc. are unaffected. */}
         <div className="sticky top-0 z-20 bg-white pt-3 shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
           <div role="tablist" aria-label="Project workspace" className="relative flex gap-10 px-8">
-            {VISIBLE_MAIN_TABS.map((tab) => (
+            {MAIN_TABS.map((tab) => (
               <button
                 key={tab.value}
                 ref={(element) => {
@@ -790,40 +712,11 @@ export function ProjectDetailView({
             page) or a toolbar row — the Gantt Chart's own toolbar was
             removed pending a later design pass. */}
 
-        {activeTab === "progress" && (
-          <SubTabsRow
-            tabs={progressSubTabs}
-            active={activeProgressSubTab}
-            onChange={setActiveProgressSubTab}
-            toolbarRef={setToolbarSlotEl}
-          />
-        )}
-
         <div
-          key={`${activeTab}-${activeTab === "progress" ? activeProgressSubTab : "main"}`}
+          key={activeTab}
           className="tab-content-enter"
         >
-        {activeTab === "progress" ? (
-          activeProgressSubTab === "overview" ? (
-            <ProgressView
-              startDate={project.startDate}
-              targetEndDate={project.targetEndDate}
-              progress={progress}
-              risk={risk}
-            />
-          ) : (
-            <DailyLogsView
-              projectId={project.id}
-              categories={costEstimate.categories}
-              materials={materials}
-              materialRequests={fulfillableMaterialRequests}
-              equipmentRequests={fulfillableEquipmentRequests}
-              logs={dailyLogs}
-              surveyQuestions={surveyQuestions}
-              toolbarSlot={toolbarSlotEl}
-            />
-          )
-        ) : activeTab === "materials" ? (
+        {activeTab === "materials" ? (
           // One page, no sub-tabs: the Material overview bar, then
           // every material in the project.
           <div className="flex flex-col gap-6">
@@ -864,7 +757,7 @@ export function ProjectDetailView({
         ) : activeTab === "equipment" ? (
           // One page, no sub-tabs, as the Materials tab: the Equipment
           // overview bar, then the Equipment record.
-          <div className="flex flex-col gap-6">
+          <div data-insight-target="resources" tabIndex={-1} className="flex flex-col gap-6 outline-none">
             <EquipmentOverviewView
               costRecords={equipmentCostRecords}
               requests={equipmentRequests}
@@ -910,7 +803,7 @@ export function ProjectDetailView({
           // Cost overview card, then the Gantt Chart's own section.
           <div className="flex flex-col gap-6 pt-6">
             <div className="flex flex-col">
-            <div className="rounded border border-zinc-200 bg-white">
+            <div data-insight-target="costs" tabIndex={-1} className="rounded border border-zinc-200 bg-white outline-none">
               <button
                 type="button"
                 onClick={() => setCostOverviewOpen((open) => !open)}
@@ -989,8 +882,9 @@ export function ProjectDetailView({
               )}
             </div>
 
-              <div className="mt-2">
+              <div data-insight-target="documents" tabIndex={-1} className="mt-2 outline-none">
                 <SheetsSection
+                  insightRequest={insightNavigation?.destination === "documents" ? insightNavigation.request : undefined}
                   projectId={project.id}
                   initialSheets={sheetsResult?.sheets}
                   initialCanReview={sheetsResult?.canReview}
@@ -999,11 +893,14 @@ export function ProjectDetailView({
               </div>
             </div>
 
+            <div data-insight-target="schedule progress" tabIndex={-1} className="outline-none">
             <GanttChartView
+              onNavigateInsight={navigateFromInsight}
               projectId={project.id}
               projectName={project.name}
               categories={costEstimate.categories}
               projectStartDate={project.startDate}
+              projectEndDate={project.targetEndDate}
               workingDays={project.workingDays}
               holidays={project.holidays}
               canUndo={ganttCanUndo}
@@ -1027,6 +924,7 @@ export function ProjectDetailView({
               onNavigateToCostEstimate={handleNavigateToCostEstimate}
               materialStocks={currentMaterialStocks}
             />
+            </div>
           </div>
         )}
         </div>
@@ -1075,7 +973,7 @@ export function ProjectDetailView({
       {isAdmin && (
         <>
           <Modal
-            open={editOpen}
+            open={editOpen && !project.archivedAt}
             onClose={() => setEditOpen(false)}
             title="Edit Project"
           >
@@ -1084,25 +982,20 @@ export function ProjectDetailView({
               projectManagers={projectManagers}
               foremen={foremen}
               onSuccess={() => setEditOpen(false)}
-              // Closes this panel in the same click that opens the Delete
-              // Project confirmation, so the two never stack.
-              onRequestDelete={() => {
-                setEditOpen(false);
-                setDeleteProjectConfirmOpen(true);
-              }}
             />
           </Modal>
 
           <Modal
-            open={deleteProjectConfirmOpen}
-            onClose={() => setDeleteProjectConfirmOpen(false)}
-            title="Delete Project"
+            open={archiveProjectConfirmOpen}
+            onClose={() => setArchiveProjectConfirmOpen(false)}
+            title={project.archivedAt ? "Unarchive Project" : "Archive Project"}
             variant="centered"
           >
-            <DeleteProjectModalContent
+            <ArchiveProjectModalContent
               projectId={project.id}
               projectName={project.name}
-              onClose={() => setDeleteProjectConfirmOpen(false)}
+              archived={Boolean(project.archivedAt)}
+              onClose={() => setArchiveProjectConfirmOpen(false)}
             />
           </Modal>
         </>

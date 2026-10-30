@@ -133,7 +133,7 @@ export async function listOverrideLogs(
   projectId: number,
   item: OverrideLogItem
 ): Promise<OverrideLog[]> {
-  const profile = await requireProjectAccess(projectId);
+  const profile = await requireProjectAccess(projectId, "view");
   if (!profile) return [];
 
   const supabase = await createClient();
@@ -162,7 +162,7 @@ export async function listOverrideLogs(
 export async function listProjectOverrideHistory(
   projectId: number
 ): Promise<ProjectOverrideHistory> {
-  const profile = await requireProjectAccess(projectId);
+  const profile = await requireProjectAccess(projectId, "view");
   if (!profile) return {};
 
   const supabase = await createClient();

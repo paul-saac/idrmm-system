@@ -1,5 +1,6 @@
 "use client";
 
+import { ProjectWriteInput, ProjectWriteButton } from "@/components/projects/project-access-context";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
@@ -269,7 +270,7 @@ function AmountCell({
       ? formatAmountInput(computedAmount)
       : "";
   return (
-    <input
+    <ProjectWriteInput
       type="text"
       inputMode="decimal"
       autoComplete="off"
@@ -653,7 +654,7 @@ export function MaterialBreakdownModalContent({
         <td className={TREE_CELL}>{tree && <TreeLine />}</td>
         <td className={`${DIVIDER} border-l-3 border-l-zinc-300 pr-2 pl-4`}>
           <div className="flex items-center gap-1.5">
-            <input
+            <ProjectWriteInput
               type="text"
               autoComplete="off"
               value={line.materialName}
@@ -665,18 +666,18 @@ export function MaterialBreakdownModalContent({
               placeholder="Material"
               className="h-9 min-w-0 flex-1 bg-transparent text-xs font-medium text-zinc-700 outline-none placeholder:font-normal placeholder:text-zinc-300"
             />
-            <button
+            <ProjectWriteButton
               type="button"
               onClick={() => removeLine(owner, line.key)}
               aria-label="Remove material"
               className={`shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 ${HOVER_ONLY}`}
             >
               <Trash2 className="size-3.5" />
-            </button>
+            </ProjectWriteButton>
           </div>
         </td>
         <td className={DIVIDER}>
-          <input
+          <ProjectWriteInput
             type="number"
             min={0}
             autoComplete="off"
@@ -690,7 +691,7 @@ export function MaterialBreakdownModalContent({
           />
         </td>
         <td className={DIVIDER}>
-          <input
+          <ProjectWriteInput
             type="text"
             autoComplete="off"
             value={line.unit}
@@ -704,7 +705,7 @@ export function MaterialBreakdownModalContent({
           />
         </td>
         <td className={DIVIDER}>
-          <input
+          <ProjectWriteInput
             type="number"
             min={0}
             autoComplete="off"
@@ -801,20 +802,20 @@ export function MaterialBreakdownModalContent({
                       <div className="flex items-center justify-between gap-2">
                         <GroupLabel label={category.name} />
                         {tasks.length === 0 && (
-                          <button
+                          <ProjectWriteButton
                             type="button"
                             onClick={() => addLine({ kind: "category", id: category.id })}
                             className={`${GROUP_BUTTON} ${HOVER_ONLY}`}
                           >
                             Add Material
-                          </button>
+                          </ProjectWriteButton>
                         )}
                       </div>
                     </td>
                     {tasks.length === 0 && (
                       <>
                         <td className={DIVIDER}>
-                          <input
+                          <ProjectWriteInput
                             type="number"
                             min={0}
                             autoComplete="off"
@@ -829,7 +830,7 @@ export function MaterialBreakdownModalContent({
                           />
                         </td>
                         <td className={DIVIDER}>
-                          <input
+                          <ProjectWriteInput
                             type="text"
                             autoComplete="off"
                             value={categoryDirect.unit}
@@ -843,7 +844,7 @@ export function MaterialBreakdownModalContent({
                           />
                         </td>
                         <td className={DIVIDER}>
-                          <input
+                          <ProjectWriteInput
                             type="number"
                             min={0}
                             autoComplete="off"
@@ -923,17 +924,17 @@ export function MaterialBreakdownModalContent({
                           <td className={SUBTASK_NAME_CELL}>
                             <div className="flex items-center justify-between gap-2">
                               <GroupLabel label={task.name} />
-                              <button
+                              <ProjectWriteButton
                                 type="button"
                                 onClick={() => addLine({ kind: "task", id: task.id })}
                                 className={`${GROUP_BUTTON} ${HOVER_ONLY}`}
                               >
                                 Add Material
-                              </button>
+                              </ProjectWriteButton>
                             </div>
                           </td>
                           <td className={DIVIDER}>
-                            <input
+                            <ProjectWriteInput
                               type="number"
                               min={0}
                               autoComplete="off"
@@ -946,7 +947,7 @@ export function MaterialBreakdownModalContent({
                             />
                           </td>
                           <td className={DIVIDER}>
-                            <input
+                            <ProjectWriteInput
                               type="text"
                               autoComplete="off"
                               value={direct.unit}
@@ -958,7 +959,7 @@ export function MaterialBreakdownModalContent({
                             />
                           </td>
                           <td className={DIVIDER}>
-                            <input
+                            <ProjectWriteInput
                               type="number"
                               min={0}
                               autoComplete="off"
@@ -1023,15 +1024,15 @@ export function MaterialBreakdownModalContent({
             >
               Cancel
             </button>
-            <button
+            <ProjectWriteButton
               type="button"
               onClick={onImportBom}
               className="ai-rainbow-button flex cursor-pointer items-center gap-2 rounded px-4 py-2 text-sm font-semibold text-white transition"
             >
               <AiSparklesIcon variant="white" className="size-5 shrink-0" />
               <span>Import</span>
-            </button>
-            <button
+            </ProjectWriteButton>
+            <ProjectWriteButton
               type="button"
               onClick={handleSave}
               disabled={
@@ -1041,7 +1042,7 @@ export function MaterialBreakdownModalContent({
               className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {pending ? "Saving..." : "Save Changes"}
-            </button>
+            </ProjectWriteButton>
           </div>
         </div>
       </div>

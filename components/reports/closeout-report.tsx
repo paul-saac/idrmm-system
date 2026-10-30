@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import { ProjectWriteButton, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { useState, useTransition, type FormEvent } from "react";
 import { Pencil } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/modal";
@@ -40,6 +41,21 @@ function punchDate(value: string) {
     month: "long",
     year: "numeric",
   });
+}
+
+function ReportDocumentHeader() {
+  return (
+    <div className="grid grid-cols-[16%_minmax(0,1fr)] items-center gap-x-[3.2%] text-xs leading-snug text-zinc-700">
+      <img src="/logo.png" alt="IDR M&M Logo" className="h-auto w-full object-contain" />
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4">
+        <div className="space-y-1">
+          <div><span className="font-bold text-zinc-900">Organisation:</span> IDR M&amp;M Construction</div>
+          <div><span className="font-bold text-zinc-900">Address:</span> D. Mariano St., Concepcion Uno, Marikina City</div>
+        </div>
+        <div className="text-right"><span className="font-bold text-zinc-900">Contact Number:</span> +63 967 217 3481</div>
+      </div>
+    </div>
+  );
 }
 
 export function PunchListDocumentSheet({ report }: { report: GeneratedReport }) {
@@ -85,54 +101,10 @@ export function PunchListDocumentSheet({ report }: { report: GeneratedReport }) 
         });
 
   const formCreatedTimestamp = punchTimestamp(items[0]?.formCreatedAt ?? `${report.asOf}T00:00:00+08:00`);
-  const pdfCreatedTimestamp = punchTimestamp(new Date());
 
   return (
     <div className="mx-auto w-full max-w-[850px] bg-white text-zinc-900 border border-zinc-200 shadow-lg p-6 sm:p-12 font-sans print:p-0 print:border-none print:shadow-none">
-      {/* Top Header Row with Logo & Metadata */}
-      <div className="flex flex-col sm:flex-row items-start justify-between gap-5 text-xs leading-snug text-zinc-700">
-        {/* Brand Logo - IDR M&M */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          <img
-            src="/logo.png"
-            alt="IDR M&M Logo"
-            className="h-16 sm:h-20 w-auto object-contain max-w-[220px]"
-            onError={(e) => {
-              // Graceful fallback to styled serif typography if image is unreachable
-              const target = e.currentTarget;
-              target.style.display = "none";
-              const parent = target.parentElement;
-              if (parent && !parent.querySelector(".fallback-brand")) {
-                const span = document.createElement("span");
-                span.className = "fallback-brand font-serif text-4xl font-bold tracking-tight text-[#1e3a8a]";
-                span.textContent = "IDR M&M";
-                parent.appendChild(span);
-              }
-            }}
-          />
-        </div>
-
-        {/* Center Metadata Column */}
-        <div className="space-y-1 sm:px-4">
-          <div>
-            <span className="font-bold text-zinc-900">Organisation:</span> IDR M&amp;M Construction
-          </div>
-          <div>
-            <span className="font-bold text-zinc-900">Project:</span> {report.project}
-          </div>
-          <div>
-            <span className="font-bold text-zinc-900">Prepared By:</span>{" "}
-            {meta?.preparedBy || "Authorized user"}
-          </div>
-        </div>
-
-        {/* Right Metadata Column */}
-        <div className="space-y-1 sm:text-right">
-          <div>
-            <span className="font-bold text-zinc-900">Form created:</span> {formCreatedTimestamp}
-          </div>
-        </div>
-      </div>
+      <ReportDocumentHeader />
 
       <div className="mt-2 mb-6 h-[2px] w-full bg-zinc-900" />
 
@@ -230,22 +202,12 @@ export function PunchListDocumentSheet({ report }: { report: GeneratedReport }) 
       <div className="mt-14 mb-3 h-[2px] w-full bg-zinc-900" />
 
       {/* Footer Details */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-zinc-500">
-        <div className="flex items-center gap-1.5">
-          <span className="font-serif font-bold text-zinc-900">IDR M&amp;M</span>
-          <span>Generated with IDR M&amp;M</span>
-        </div>
-        <div className="text-center">
-          Printed version is uncontrolled
-          <br />
-          Page 1 of 1
-        </div>
-        <div className="sm:text-right">
-          This PDF was created at
-          <br />
-          {pdfCreatedTimestamp}
-        </div>
+      <div className="grid grid-cols-3 gap-4 text-xs leading-snug text-zinc-500">
+        <div><span className="font-bold text-zinc-900">Prepared By:</span>{" "}{meta?.preparedBy || "Authorized user"}</div>
+        <div className="text-center"><span className="font-bold text-zinc-900">Project:</span>{" "}{report.project}</div>
+        <div className="text-right"><span className="font-bold text-zinc-900">Form created:</span><br />{formCreatedTimestamp}</div>
       </div>
+      <p className="mt-6 text-center text-[10px] text-zinc-500">Page 1 of 1</p>
     </div>
   );
 }
@@ -261,53 +223,10 @@ export function ReportDocumentSheet({ report }: { report: GeneratedReport }) {
 
   const meta = report.metadata;
   const formCreatedTimestamp = punchTimestamp(report.metadata?.startDate ?? `${report.asOf}T00:00:00+08:00`);
-  const pdfCreatedTimestamp = punchTimestamp(new Date());
 
   return (
     <div className="mx-auto w-full max-w-[850px] bg-white text-zinc-900 border border-zinc-200 shadow-lg p-6 sm:p-12 font-sans print:p-0 print:border-none print:shadow-none">
-      {/* Top Header Row with Logo & Metadata */}
-      <div className="flex flex-col sm:flex-row items-start justify-between gap-5 text-xs leading-snug text-zinc-700">
-        {/* Brand Logo - IDR M&M */}
-        <div className="flex items-center gap-2.5 shrink-0">
-          <img
-            src="/logo.png"
-            alt="IDR M&M Logo"
-            className="h-16 sm:h-20 w-auto object-contain max-w-[220px]"
-            onError={(e) => {
-              const target = e.currentTarget;
-              target.style.display = "none";
-              const parent = target.parentElement;
-              if (parent && !parent.querySelector(".fallback-brand")) {
-                const span = document.createElement("span");
-                span.className = "fallback-brand font-serif text-4xl font-bold tracking-tight text-[#1e3a8a]";
-                span.textContent = "IDR M&M";
-                parent.appendChild(span);
-              }
-            }}
-          />
-        </div>
-
-        {/* Center Metadata Column */}
-        <div className="space-y-1 sm:px-4">
-          <div>
-            <span className="font-bold text-zinc-900">Organisation:</span> IDR M&amp;M Construction
-          </div>
-          <div>
-            <span className="font-bold text-zinc-900">Project:</span> {report.project}
-          </div>
-          <div>
-            <span className="font-bold text-zinc-900">Prepared By:</span>{" "}
-            {meta?.preparedBy || "Authorized user"}
-          </div>
-        </div>
-
-        {/* Right Metadata Column */}
-        <div className="space-y-1 sm:text-right">
-          <div>
-            <span className="font-bold text-zinc-900">Form created:</span> {formCreatedTimestamp}
-          </div>
-        </div>
-      </div>
+      <ReportDocumentHeader />
 
       {/* Horizontal Divider Line with lessened gap */}
       <div className="mt-2 mb-6 h-[2px] w-full bg-zinc-900" />
@@ -431,27 +350,18 @@ export function ReportDocumentSheet({ report }: { report: GeneratedReport }) {
       <div className="mt-14 mb-3 h-[2px] w-full bg-zinc-900" />
 
       {/* Footer Details */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-zinc-500">
-        <div className="flex items-center gap-1.5">
-          <span className="font-serif font-bold text-zinc-900">IDR M&amp;M</span>
-          <span>Generated with IDR M&amp;M</span>
-        </div>
-        <div className="text-center">
-          Printed version is uncontrolled
-          <br />
-          Page 1 of 1
-        </div>
-        <div className="sm:text-right">
-          This PDF was created at
-          <br />
-          {pdfCreatedTimestamp}
-        </div>
+      <div className="grid grid-cols-3 gap-4 text-xs leading-snug text-zinc-500">
+        <div><span className="font-bold text-zinc-900">Prepared By:</span>{" "}{meta?.preparedBy || "Authorized user"}</div>
+        <div className="text-center"><span className="font-bold text-zinc-900">Project:</span>{" "}{report.project}</div>
+        <div className="text-right"><span className="font-bold text-zinc-900">Form created:</span><br />{formCreatedTimestamp}</div>
       </div>
+      <p className="mt-6 text-center text-[10px] text-zinc-500">Page 1 of 1</p>
     </div>
   );
 }
 
 export function CloseoutEditor({ data, onClose }: { data: CloseoutReportData; onClose: () => void }) {
+  const canEdit = useProjectCanEdit();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string>();
   const sections = [...new Set(CLOSEOUT_FIELDS.map((field) => field.section))];
@@ -471,7 +381,7 @@ export function CloseoutEditor({ data, onClose }: { data: CloseoutReportData; on
   }
   return <form id="closeout-details" onSubmit={submit}>
     <input type="hidden" name="version" value={data.record?.version ?? 0} />
-    <fieldset disabled={pending} className="space-y-7 disabled:opacity-70">
+    <fieldset disabled={pending || !canEdit} className="space-y-7 disabled:opacity-70">
       <p className="text-xs leading-relaxed text-zinc-500">Document the project lifecycle, deliverables, cost variances, scope adjustments, lessons learned, and formal approvals.</p>
       {sections.map((section) => <div key={section}>
         <h4 className="mb-4 border-b border-zinc-200 pb-2 text-sm font-medium">{section}</h4>
@@ -510,7 +420,7 @@ export function CloseoutEditor({ data, onClose }: { data: CloseoutReportData; on
     <ModalFooter><div className="flex w-full flex-wrap items-center justify-end gap-3">
       {error && <p role="alert" className="mr-auto max-w-lg text-sm text-red-600">{error}</p>}
       <button type="button" disabled={pending} onClick={onClose} className="rounded border border-zinc-200 px-4 py-2 text-sm disabled:opacity-50">Cancel</button>
-      <button type="submit" form="closeout-details" disabled={pending} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{pending ? "Saving…" : "Save report details"}</button>
+      <ProjectWriteButton type="submit" form="closeout-details" disabled={pending} className="rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{pending ? "Saving…" : "Save report details"}</ProjectWriteButton>
     </div></ModalFooter>
   </form>;
 }

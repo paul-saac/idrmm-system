@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import Image from "next/image";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -252,9 +253,9 @@ function LaborToday({
       </div>
 
       {rows.length === 0 ? (
-        <p className="rounded-md border border-dashed border-zinc-200 px-3 py-4 text-center text-sm text-zinc-400">
+        <EmptyState compact className="rounded-md border border-dashed border-zinc-200 px-3 py-4">
           No skilled workers are assigned to this task — add whoever worked today.
-        </p>
+        </EmptyState>
       ) : (
         <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
           <div
@@ -650,62 +651,11 @@ function StandingBreakdownDetails({
   );
 }
 
-/** The history column before anything's saved — a small drawing (an
- * empty log under a magnifying glass) and a line on what will show up. */
+/** The history column before anything is saved. */
 function EmptyHistory() {
   return (
     <div className="flex flex-col items-center px-2 pt-6 pb-2 text-center">
-      <svg aria-hidden viewBox="0 0 200 160" className="h-32 w-40">
-        {/* A soft backdrop, and the drawing's shadow. */}
-        <path
-          className="fill-zinc-100"
-          d="M30 72C28 42 58 26 95 30c35 4 70-2 77 32 7 33-17 56-52 58-35 2-65 8-82-12C30 98 31 86 30 72Z"
-        />
-        <ellipse className="fill-zinc-100" cx="100" cy="146" rx="52" ry="4" />
-        {/* The log — a clipboard with faint, empty lines. */}
-        <rect
-          className="fill-white stroke-zinc-400"
-          x="62"
-          y="30"
-          width="66"
-          height="84"
-          rx="6"
-          strokeWidth="2"
-        />
-        <rect
-          className="fill-white stroke-zinc-400"
-          x="83"
-          y="24"
-          width="24"
-          height="12"
-          rx="3"
-          strokeWidth="2"
-        />
-        <g className="stroke-zinc-300" strokeWidth="2.5" strokeLinecap="round">
-          <line x1="74" y1="52" x2="116" y2="52" />
-          <line x1="74" y1="64" x2="110" y2="64" />
-          <line x1="74" y1="76" x2="100" y2="76" />
-        </g>
-        {/* Looking for overrides — none yet. */}
-        <circle className="fill-white/70 stroke-zinc-400" cx="122" cy="98" r="19" strokeWidth="2" />
-        <line
-          className="stroke-zinc-400"
-          x1="136"
-          y1="112"
-          x2="149"
-          y2="125"
-          strokeWidth="5"
-          strokeLinecap="round"
-        />
-        {/* Sparkles. */}
-        <g className="stroke-zinc-400" strokeWidth="1.5" strokeLinecap="round">
-          <path d="M50 38v8M46 42h8" />
-          <path d="M158 34v8M154 38h8" />
-          <path d="M46 112v6M43 115h6" />
-        </g>
-        <circle className="fill-zinc-300" cx="142" cy="22" r="2" />
-      </svg>
-      <p className="mt-3 text-sm font-semibold text-zinc-700">No logs yet</p>
+      <p className="text-sm font-semibold text-zinc-700">No logs yet</p>
       <p className="mt-1 max-w-60 text-xs text-zinc-500">
         Each saved daily log shows up here, with who saved it and when.
       </p>
@@ -1063,9 +1013,9 @@ function SavedProgressLogModal({
               {error ? (
                 <p className="px-3 py-3 text-xs text-red-600">{error}</p>
               ) : incidents.length === 0 ? (
-                <p className="px-3 py-3 text-xs text-zinc-400">
+                <EmptyState compact className="px-3 py-3 text-xs text-zinc-400">
                   No incidents reported for this log.
-                </p>
+                </EmptyState>
               ) : (
                 <div className="space-y-3 p-3">
                   {incidents.map((incident) => {
@@ -2534,9 +2484,9 @@ export function ProgressTrackingModalContent({
               )}
             </div>
           ) : (
-            <p className="rounded-md border border-dashed border-zinc-200 px-3 py-4 text-center text-sm text-zinc-400">
+            <EmptyState compact className="rounded-md border border-dashed border-zinc-200 px-3 py-4">
               No planned equipment cost items on this task — add any equipment costs for today (rental, maintenance, repair, etc.).
-            </p>
+            </EmptyState>
           )}
 
           <datalist id="progress-equipment-cost-suggestions">
@@ -2843,9 +2793,9 @@ export function ProgressTrackingModalContent({
               )}
             </div>
           ) : (
-            <p className="rounded-md border border-dashed border-zinc-200 px-3 py-4 text-center text-sm text-zinc-400">
+            <EmptyState compact className="rounded-md border border-dashed border-zinc-200 px-3 py-4">
               No planned other cost items on this task — add any itemized other costs for today.
-            </p>
+            </EmptyState>
           )}
 
           <datalist id="progress-other-cost-suggestions">

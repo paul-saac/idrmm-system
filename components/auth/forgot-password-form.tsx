@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import Link from "next/link";
 import { useActionState } from "react";
 import {
@@ -33,8 +34,7 @@ export function ForgotPasswordForm() {
     <form action={formAction} className="flex flex-col gap-5" noValidate>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="email" className="text-sm font-medium text-zinc-900">
-          Email address
-        </label>
+          Email address<RequiredMark /></label>
         <input
           id="email"
           name="email"

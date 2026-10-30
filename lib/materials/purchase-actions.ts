@@ -7,7 +7,7 @@ import { listMaterialPurchases } from "./purchases";
 import { validatePurchaseLines } from "./purchases-model";
 
 export async function loadMaterialPurchases(projectId: number) {
-  if (!(await requireProjectAccess(projectId))) throw new Error("Project access denied.");
+  if (!(await requireProjectAccess(projectId, "view"))) throw new Error("Project access denied.");
   return listMaterialPurchases(projectId);
 }
 

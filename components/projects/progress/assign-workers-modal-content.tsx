@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { useState } from "react";
 import Link from "next/link";
 import { Plus, Search, X } from "lucide-react";
@@ -149,7 +150,7 @@ export function AssignWorkersModalContent({
       </div>
 
       {workers.length === 0 ? (
-        <p className="py-4 text-center text-sm text-zinc-400">No team members yet.</p>
+        <EmptyState compact className="py-4 text-center text-sm text-zinc-400">No team members yet.</EmptyState>
       ) : (
         <>
           <div className="relative">
@@ -211,7 +212,7 @@ export function AssignWorkersModalContent({
           {/* Labeled by the Team's own sections. */}
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
             {sections.length === 0 && (
-              <p className="py-4 text-center text-sm text-zinc-400">No members match.</p>
+              <EmptyState compact className="py-4 text-center text-sm text-zinc-400">No members match.</EmptyState>
             )}
             {sections.map((section) => (
               <div key={section.key} className="flex flex-col gap-0.5">

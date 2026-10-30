@@ -790,7 +790,7 @@ export async function getAccountDetail(
   const supabase = await createClient();
   const id = target.id;
 
-  const [projectRows, taskEntries, categoryEntries, dailyLogs, materialRequests] =
+  const [projectRows, taskEntries, categoryEntries, materialRequests] =
     await Promise.all([
       supabase
         .from("projects")
@@ -808,12 +808,6 @@ export async function getAccountDetail(
         .from("category_progress_entries")
         .select("category_id, entry_date, created_at")
         .eq("recorded_by", id)
-        .order("created_at", { ascending: false })
-        .limit(10),
-      supabase
-        .from("daily_logs")
-        .select("project_id, log_date, created_at")
-        .eq("submitted_by", id)
         .order("created_at", { ascending: false })
         .limit(10),
       supabase
@@ -863,7 +857,6 @@ export async function getAccountDetail(
     new Set([
       ...(tasks.data ?? []).map((task) => task.project_id),
       ...(categories.data ?? []).map((category) => category.project_id),
-      ...(dailyLogs.data ?? []).map((log) => log.project_id),
       ...(materialRequests.data ?? []).map((request) => request.project_id),
     ])
   );
@@ -891,12 +884,6 @@ export async function getAccountDetail(
         at: entry.created_at,
       };
     }),
-    ...(dailyLogs.data ?? []).map((log) => ({
-      kind: "daily_log" as const,
-      label: `Submitted the daily log for ${log.log_date}`,
-      projectName: projectName.get(log.project_id) ?? null,
-      at: log.created_at,
-    })),
     ...(materialRequests.data ?? []).map((request) => ({
       kind: "material_request" as const,
       label: `Requested materials (${request.mr_no})`,

@@ -1,5 +1,6 @@
 "use client";
 
+import { ProjectWriteInput, ProjectWriteButton } from "@/components/projects/project-access-context";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
@@ -122,14 +123,14 @@ export function OtherBreakdownModalContent({
     } finally { setPending(false); }
   }
   function addButton(owner: Owner) {
-    return <button type="button" disabled={pending}
+    return <ProjectWriteButton type="button" disabled={pending}
       onClick={() => setDrafts((previous) => ({
         ...previous, [ownerKey(owner)]: [...(previous[ownerKey(owner)] ?? initialLines(owner, label)),
           { key: crypto.randomUUID(), costName: "", quantity: "1", unit: "", unitCost: "0", amountOverride: "" }],
       }))}
       className="inline-flex h-6 shrink-0 cursor-pointer items-center rounded-sm border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 opacity-0 transition group-hover:opacity-100 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 focus-visible:opacity-100 disabled:opacity-50">
       Add {label} Cost
-    </button>;
+    </ProjectWriteButton>;
   }
   function detailRows(owner: Owner, tree: boolean, lastTask = false) {
     return <Fragment>
@@ -154,7 +155,7 @@ export function OtherBreakdownModalContent({
             <td className={TREE_CELL}>{tree && !lastTask && <TreeLine />}</td>
             <td className={`${DIVIDER} border-l-3 border-l-zinc-300 pr-2 pl-4`}>
               <div className="flex items-center">
-                <input
+                <ProjectWriteInput
                   aria-label={`${owner.name} cost name`}
                   disabled={pending}
                   value={line.costName}
@@ -165,7 +166,7 @@ export function OtherBreakdownModalContent({
                   placeholder={costType === "equipment" ? "Equipment / rental description" : "Cost name"}
                   className="h-9 min-w-0 flex-1 bg-transparent text-xs font-medium text-zinc-700 outline-none placeholder:font-normal placeholder:text-zinc-300"
                 />
-                <button
+                <ProjectWriteButton
                   type="button"
                   disabled={pending}
                   aria-label={`Remove ${line.costName || `${label.toLowerCase()} cost`} from ${owner.name}`}
@@ -180,11 +181,11 @@ export function OtherBreakdownModalContent({
                   className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 opacity-0 transition group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 disabled:opacity-50"
                 >
                   <Trash2 className="size-3.5" />
-                </button>
+                </ProjectWriteButton>
               </div>
             </td>
             <td>
-              <input
+              <ProjectWriteInput
                 aria-label={`${owner.name} ${line.costName || `${label} cost`} amount`}
                 disabled={pending}
                 inputMode="decimal"
@@ -257,8 +258,8 @@ export function OtherBreakdownModalContent({
           <span className="font-semibold text-zinc-900">{currency(owners.reduce((sum, owner) => sum + total(owner), 0))}</span></div>
         <div className="flex items-center gap-3">
           <button type="button" onClick={onClose} disabled={pending} className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-60">Cancel</button>
-          <button type="button" onClick={save} disabled={pending || !Object.keys(drafts).length}
-            className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? "Saving..." : "Save Changes"}</button>
+          <ProjectWriteButton type="button" onClick={save} disabled={pending || !Object.keys(drafts).length}
+            className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? "Saving..." : "Save Changes"}</ProjectWriteButton>
         </div>
       </div>
     </div>

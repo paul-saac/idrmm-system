@@ -18,7 +18,17 @@ export function projectStatusLabel(status: ProjectStatus): string {
   }
 }
 
-export function projectStatusBadgeClasses(status: ProjectStatus): string {
+export function projectStatusBadgeClasses(status: ProjectStatus, appearance: "default" | "workspace" = "default"): string {
+  if (appearance === "workspace") {
+    switch (status) {
+      case "planning":
+        return "bg-[#554a2e] text-[#ffad00]";
+      case "ongoing":
+        return "bg-[#2c5432] text-[#00d53b]";
+      case "completed":
+        return "bg-[#2b5752] text-[#00ead5]";
+    }
+  }
   switch (status) {
     case "planning":
       return "bg-amber-50 text-amber-700";
@@ -29,13 +39,11 @@ export function projectStatusBadgeClasses(status: ProjectStatus): string {
   }
 }
 
-/** Actual work starts a project; an administrator's actual end date
- * confirms completion only while every leaf item is fully logged. */
+/** Actual work starts a project; completing every leaf item completes it. */
 export function deriveProjectStatusFromProgress(
   lifecycle: ProjectLifecycle,
-  actualEndDate: string | null,
 ): ProjectStatus {
   if (!lifecycle.hasRecordedWork) return "planning";
-  if (lifecycle.allItemsComplete && actualEndDate) return "completed";
+  if (lifecycle.allItemsComplete) return "completed";
   return "ongoing";
 }

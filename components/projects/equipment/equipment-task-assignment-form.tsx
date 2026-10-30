@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useId } from "react";
 import { moveEquipmentToTask, type EquipmentActionState } from "@/lib/equipment/actions";
 import type { EquipmentAssignmentRow, EquipmentTaskOption } from "@/lib/equipment/data";
@@ -44,7 +45,7 @@ export function EquipmentTaskAssignmentForm({
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${formId}-task`} className="text-sm font-medium text-zinc-900">
           {assignment.currentTaskId ? "Move to task" : "Assign to task"}
-        </label>
+        <RequiredMark /></label>
         <select
           id={`${formId}-task`}
           name="taskId"

@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import { roleLabel } from "@/lib/auth/roles";
 import { getSessionProfile } from "@/lib/auth/session";
+import { getProjectAccessLevel } from "@/lib/auth/project-access";
+import { ProjectAccessProvider } from "@/components/projects/project-access-context";
 import { getProjectById } from "@/lib/projects/data";
 import { listAccountsByRole } from "@/lib/accounts/data";
 import { getCostEstimate } from "@/lib/cost-estimate/data";
@@ -18,8 +20,6 @@ import { listCategoryProgressToday } from "@/lib/category-progress/data";
 import { listProjectOverrideHistory } from "@/lib/progress-logs/actions";
 import { listProjectEvents } from "@/lib/project-events/data";
 import { listSheets } from "@/lib/sheets/actions";
-import { getProjectProgress } from "@/lib/progress/data";
-import { listDailyLogs, listSurveyQuestions } from "@/lib/daily-logs/data";
 import {
   listMaterialBreakdownEntries,
   listProjectMaterials,
@@ -42,15 +42,7 @@ import {
 } from "@/lib/equipment/data";
 import { buildEquipmentCostRecords } from "@/lib/equipment/records";
 import { loadEquipmentTracking } from "@/lib/equipment/tracking-actions";
-import {
-  listLaborExpenses,
-  listMaterialExpenses,
-  listEquipmentExpenses,
-  listOtherExpenses,
-  summarizeExpenses,
-} from "@/lib/expenses/data";
 import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
-import { getDelayRiskAssessment } from "@/lib/forecasting/data";
 import { ProjectDetailView } from "@/components/projects/project-detail-view";
 import { ProjectWorkspaceLoading } from "@/components/projects/project-workspace-loading";
 
@@ -60,11 +52,6 @@ import { ProjectWorkspaceLoading } from "@/components/projects/project-workspace
  * user's own session, so for a foreman row-level security already limits
  * it to their assigned project — another project's id just resolves to
  * no project and a 404.
- *
- * DAILY LOGS — ON HOLD for foremen: no daily_log_* table has a foreman
- * policy yet, so for a foreman the daily-log reads below (daily logs,
- * survey questions, today's procurement, and the expense/material-usage
- * lists built from daily log entries) come back empty rather than failing.
  */
 export async function ProjectDetailPage({ projectId }: { projectId: number }) {
   if (!Number.isFinite(projectId)) {
@@ -93,12 +80,12 @@ async function ProjectDetailContent({
   projectId: number;
   project: NonNullable<Awaited<ReturnType<typeof getProjectById>>>;
 }) {
+  const projectAccess = await getProjectAccessLevel(projectId);
+  if (projectAccess === "none") notFound();
   const [
     projectManagers,
     foremen,
     costEstimate,
-    dailyLogs,
-    surveyQuestions,
     materials,
     materialBreakdownEntries,
     progressMaterialUsage,
@@ -107,10 +94,6 @@ async function ProjectDetailContent({
     progressExpenses,
     projectEquipmentAssignments,
     equipmentTaskMovements,
-    laborExpenses,
-    materialExpenses,
-    equipmentExpenses,
-    otherExpenses,
     sessionProfile,
     ganttUndoRedoState,
     workers,
@@ -129,8 +112,6 @@ async function ProjectDetailContent({
     listAccountsByRole(["project_manager"]),
     listAccountsByRole(["foreman"]),
     getCostEstimate(projectId, true),
-    listDailyLogs(projectId),
-    listSurveyQuestions(projectId),
     listProjectMaterials(projectId),
     listMaterialBreakdownEntries(projectId),
     listProgressMaterialUsage(projectId),
@@ -139,10 +120,6 @@ async function ProjectDetailContent({
     listProgressExpenses(projectId),
     listProjectEquipmentAssignments(projectId),
     listProjectEquipmentTaskMovements(projectId),
-    listLaborExpenses(projectId),
-    listMaterialExpenses(projectId),
-    listEquipmentExpenses(projectId),
-    listOtherExpenses(projectId),
     getSessionProfile(),
     getGanttUndoRedoState(projectId),
     listWorkers(),
@@ -164,16 +141,6 @@ async function ProjectDetailContent({
     materials,
     materialBreakdownEntries,
     progressMaterialUsage
-  );
-
-  // What the Add Daily Log's Material Procurement can still deliver
-  // against — see listFulfillableMaterialRequests.
-  const fulfillableMaterialRequests = materialRequests.filter(
-    (request) => request.status === "approved" || request.status === "partially_fulfilled"
-  );
-  // The same, for the Add Daily Log's Equipment Acquisition.
-  const fulfillableEquipmentRequests = equipmentRequests.filter(
-    (request) => request.status === "approved" || request.status === "partially_fulfilled"
   );
 
   // Every task's equipment cost — the Equipment tab's: its budget, what's
@@ -280,23 +247,11 @@ async function ProjectDetailContent({
     .map(({ costs, ...entry }) => ({ ...entry, amount: costs.equipment }));
   const equipmentCostRecords = buildEquipmentCostRecords(costEstimate, equipmentCosts);
 
-  const expenseOverview = summarizeExpenses(
-    laborExpenses,
-    materialExpenses,
-    equipmentExpenses,
-    otherExpenses,
-    costEstimate.summary.totalsByColumn
-  );
-
   const currentUserName = sessionProfile
     ? `${sessionProfile.firstName} ${sessionProfile.lastName}`.trim() ||
       sessionProfile.email ||
       roleLabel(sessionProfile.role)
     : "Admin";
-
-  // Depends on costEstimate's categories/tasks, so it can't join the
-  // Promise.all above.
-  const progress = await getProjectProgress(projectId, costEstimate.categories);
 
   // Reconcile persisted status after changes to task scope or saved work.
   // The sync helper checks project access before its narrow status write.
@@ -306,18 +261,8 @@ async function ProjectDetailContent({
   );
   const currentProject =
     syncedStatus && syncedStatus !== project.status
-        ? { ...project, status: syncedStatus, actualEndDate: syncedStatus === "completed" ? project.actualEndDate : null }
+        ? { ...project, status: syncedStatus }
       : project;
-
-  // Same reasoning as costEstimate/progress above: depends on data
-  // fetched earlier, so it can't join the first Promise.all.
-  const risk = await getDelayRiskAssessment(
-    projectId,
-    currentProject,
-    costEstimate,
-    progress,
-    expenseOverview
-  );
 
   const materialStocks = computeMaterialStocks(materialPurchases, progressMaterialUsage);
   const stockSummary = summarizeMaterialStocks(materialStocks);
@@ -335,24 +280,18 @@ async function ProjectDetailContent({
         };
 
   return (
+    <ProjectAccessProvider canEdit={projectAccess === "edit"}>
     <ProjectDetailView
       project={currentProject}
       projectManagers={projectManagers}
       foremen={foremen}
       costEstimate={costEstimate}
-      progress={progress}
-      risk={risk}
-      dailyLogs={dailyLogs}
-      surveyQuestions={surveyQuestions}
-      materials={materials}
       materialsCounts={materialsCounts}
       materialPurchases={materialPurchases}
       materialRecords={materialRecords}
       recentMaterialUsage={progressMaterialUsage}
       materialRequests={materialRequests}
-      fulfillableMaterialRequests={fulfillableMaterialRequests}
       equipmentRequests={equipmentRequests}
-      fulfillableEquipmentRequests={fulfillableEquipmentRequests}
       progressExpenses={resolvedProgressExpenses}
       currentUserName={currentUserName}
       projectEquipmentAssignments={projectEquipmentAssignments}
@@ -374,5 +313,6 @@ async function ProjectDetailContent({
       sheetsResult={sheetsResult}
       equipmentTracking={equipmentTrackingResult.data ?? null}
     />
+    </ProjectAccessProvider>
   );
 }

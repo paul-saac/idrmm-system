@@ -1,6 +1,5 @@
 import { Building2, MapPin } from "lucide-react";
 import { HeaderActions } from "@/components/auth/header-actions";
-import { InitialsAvatar } from "@/components/ui/list-table";
 import type { ProjectRow } from "@/lib/projects/data";
 import {
   projectStatusBadgeClasses,
@@ -9,12 +8,13 @@ import {
 
 const WORKSPACE_TABS = ["Overview", "Materials", "Equipment", "Expenses"];
 
+// Mirrors project-header.tsx's own Person (no avatar) so the streamed
+// shell doesn't flash profiles that disappear once the page loads.
 function Person({ role, name }: { role: string; name: string | null }) {
   return (
     <span className="flex min-w-0 items-center gap-2">
-      <InitialsAvatar name={name ?? "?"} />
       <span className="text-zinc-400">{role}</span>
-      <span className="truncate font-medium text-zinc-900">{name ?? "—"}</span>
+      <span className="truncate font-medium text-zinc-100">{name ?? "—"}</span>
     </span>
   );
 }
@@ -39,61 +39,62 @@ export function ProjectWorkspaceLoading({ project }: { project?: ProjectRow }) {
       </div>
 
       <main>
-        <div className="bg-white pt-6">
+        <div className="bg-zinc-900 pt-4">
           <div className="mx-8 flex flex-wrap items-start justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-4">
-              <span className="flex size-12 shrink-0 items-center justify-center rounded-md bg-zinc-100 text-zinc-700">
-                <Building2 aria-hidden className="size-6" />
+            <div className="flex min-w-0 items-center gap-3.5">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-zinc-200">
+                <Building2 aria-hidden className="size-5" />
               </span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-3">
                   {project ? (
                     <>
-                      <h1 className="text-2xl font-semibold text-zinc-900">{project.name}</h1>
+                      <h1 className="text-2xl font-semibold text-zinc-100">{project.name}</h1>
                       <span
-                        className={`rounded-xs px-2.5 py-1 text-xs font-medium ${projectStatusBadgeClasses(project.status)}`}
+                        className={`inline-flex h-6 shrink-0 items-center justify-center rounded-xs px-2.5 text-center text-xs leading-none font-medium whitespace-nowrap ${projectStatusBadgeClasses(project.status, "workspace")}`}
                       >
                         {projectStatusLabel(project.status)}
                       </span>
+                      {project.archivedAt && <span className="rounded-xs border border-zinc-600 px-2.5 py-1 text-xs font-medium text-zinc-200">Archived</span>}
                     </>
                   ) : (
                     <>
-                      <span className="h-7 w-52 animate-pulse rounded bg-zinc-100" />
-                      <span className="h-6 w-20 animate-pulse rounded bg-zinc-100" />
+                      <span className="h-7 w-52 animate-pulse rounded bg-zinc-800" />
+                      <span className="h-6 w-20 animate-pulse rounded bg-zinc-800" />
                     </>
                   )}
                 </div>
                 {project?.location ? (
-                  <p className="mt-1 flex items-center gap-1.5 text-sm text-zinc-400">
-                    <MapPin aria-hidden className="size-4 shrink-0" />
+                  <p className="mt-0.5 flex items-center gap-1.5 text-sm text-zinc-400">
+                    <MapPin aria-hidden className="size-4 shrink-0 text-zinc-400" />
                     {project.location}
                   </p>
                 ) : !project ? (
-                  <span className="mt-2 block h-3 w-36 animate-pulse rounded bg-zinc-100" />
+                  <span className="mt-2 block h-3 w-36 animate-pulse rounded bg-zinc-800" />
                 ) : null}
               </div>
             </div>
           </div>
 
-          <div className="mx-8 mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+          <div className="mx-8 mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
             {project ? (
               <Person role="Project manager" name={project.projectManagerName} />
             ) : (
-              <span className="h-8 w-56 animate-pulse rounded bg-zinc-100" />
+              <span className="h-5 w-56 animate-pulse rounded bg-zinc-800" />
             )}
-            <span aria-hidden className="h-5 w-px bg-zinc-200" />
+            <span aria-hidden className="h-4 w-px bg-zinc-600" />
             {project ? (
               <Person role="Foreman" name={project.foremanName} />
             ) : (
-              <span className="h-8 w-44 animate-pulse rounded bg-zinc-100" />
+              <span className="h-5 w-44 animate-pulse rounded bg-zinc-800" />
             )}
           </div>
 
-          <div className="mt-5 grid grid-cols-2 border-y border-zinc-200 bg-white lg:grid-cols-4 lg:divide-x lg:divide-zinc-200">
+          <div className="mt-3.5 grid grid-cols-2 border-y border-zinc-300 bg-zinc-200 lg:grid-cols-4 lg:divide-x lg:divide-zinc-300">
             {["Overall progress", "Project schedule", "Next milestone", "Project tasks"].map(
               (label) => (
                 <div key={label} className="min-w-0 px-8 py-4">
-                  <p className="text-xs font-medium tracking-wider text-zinc-400 uppercase">{label}</p>
+                  <p className="text-xs font-medium tracking-wider text-zinc-500 uppercase">{label}</p>
                   <div className="mt-2 h-6 w-28 animate-pulse rounded bg-zinc-100" />
                 </div>
               )

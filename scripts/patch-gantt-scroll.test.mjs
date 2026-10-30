@@ -216,3 +216,98 @@ test("the modern browser bundle receives the same scroll fixes", () => {
   assert.equal(chart.dragHorizontal([500, 1000, 0]), 0);
   assert.equal(chart.rebuilds(), 1);
 });
+
+// Exercise the workspace's real sizing calculation across the transition
+// from an empty chart to its optimistic and persisted first task.
+function workspaceColumnWidth() {
+  const source = readFileSync(new URL("../components/projects/progress/gantt-chart-view.tsx", import.meta.url), "utf8");
+  const ast = ts.createSourceFile("gantt.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let widthCallback;
+  let baseline;
+  let countFunction;
+  function visit(node) {
+    if (ts.isVariableDeclaration(node)) {
+      if (node.name.getText(ast) === "effectiveColumnWidth") widthCallback = node.initializer.arguments[0].getText(ast);
+      if (node.name.getText(ast) === "BASE_COLUMN_WIDTH") baseline = node.initializer.getText(ast);
+    }
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "estimateColumnCount") countFunction = node.getText(ast);
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  assert.ok(widthCallback && baseline && countFunction, "workspace sizing must be available");
+  const js = ts.transpileModule(`const BASE_COLUMN_WIDTH = ${baseline};\n${countFunction}\nconst compute = ${widthCallback};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  return new Function("view", "containerWidth", "timelineExtent", "showTaskList", "visiblePanelWidth", `${js}\nreturn compute();`);
+}
+
+test("Day keeps the same column width when the first task is created", () => {
+  const width = workspaceColumnWidth();
+  const firstTask = { min: new Date(2026, 9, 29), max: new Date(2026, 9, 30) };
+  assert.equal(width("day", 1780, null, true, 760), 60);
+  assert.equal(width("day", 1780, firstTask, true, 760), 60);
+});
+
+test("Day columns stay consistent after layout and task-date changes", () => {
+  const width = workspaceColumnWidth();
+  for (const container of [900, 1780, 2560]) {
+    for (const max of [new Date(2026, 9, 29), new Date(2026, 10, 20), new Date(2027, 2, 1)]) {
+      const range = { min: new Date(2026, 9, 29), max };
+      assert.equal(width("day", container, range, true, 760), 60);
+      assert.equal(width("day", container, range, false, 760), 60);
+    }
+  }
+});
+
+test("Month and Year retain their existing fill-width sizing", () => {
+  const width = workspaceColumnWidth();
+  const shortRange = { min: new Date(2026, 9, 29), max: new Date(2026, 9, 30) };
+  assert.equal(width("month", 1780, shortRange, true, 760), 340);
+  assert.equal(width("year", 1780, shortRange, true, 760), 340);
+  assert.equal(width("month", 900, shortRange, true, 760), 100);
+  assert.equal(width("year", 900, shortRange, true, 760), 300);
+});
+
+function workspaceFillerRows(projectStartDate, projectEndDate, effectiveTasks = []) {
+  const source = readFileSync(new URL("../components/projects/progress/gantt-chart-view.tsx", import.meta.url), "utf8");
+  const ast = ts.createSourceFile("gantt.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const declarations = new Map();
+  function visit(node) {
+    if (ts.isVariableDeclaration(node)) declarations.set(node.name.getText(ast), node.initializer?.getText(ast));
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  const js = ts.transpileModule(["fillerDate", "fillerEndDate", "fillerTasks"]
+    .map(name => `const ${name} = ${declarations.get(name)};`).join("\n"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  return new Function("projectStartDate", "projectEndDate", "effectiveTasks", "toDate", "fillerTaskCount", "FILLER_ROW_ID_PREFIX", `${js}\nreturn fillerTasks;`)(
+    projectStartDate, projectEndDate, effectiveTasks, iso => new Date(`${iso}T00:00:00`), 20, "__empty_",
+  );
+}
+
+test("an empty Day timeline reaches the project target end date on its first render", () => {
+  const rows = workspaceFillerRows("2026-10-10", "2027-02-27");
+  const exports = {};
+  runInNewContext(installed + "\nexports.dayDates = tasks => { const [start, end] = ganttDateRange(tasks, exports.ViewMode.Day, 1); return seedDates(start, end, exports.ViewMode.Day); };", {
+    exports, console, require: () => ({ createElement() { return null; } }),
+  });
+  const dates = exports.dayDates(rows);
+  assert.ok(dates[0].getTime() <= new Date(2026, 9, 10).getTime());
+  assert.ok(dates.at(-1).getTime() >= new Date(2027, 1, 27).getTime());
+  assert.equal(rows.length, 20);
+  assert.ok(rows.every(row => row.name === "" && row.isDisabled && row.styles.backgroundColor === "transparent"));
+});
+
+test("empty timeline dates update with the project and tolerate a missing or earlier target", () => {
+  assert.equal(workspaceFillerRows("2026-10-10", "2027-05-01")[0].end.getTime(), new Date(2027, 4, 1).getTime());
+  for (const target of [null, "2026-10-01"]) {
+    const row = workspaceFillerRows("2026-10-10", target)[0];
+    assert.equal(row.end.getTime(), row.start.getTime());
+  }
+});
+
+test("populated schedules keep their existing filler-date behavior", () => {
+  const row = workspaceFillerRows("2026-10-10", "2027-02-27", [{ id: "existing" }])[0];
+  assert.equal(row.end.getTime(), row.start.getTime());
+});

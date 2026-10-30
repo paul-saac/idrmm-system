@@ -23,13 +23,8 @@ export type OtherCostItem = {
 
 export type TaskPriority = "low" | "medium" | "high";
 
-/** Materials planned for a task ahead of time, from the Gantt Chart
- * Schedule's own task form (see 0035_estimate_task_priority_and_
- * assignments.sql) — distinct from daily_log_material_usage_items /
- * daily_log_material_procurement_items, which record what was actually
- * used/procured after the fact. Free-text material name/spec, same
- * reasoning as daily_log_material_procurement_items: the material may
- * not exist in the project's material catalog yet at planning time. */
+/** Materials planned in the Gantt task form. Actual usage and purchases
+ * are recorded separately through progress entries and material purchases. */
 export type TaskMaterialAssignment = {
   id: number;
   materialName: string;
@@ -81,8 +76,7 @@ export type CostTask = {
   weight: number;
   /** The task's baseline schedule — null on any task nobody's dated yet
    * (nothing requires these; see 0027_estimate_task_schedule.sql). Used
-   * by the Gantt Chart view and by Planned Value in the delay-risk/
-   * forecasting calculation. */
+   * by the Gantt Chart and schedule-based Expected progress. */
   plannedStartDate: string | null;
   plannedEndDate: string | null;
   /** The task this one starts after (Finish-to-Start; see
@@ -101,14 +95,7 @@ export type CostTask = {
    * is a cost-distribution % used throughout the EVM/progress
    * calculations, not a priority level. */
   priority: TaskPriority;
-  /** 0-100, directly user-editable from the Gantt Chart's own task list
-   * (see 0039_estimate_task_percent_complete.sql) — deliberately
-   * independent of lib/progress/data.ts's own ProjectProgress (still
-   * derived from approved Daily Log work items, for the separate
-   * Progress Overview tab), per an explicit request to keep the Gantt
-   * Chart's own progress tracking self-contained. A phase's own percent
-   * complete is never stored — always a plain average of its tasks'
-   * own percentComplete, computed in gantt-chart-view.tsx itself. */
+  /** Actual completion from saved progress, separate from schedule-based expectations. */
   percentComplete: number;
   /** Recorded spend per cost column from saved Daily Progress Updates only. */
   costsToDate: CostAmounts;
@@ -158,6 +145,7 @@ export type CostCategory = {
    * on the Gantt chart, like a task's own isMilestone. Ignored once it
    * has tasks. See 0072_estimate_category_milestone.sql. */
   isMilestone: boolean;
+  predecessorCategoryId?: number | null;
   /** This category's own direct labor cost — same "only meaningful
    * while it has no tasks yet" rule as plannedStartDate/plannedEndDate
    * above, one level up from CostTask's own laborEstimate. See
@@ -512,6 +500,7 @@ export async function getCostEstimate(projectId: number, strict = false): Promis
       priority: toTaskPriority(row.priority),
       // Undefined until 0072 has run — then just not a milestone.
       isMilestone: row.is_milestone ?? false,
+      predecessorCategoryId: row.predecessor_category_id ?? null,
       categoryLaborEstimate: row.category_labor_estimate ?? 0,
       categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
       categoryOtherEstimate: row.category_other_estimate ?? 0,

@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState } from "react";
 import { updatePassword, type AuthActionState } from "@/lib/auth/actions";
 
@@ -15,8 +16,7 @@ export function ResetPasswordForm() {
     <form action={formAction} className="flex flex-col gap-5" noValidate>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="password" className="text-sm font-medium text-zinc-900">
-          New password
-        </label>
+          New password<RequiredMark /></label>
         <input
           id="password"
           name="password"
@@ -34,8 +34,7 @@ export function ResetPasswordForm() {
           htmlFor="confirmPassword"
           className="text-sm font-medium text-zinc-900"
         >
-          Confirm new password
-        </label>
+          Confirm new password<RequiredMark /></label>
         <input
           id="confirmPassword"
           name="confirmPassword"

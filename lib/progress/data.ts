@@ -39,42 +39,9 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-/**
- * Rolls each task/category's own live percentComplete (Automatic
- * Progress Completion — computeAutoPercentComplete, already computed
- * server-side in getCostEstimate for every CostTask/CostCategory, see
- * lib/cost-estimate/data.ts) up into category and project-wide
- * progress: Earned Value Management. A task/category's own contribution
- * to the project's overall percent is its own weight (0-100, its share
- * of the estimated cost unless set by hand — see lib/cost-estimate/
- * weights.ts) times its own percentComplete.
- *
- * Deliberately does NOT re-derive percentComplete from daily logs the
- * way this function used to (summing daily_log_work_items' own
- * quantity per task, divided by estimated_quantity) — that was a
- * second, competing definition of "done" that ignored a task's own
- * Progress Tracking Override entirely, per an explicit request to stop
- * computing progress from quantity/daily logs. `categories` already
- * carries the correct, single source of truth for both fields (the
- * same one the Gantt Chart itself reads), so this just reads it back
- * instead of re-querying daily_logs/daily_log_work_items at all.
- *
- * A task-less category (see CostCategory.percentComplete's own doc
- * comment) contributes its own percentComplete/weight directly to the
- * project total — same asymmetric "task-less category gets its own
- * direct value" rule already used everywhere else in this app (its own
- * material line, its own priority, ...). The previous version of this
- * function silently excluded a task-less category from overallPercent
- * entirely (its weightedSum contribution only ever accumulated inside
- * the per-task loop, which a category with zero tasks never runs) — a
- * standalone category's own Progress Tracking Override never moved the
- * project-wide number at all. Fixed here as part of the same rollup
- * work, not a separate change.
- *
- * A category's own weight is the sum of its tasks' weights while it
- * has any, or its own while task-less — both already computed by
- * getCostEstimate (lib/cost-estimate/weights.ts).
- */
+/** Rolls saved task completion into the project total using estimate weights.
+ * Standalone phases contribute directly; phases with tasks roll up their children.
+ * Expected schedule progress is calculated separately and never counts as work. */
 export async function getProjectProgress(
   projectId: number,
   categories: CostCategory[]

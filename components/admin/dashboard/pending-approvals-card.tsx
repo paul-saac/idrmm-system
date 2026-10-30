@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/empty-state";
 import Link from "next/link";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 import type { PendingRequest } from "@/lib/dashboard/data";
@@ -35,7 +36,7 @@ export function PendingApprovalsCard({
       </div>
 
       {items.length === 0 ? (
-        <p className="text-sm text-zinc-500">Nothing waiting on approval.</p>
+        <EmptyState compact className="text-sm text-zinc-500">Nothing waiting on approval.</EmptyState>
       ) : (
         <ul className="flex flex-col gap-4">
           {items.map((item) => (

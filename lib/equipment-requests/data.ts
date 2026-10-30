@@ -81,7 +81,7 @@ const REQUEST_COLUMNS =
   "id, project_id, er_no, request_date, date_required, priority, remarks, status, requested_by, approved_by, approved_at";
 
 type EquipmentRequestRow = Omit<
-  Database["public"]["Tables"]["equipment_requisitions"]["Row"],
+  Database["public"]["Tables"]["equipment_requests"]["Row"],
   "created_at" | "updated_at"
 >;
 
@@ -110,7 +110,7 @@ async function withDetails(
   const [{ data: profiles }, { data: itemRows }] = await Promise.all([
     supabase.from("profiles").select("id, first_name, last_name, email").in("id", profileIds),
     supabase
-      .from("equipment_requisition_items")
+      .from("equipment_request_items")
       .select(
         "id, equipment_request_id, equipment_name, specification, quantity_needed, uom, purpose, quantity_fulfilled"
       )
@@ -166,33 +166,9 @@ export async function listEquipmentRequests(
   const supabase = await createClient();
 
   const { data, error } = await supabase
-    .from("equipment_requisitions")
+    .from("equipment_requests")
     .select(REQUEST_COLUMNS)
     .eq("project_id", projectId)
-    .order("request_date", { ascending: false });
-
-  if (error || !data) return [];
-  return withDetails(supabase, data);
-}
-
-/**
- * The Add Daily Log modal's "Select Equipment Request" / "Select
- * Equipment Request Item" pickers (Equipment Acquisition Log) — every
- * request on this project that can still receive an acquisition against
- * it, with their items. "Can still receive one" means approved or
- * already partially fulfilled; submitted (not yet reviewed), canceled,
- * and fully fulfilled requests have nothing left to pick.
- */
-export async function listFulfillableEquipmentRequests(
-  projectId: number
-): Promise<EquipmentRequestDetail[]> {
-  const supabase = await createClient();
-
-  const { data, error } = await supabase
-    .from("equipment_requisitions")
-    .select(REQUEST_COLUMNS)
-    .eq("project_id", projectId)
-    .in("status", ["approved", "partially_fulfilled"])
     .order("request_date", { ascending: false });
 
   if (error || !data) return [];

@@ -1,16 +1,16 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Search, X } from "lucide-react";
-import { EditIcon } from "@/components/icons/edit-icon";
 import {
   Checkbox,
-  ICON_BUTTON,
   InitialsAvatar,
   SectionLabel,
 } from "@/components/ui/list-table";
-import { Modal } from "@/components/ui/modal";
+import { Modal, ModalFooter } from "@/components/ui/modal";
 import { deleteMemberGroup, saveMemberGroup } from "@/lib/workers/actions";
 import type { MemberGroup, Worker } from "@/lib/workers/data";
 import { memberSections } from "@/lib/workers/sections";
@@ -30,10 +30,10 @@ type Panel =
 /**
  * The Team page's left side, a box headed Groups: its groups, crews like
  * "Mason Crew A" made by admins, super admins and project managers, as
- * cards one under another, and New Group under them. A card opens its
+ * cards one under another, and an add button in the header. A card opens its
  * group to view
- * (description, members by section), its pencil straight to the group's
- * form; editing and deleting are also in the view's ⋮ menu. Someone can
+ * (description, members by section); editing and deleting are in the
+ * view's footer. Someone can
  * be in any number of groups, and the Gantt chart's Assign picker can put
  * a whole one on a task at once.
  */
@@ -70,20 +70,31 @@ export function GroupsPanel({
 
   return (
     // Group header separated from its cards, like the member table.
-    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-zinc-900">
+    <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-zinc-200 bg-zinc-100">
       <aside className="flex min-h-0 flex-1 flex-col py-5">
-        <div className="flex shrink-0 items-baseline gap-2 border-b border-zinc-500 px-6 pb-4">
-          <h2 className="text-base font-semibold text-zinc-50">Groups</h2>
-          <span className="text-xs text-zinc-400 tabular-nums">{groups.length}</span>
+        <div className="flex shrink-0 items-center gap-2 border-b border-zinc-200 px-6 pb-4">
+          <h2 className="text-base font-semibold text-zinc-900">Groups</h2>
+          <span className="text-xs text-zinc-500 tabular-nums">{groups.length}</span>
+          <button
+            type="button"
+            onClick={() => setPanel({ mode: "add" })}
+            title="Add group"
+            aria-label="Add group"
+            className="ml-auto flex size-6 cursor-pointer items-center justify-center rounded text-zinc-700 transition hover:bg-zinc-200 hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
+          >
+            <Plus className="size-4" />
+          </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 py-4">
+          {groups.length === 0 && (
+            <EmptyState compact className="py-6">No groups yet.</EmptyState>
+          )}
           {groups.map((group) => {
             const people = group.memberIds.flatMap((id) => {
               const member = memberById.get(id);
               return member ? [member] : [];
             });
             return (
-              // A div, not a button — its pencil is a button of its own.
               <div
                 key={group.id}
                 role="button"
@@ -96,27 +107,15 @@ export function GroupsPanel({
                     setPanel({ mode: "view", groupId: group.id });
                   }
                 }}
-                className="flex w-full shrink-0 cursor-pointer flex-col items-start gap-2.5 rounded border border-zinc-600 bg-zinc-800 px-3 py-4 text-left transition hover:border-zinc-500 hover:bg-zinc-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
+                className="flex w-full shrink-0 cursor-pointer flex-col items-start gap-2.5 rounded border border-zinc-300 bg-zinc-200 px-3 py-4 text-left transition hover:border-zinc-400 hover:bg-zinc-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
               >
                 <div className="flex w-full items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-zinc-50">{group.name}</p>
-                    <p className="text-xs text-zinc-400">
+                    <p className="truncate text-sm font-semibold text-zinc-900">{group.name}</p>
+                    <p className="text-xs text-zinc-500">
                       {people.length} member{people.length === 1 ? "" : "s"}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPanel({ mode: "edit", groupId: group.id });
-                    }}
-                    title="Edit group"
-                    aria-label={`Edit ${group.name}`}
-                    className={`${ICON_BUTTON} -mt-0.5 -mr-1.5 hover:bg-zinc-700 hover:text-white`}
-                  >
-                    <EditIcon className="size-3.5" />
-                  </button>
                 </div>
                 {people.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -124,13 +123,13 @@ export function GroupsPanel({
                       <span
                         key={member.id}
                         title={member.fullName}
-                        className="rounded-full [&>span]:ring-1 [&>span]:ring-white"
+                        className="rounded-[1px]"
                       >
                         <InitialsAvatar name={member.fullName} />
                       </span>
                     ))}
                     {people.length > FACES && (
-                      <span className="text-xs text-zinc-400">
+                      <span className="text-xs text-zinc-500">
                         +{people.length - FACES}
                       </span>
                     )}
@@ -141,40 +140,40 @@ export function GroupsPanel({
           })}
         </div>
 
-        <div className="flex shrink-0 justify-start px-6">
-          <button
-            type="button"
-            onClick={() => setPanel({ mode: "add" })}
-            className="flex cursor-pointer items-center gap-1.5 py-1.5 text-sm font-medium text-zinc-100 transition hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
-          >
-            <Plus className="size-4" />
-            New Group
-          </button>
-        </div>
       </aside>
 
       <Modal
         open={open}
         onClose={() => setPanel(null)}
         title={panelGroup ? panelGroup.name : "New Group"}
-        menuItems={
-          panel?.mode === "view" && panelGroup
-            ? [
-                {
-                  label: "Edit",
-                  onSelect: () => setPanel({ mode: "edit", groupId: panelGroup.id }),
-                },
-                {
-                  label: "Delete",
-                  destructive: true,
-                  onSelect: () => handleDelete(panelGroup),
-                },
-              ]
-            : undefined
-        }
       >
         {panel?.mode === "view" && panelGroup && (
-          <GroupView group={panelGroup} members={members} />
+          <>
+            <GroupView group={panelGroup} members={members} />
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={() => setPanel(null)}
+                className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(panelGroup)}
+                className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-red-600 transition hover:border-red-600 hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                onClick={() => setPanel({ mode: "edit", groupId: panelGroup.id })}
+                className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
+              >
+                Edit
+              </button>
+            </ModalFooter>
+          </>
         )}
         {panel?.mode === "edit" && panelGroup && (
           <GroupForm
@@ -218,7 +217,7 @@ function GroupView({ group, members }: { group: MemberGroup; members: Worker[] }
           </span>
         </div>
         {people.length === 0 ? (
-          <p className="text-sm text-zinc-400">No members yet.</p>
+          <EmptyState compact className="text-sm text-zinc-400">No members yet.</EmptyState>
         ) : (
           <div className="flex flex-col gap-4">
             {sections.map((section) => (
@@ -309,7 +308,7 @@ function GroupForm({
   return (
     <div className="flex h-full min-h-full flex-col gap-4">
       <label className="flex flex-col gap-1.5">
-        <span className={LABEL}>Group Name</span>
+        <span className={LABEL}>Group Name<RequiredMark /></span>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -333,7 +332,7 @@ function GroupForm({
           <span className="text-xs text-zinc-500">{picked.size} selected</span>
         </div>
         {members.length === 0 ? (
-          <p className="py-4 text-center text-sm text-zinc-400">No team members yet.</p>
+          <EmptyState compact className="py-4 text-center text-sm text-zinc-400">No team members yet.</EmptyState>
         ) : (
           <>
             <div className="relative">
@@ -364,7 +363,7 @@ function GroupForm({
             {/* Labeled by the Team's own sections. */}
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
               {sections.length === 0 && (
-                <p className="py-4 text-center text-sm text-zinc-400">No members match.</p>
+                <EmptyState compact className="py-4 text-center text-sm text-zinc-400">No members match.</EmptyState>
               )}
               {sections.map((section) => (
                 <div key={section.key} className="flex flex-col gap-0.5">

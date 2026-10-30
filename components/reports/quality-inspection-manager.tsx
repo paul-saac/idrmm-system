@@ -1,5 +1,8 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
+import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, ProjectWriteTextarea } from "@/components/projects/project-access-context";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useState, useTransition, type FormEvent } from "react";
 import { ChevronDown, ClipboardCheck, Plus } from "lucide-react";
 import { ModalFooter } from "@/components/ui/modal";
@@ -47,55 +50,55 @@ export function QualityInspectionManager({ data, onClose, onSaved }: { data: Clo
               <span className="mt-1 flex justify-between gap-2 text-xs text-zinc-500"><span className="truncate">{item.area}</span><span>{QUALITY_RESULT_LABELS[item.result]}</span></span>
             </button>
           ))}
-          {!data.qualityInspections.length && <p className="px-4 py-8 text-center text-xs text-zinc-400">No inspections recorded yet.</p>}
+          {!data.qualityInspections.length && <EmptyState compact className="px-4 py-8 text-center text-xs text-zinc-400">No inspections recorded yet.</EmptyState>}
         </div>
       </aside>
 
       <div className="flex min-w-0 flex-col overflow-y-auto">
         <fieldset disabled={pending} className="grid gap-4.5 p-6 disabled:opacity-60 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-start">
-          <input type="hidden" name="inspectionId" value={selected?.id ?? ""} />
+          <ProjectWriteInput type="hidden" name="inspectionId" value={selected?.id ?? ""} />
 
-          <label htmlFor="qa-type" className="pt-2 text-sm font-medium">Inspection type</label>
-          <div className="relative"><select id="qa-type" name="inspectionType" defaultValue={selected?.inspection_type ?? "architectural"} className={selectClass}>{QUALITY_INSPECTION_TYPES.map(value => <option key={value} value={value}>{QUALITY_INSPECTION_TYPE_LABELS[value]}</option>)}</select><SelectIcon /></div>
+          <label htmlFor="qa-type" className="pt-2 text-sm font-medium">Inspection type<RequiredMark /></label>
+          <div className="relative"><ProjectWriteSelect id="qa-type" name="inspectionType" defaultValue={selected?.inspection_type ?? "architectural"} className={selectClass}>{QUALITY_INSPECTION_TYPES.map(value => <option key={value} value={value}>{QUALITY_INSPECTION_TYPE_LABELS[value]}</option>)}</ProjectWriteSelect><SelectIcon /></div>
 
-          <label htmlFor="qa-scope" className="pt-2 text-sm font-medium">Work inspected *</label>
-          <input id="qa-scope" name="inspectionScope" required maxLength={300} defaultValue={selected?.inspection_scope ?? ""} placeholder="e.g. Concrete footings" className={input} />
+          <label htmlFor="qa-scope" className="pt-2 text-sm font-medium">Work inspected<RequiredMark /></label>
+          <ProjectWriteInput id="qa-scope" name="inspectionScope" required maxLength={300} defaultValue={selected?.inspection_scope ?? ""} placeholder="e.g. Concrete footings" className={input} />
 
-          <label htmlFor="qa-area" className="pt-2 text-sm font-medium">Area / location *</label>
-          <input id="qa-area" name="area" required maxLength={200} defaultValue={selected?.area ?? ""} placeholder="e.g. Grid A1–A5" className={input} />
+          <label htmlFor="qa-area" className="pt-2 text-sm font-medium">Area / location<RequiredMark /></label>
+          <ProjectWriteInput id="qa-area" name="area" required maxLength={200} defaultValue={selected?.area ?? ""} placeholder="e.g. Grid A1–A5" className={input} />
 
-          <label htmlFor="qa-date" className="pt-2 text-sm font-medium">Inspection date *</label>
+          <label htmlFor="qa-date" className="pt-2 text-sm font-medium">Inspection date<RequiredMark /></label>
           <DatePicker id="qa-date" name="inspectedOn" ariaLabel="Inspection date" required defaultValue={selected?.inspected_on ?? data.asOf} className={input} />
 
-          <label htmlFor="qa-inspector" className="pt-2 text-sm font-medium">Inspector name *</label>
-          <input id="qa-inspector" name="inspectorName" required maxLength={200} defaultValue={selected?.inspector_name ?? ""} className={input} />
+          <label htmlFor="qa-inspector" className="pt-2 text-sm font-medium">Inspector name<RequiredMark /></label>
+          <ProjectWriteInput id="qa-inspector" name="inspectorName" required maxLength={200} defaultValue={selected?.inspector_name ?? ""} className={input} />
 
           <label htmlFor="qa-org" className="pt-2 text-sm font-medium">Organization</label>
-          <input id="qa-org" name="inspectorOrganization" maxLength={200} defaultValue={selected?.inspector_organization ?? ""} placeholder="Company, laboratory, or authority" className={input} />
+          <ProjectWriteInput id="qa-org" name="inspectorOrganization" maxLength={200} defaultValue={selected?.inspector_organization ?? ""} placeholder="Company, laboratory, or authority" className={input} />
 
-          <label htmlFor="qa-result" className="pt-2 text-sm font-medium">Result</label>
-          <div className="relative"><select id="qa-result" name="result" defaultValue={selected?.result ?? "pending"} className={selectClass}>{QUALITY_RESULTS.map(value => <option key={value} value={value}>{QUALITY_RESULT_LABELS[value]}</option>)}</select><SelectIcon /></div>
+          <label htmlFor="qa-result" className="pt-2 text-sm font-medium">Result<RequiredMark /></label>
+          <div className="relative"><ProjectWriteSelect id="qa-result" name="result" defaultValue={selected?.result ?? "pending"} className={selectClass}>{QUALITY_RESULTS.map(value => <option key={value} value={value}>{QUALITY_RESULT_LABELS[value]}</option>)}</ProjectWriteSelect><SelectIcon /></div>
 
           <label htmlFor="qa-test" className="pt-2 text-sm font-medium">Test name</label>
-          <input id="qa-test" name="testName" maxLength={200} defaultValue={selected?.test_name ?? ""} placeholder="Optional, e.g. concrete strength" className={input} />
+          <ProjectWriteInput id="qa-test" name="testName" maxLength={200} defaultValue={selected?.test_name ?? ""} placeholder="Optional, e.g. concrete strength" className={input} />
 
           <label htmlFor="qa-criteria" className="pt-2 text-sm font-medium">Required result</label>
-          <input id="qa-criteria" name="acceptanceCriteria" maxLength={500} defaultValue={selected?.acceptance_criteria ?? ""} placeholder="Optional, e.g. minimum 28 MPa" className={input} />
+          <ProjectWriteInput id="qa-criteria" name="acceptanceCriteria" maxLength={500} defaultValue={selected?.acceptance_criteria ?? ""} placeholder="Optional, e.g. minimum 28 MPa" className={input} />
 
           <label htmlFor="qa-actual" className="pt-2 text-sm font-medium">Actual result</label>
-          <div className="grid gap-2 sm:grid-cols-[1fr_7rem]"><input id="qa-actual" name="actualResult" maxLength={500} defaultValue={selected?.actual_result ?? ""} className={input} /><input name="resultUnit" aria-label="Result unit" maxLength={50} defaultValue={selected?.result_unit ?? ""} placeholder="Unit" className={input} /></div>
+          <div className="grid gap-2 sm:grid-cols-[1fr_7rem]"><ProjectWriteInput id="qa-actual" name="actualResult" maxLength={500} defaultValue={selected?.actual_result ?? ""} className={input} /><ProjectWriteInput name="resultUnit" aria-label="Result unit" maxLength={50} defaultValue={selected?.result_unit ?? ""} placeholder="Unit" className={input} /></div>
 
           <label htmlFor="qa-document" className="pt-2 text-sm font-medium">Supporting document</label>
-          <div className="relative"><select id="qa-document" name="relatedSheetId" defaultValue={selected?.related_sheet_id ?? ""} className={selectClass}><option value="">No supporting document</option>{documents.map(sheet => <option key={sheet.id} value={sheet.id}>{sheet.sheet_number} — {sheet.title}</option>)}</select><SelectIcon /></div>
+          <div className="relative"><ProjectWriteSelect id="qa-document" name="relatedSheetId" defaultValue={selected?.related_sheet_id ?? ""} className={selectClass}><option value="">No supporting document</option>{documents.map(sheet => <option key={sheet.id} value={sheet.id}>{sheet.sheet_number} — {sheet.title}</option>)}</ProjectWriteSelect><SelectIcon /></div>
 
           <label htmlFor="qa-remarks" className="pt-2 text-sm font-medium">Findings / remarks</label>
-          <textarea id="qa-remarks" name="remarks" rows={4} maxLength={5000} defaultValue={selected?.remarks ?? ""} placeholder="Inspection findings or notes" className={input} />
+          <ProjectWriteTextarea id="qa-remarks" name="remarks" rows={4} maxLength={5000} defaultValue={selected?.remarks ?? ""} placeholder="Inspection findings or notes" className={input} />
         </fieldset>
 
         <ModalFooter>
           {error && <p role="alert" className="mr-auto text-sm text-red-600">{error}</p>}
           <button type="button" disabled={pending} onClick={onClose} className="rounded border border-zinc-200 px-4 py-2 text-sm font-medium hover:bg-zinc-50">Cancel</button>
-          <button type="submit" form="quality-inspection-form" disabled={pending} className="inline-flex items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"><ClipboardCheck className="size-4" />{pending ? "Saving…" : selected ? "Save changes" : "Add inspection"}</button>
+          <ProjectWriteButton type="submit" form="quality-inspection-form" disabled={pending} className="inline-flex items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"><ClipboardCheck className="size-4" />{pending ? "Saving…" : selected ? "Save changes" : "Add inspection"}</ProjectWriteButton>
         </ModalFooter>
       </div>
     </form>

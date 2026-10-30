@@ -1,10 +1,13 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { FilterSelect } from "@/components/ui/filter-select";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EquipmentForm } from "@/components/inventory/equipment-form";
 import { AssignEquipmentForm } from "@/components/inventory/assign-equipment-form";
 import { EquipmentTable } from "@/components/inventory/equipment-table";
@@ -32,6 +35,11 @@ export function InventoryBrowser({
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<
+    | { kind: "single"; item: EquipmentRow }
+    | { kind: "batch"; items: EquipmentRow[] }
+    | null
+  >(null);
   const [formModal, setFormModal] = useState<
     { mode: "add" } | { mode: "edit"; equipment: EquipmentRow } | null
   >(null);
@@ -70,20 +78,32 @@ export function InventoryBrowser({
     });
   }
 
-  async function handleDeleteSelected() {
-    const count = selectedItems.length;
-    if (!window.confirm(`Delete ${count} item${count === 1 ? "" : "s"}? This cannot be undone.`)) {
-      return;
-    }
+  function handleDeleteSelected() {
+    setDeleteTarget({ kind: "batch", items: selectedItems });
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteTarget) return;
     setDeleteError(null);
     setDeleting(true);
-    const result = await deleteEquipmentItems(selectedItems.map((item) => item.id));
+    const ids =
+      deleteTarget.kind === "single"
+        ? [deleteTarget.item.id]
+        : deleteTarget.items.map((item) => item.id);
+    const result = await deleteEquipmentItems(ids);
     setDeleting(false);
     if (result.error) {
       setDeleteError(result.error);
       return;
     }
-    setSelected(new Set());
+    if (deleteTarget.kind === "single") {
+      if (formModal?.mode === "edit" && formModal.equipment.id === deleteTarget.item.id) {
+        setFormModal(null);
+      }
+    } else {
+      setSelected(new Set());
+    }
+    setDeleteTarget(null);
     router.refresh();
   }
 
@@ -153,9 +173,9 @@ export function InventoryBrowser({
       )}
 
       {filtered.length === 0 ? (
-        <div className="rounded-lg border border-zinc-200 bg-white py-12 text-center text-sm text-zinc-400">
+        <EmptyState className="rounded-lg border border-zinc-200 bg-white py-12">
           {equipment.length === 0 ? "No equipment recorded yet." : "No equipment matches."}
-        </div>
+        </EmptyState>
       ) : (
         <EquipmentTable
           equipment={filtered}
@@ -163,6 +183,7 @@ export function InventoryBrowser({
           onCheck={setChecked}
           onEdit={(item) => setFormModal({ mode: "edit", equipment: item })}
           onAssign={(item) => setAssignTarget(item)}
+          onDelete={(item) => setDeleteTarget({ kind: "single", item })}
           basePath={basePath}
           readOnly={!isAdmin}
         />
@@ -183,6 +204,11 @@ export function InventoryBrowser({
               // selected when it first mounted.
               key={formModal?.mode === "edit" ? formModal.equipment.id : "add"}
               equipment={formModal?.mode === "edit" ? formModal.equipment : undefined}
+              onRequestDelete={
+                formModal?.mode === "edit"
+                  ? () => setDeleteTarget({ kind: "single", item: formModal.equipment })
+                  : undefined
+              }
               onSuccess={() => setFormModal(null)}
             />
           </Modal>
@@ -201,6 +227,24 @@ export function InventoryBrowser({
               />
             )}
           </Modal>
+
+          <ConfirmDialog
+            open={deleteTarget !== null}
+            title={
+              deleteTarget?.kind === "single"
+                ? `Delete "${deleteTarget.item.name}"?`
+                : `Delete ${deleteTarget?.items.length ?? 0} item${(deleteTarget?.items.length ?? 0) === 1 ? "" : "s"}?`
+            }
+            message="This cannot be undone."
+            pending={deleting}
+            error={deleteError}
+            onConfirm={handleConfirmDelete}
+            onCancel={() => {
+              if (deleting) return;
+              setDeleteTarget(null);
+              setDeleteError(null);
+            }}
+          />
         </>
       )}
     </div>

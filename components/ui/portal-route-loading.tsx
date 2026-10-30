@@ -55,7 +55,7 @@ function TableSkeleton({ rows = 7 }: { rows?: number }) {
         <div key={index} className="grid h-16 grid-cols-[3rem_1.4fr_1fr_1fr_8rem] items-center gap-4 border-b border-zinc-100 px-4 last:border-0">
           <span className="size-4 rounded-sm bg-zinc-200" />
           <div className="flex items-center gap-3">
-            <span className="size-8 rounded-full bg-zinc-200" />
+            <span className="size-8 rounded-[1px] bg-zinc-200" />
             <SkeletonLine className="w-28" />
           </div>
           <SkeletonLine className="w-3/4" />

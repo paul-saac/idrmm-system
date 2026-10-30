@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
@@ -143,8 +144,7 @@ export function ProjectEventModalContent({
     <div className="flex h-full min-h-full flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <label htmlFor="event-type" className="text-sm font-medium text-zinc-900">
-          Type
-        </label>
+          Type<RequiredMark /></label>
         <Select id="event-type" value={type} onChange={(value) => setType(value as ProjectEventType)}>
           {PROJECT_EVENT_TYPES.map((option) => (
             <option key={option.value} value={option.value}>
@@ -156,8 +156,7 @@ export function ProjectEventModalContent({
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="event-name" className="text-sm font-medium text-zinc-900">
-          Name
-        </label>
+          Name<RequiredMark /></label>
         <input
           id="event-name"
           value={name}
@@ -175,7 +174,7 @@ export function ProjectEventModalContent({
         </div>
         {isMeeting && (
           <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium text-zinc-900">Time</span>
+            <span className="text-sm font-medium text-zinc-900">Time<RequiredMark /></span>
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
                 <Select id="event-start" value={startTime} onChange={handleStartChange}>

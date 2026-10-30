@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useId, useState } from "react";
 import {
   createWorker,
@@ -87,8 +88,7 @@ export function MemberForm({
       <input type="hidden" name="employmentType" value={employmentType} />
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${formId}-first`} className={LABEL}>
-          First Name
-        </label>
+          First Name<RequiredMark /></label>
         <input
           id={`${formId}-first`}
           name="firstName"
@@ -131,8 +131,7 @@ export function MemberForm({
       {subcontractor && (
         <div className="flex flex-col gap-1.5">
           <label htmlFor={`${formId}-company`} className={LABEL}>
-            Company
-          </label>
+            Company<RequiredMark /></label>
           <input
             id={`${formId}-company`}
             name="subcontractorCompany"

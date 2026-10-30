@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useId } from "react";
 import {
   updateEquipmentAssignment,
@@ -83,8 +84,7 @@ export function EquipmentAssignmentForm({
             htmlFor={`${formId}-assignedAt`}
             className="text-sm font-medium text-zinc-900"
           >
-            Assigned Date
-          </label>
+            Assigned Date<RequiredMark /></label>
           <input
             id={`${formId}-assignedAt`}
             name="assignedAt"

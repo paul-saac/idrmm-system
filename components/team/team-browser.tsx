@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -388,12 +389,15 @@ export function TeamBrowser({
   }
 
   return (
-    // The toolbar spans the page; Groups sits beside the table below it.
+    // Groups starts at the top; the member toolbar belongs to the table column.
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-6 sm:p-8">
+      <div className="grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,2fr)] items-stretch gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
+        <GroupsPanel groups={memberGroups} members={members} />
+        <div className="flex min-h-0 min-w-0 flex-col gap-3">
         <div className="flex min-h-9 shrink-0 flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-2">
-            <h2 className="text-base font-semibold text-zinc-900">All members</h2>
-            <span className="text-xs text-zinc-400 tabular-nums">{members.length}</span>
+            <h2 className="text-base font-semibold text-zinc-900">{activeGroup.label}</h2>
+            <span className="text-xs text-zinc-400 tabular-nums">{total}</span>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-3">
             {selectedMembers.length > 0 && (
@@ -453,9 +457,7 @@ export function TeamBrowser({
           </div>
         </div>
 
-      <div className="grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,2fr)] items-stretch gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
-        <GroupsPanel groups={memberGroups} members={members} />
-        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white">
           {/* The open tab underlined in black; the
               gray line under them all an inset shadow, so a narrow screen
               can still scroll the tabs sideways. */}
@@ -492,7 +494,7 @@ export function TeamBrowser({
 
           {total === 0 ? (
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-6">
-            <p className="py-12 text-center text-sm text-zinc-400">
+            <EmptyState className="py-12 text-center text-sm text-zinc-400">
               {filtering ? (
                 "No members match."
               ) : !canManageMembers ? (
@@ -509,7 +511,7 @@ export function TeamBrowser({
                   </button>
                 </>
               )}
-            </p>
+            </EmptyState>
             </div>
           ) : (
             <>
@@ -783,6 +785,7 @@ export function TeamBrowser({
             )}
           </Modal>
         </section>
+        </div>
       </div>
     </div>
   );

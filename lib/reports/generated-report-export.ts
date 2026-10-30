@@ -61,7 +61,7 @@ function formatReportTimestamp(value: string | Date) {
   }).replace(" at ", ", ").replace(" AM", " am").replace(" PM", " pm");
 }
 
-const LOGO_BASE64 = "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";
+const LOGO_BASE64 = "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";
 
 async function exportPunchListPdf(report: GeneratedReport): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
@@ -73,7 +73,6 @@ async function exportPunchListPdf(report: GeneratedReport): Promise<Blob> {
   const valX = marginX + labelW;
   const valW = contentW - labelW;
 
-  const pdfCreatedTimestamp = formatReportTimestamp(new Date());
   const displayDate = (value: string) => {
     const parsed = new Date(value.length === 10 ? `${value}T00:00:00+08:00` : value);
     if (Number.isNaN(parsed.getTime())) return value;
@@ -148,63 +147,45 @@ async function exportPunchListPdf(report: GeneratedReport): Promise<Blob> {
 
   const drawPageHeader = () => {
     try {
-      pdf.addImage(`data:image/png;base64,${LOGO_BASE64}`, "PNG", marginX, 7.5, 38, 18.25);
+      pdf.addImage(`data:image/png;base64,${LOGO_BASE64}`, "PNG", marginX, 10.7, 29.04, 7.875);
     } catch {
       pdf.setFont("times", "bold");
-      pdf.setFontSize(18);
+      pdf.setFontSize(14);
       pdf.setTextColor(24, 24, 27);
       pdf.text("IDR M&M", marginX, 19);
     }
 
-    // Column 1
     pdf.setFontSize(8);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("Organisation:", marginX + 43, 13);
-    pdf.setFont("helvetica", "normal");
     pdf.setTextColor(39, 39, 42);
-    pdf.text("IDR M&M Construction", marginX + 64, 13);
-
+    const headerX = marginX + 34.85;
+    for (const [index, [label, value]] of [
+      ["Organisation:", "IDR M&M Construction"],
+      ["Address:", "D. Mariano St., Concepcion Uno, Marikina City"],
+    ].entries()) {
+      pdf.setFont("helvetica", "bold");
+      pdf.text(label, headerX, 12.9 + index * 4.96);
+      const valueX = headerX + pdf.getTextWidth(label) + 2;
+      pdf.setFont("helvetica", "normal");
+      pdf.text(pdf.splitTextToSize(value, marginX + contentW - 59 - valueX), valueX, 12.9 + index * 4.96);
+    }
+    pdf.setFont("helvetica", "normal");
+    const contact = "+63 967 217 3481";
+    const contactX = marginX + contentW - pdf.getTextWidth(contact);
+    pdf.text(contact, contactX, 12.9);
     pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("Project:", marginX + 43, 18);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(39, 39, 42);
-    const projClipped = (pdf.splitTextToSize(safePdfText(report.project), 52) as string[])[0] || "";
-    pdf.text(projClipped, marginX + 64, 18);
-
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("Prepared By:", marginX + 43, 23);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(39, 39, 42);
-    const preparedBy = meta?.preparedBy || "Authorized user";
-    const preparedByClipped = (pdf.splitTextToSize(safePdfText(preparedBy), 48) as string[])[0] || "";
-    pdf.text(preparedByClipped, marginX + 64, 23);
-
-    // Column 2
-    const formCreatedText = safePdfText(formCreatedTimestamp);
-    pdf.setFont("helvetica", "normal");
-    const formCreatedValueWidth = pdf.getTextWidth(formCreatedText);
-    const formCreatedValueX = marginX + contentW - formCreatedValueWidth;
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("Form created:", formCreatedValueX - pdf.getTextWidth("Form created:") - 2, 13);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(39, 39, 42);
-    pdf.text(formCreatedText, formCreatedValueX, 13);
+    pdf.text("Contact Number:", contactX - pdf.getTextWidth("Contact Number:") - 2, 12.9);
 
     // Solid black line with lessened gap
     pdf.setDrawColor(24, 24, 27);
     pdf.setLineWidth(0.35);
-    pdf.line(marginX, 28, marginX + contentW, 28);
+    pdf.line(marginX, 21, marginX + contentW, 21);
   };
 
   drawPageHeader();
 
-  let y = 36;
+  let y = 29;
   pdf.setFont("helvetica", "bold");
-  pdf.setFontSize(18);
+  pdf.setFontSize(14);
   pdf.setTextColor(24, 24, 27);
   pdf.text("Punch List Report", marginX, y);
   y += 9;
@@ -213,7 +194,7 @@ async function exportPunchListPdf(report: GeneratedReport): Promise<Blob> {
     if (y + neededHeight > pageBottom) {
       pdf.addPage();
       drawPageHeader();
-      y = 36;
+      y = 29;
       return true;
     }
     return false;
@@ -337,19 +318,35 @@ async function exportPunchListPdf(report: GeneratedReport): Promise<Blob> {
     pdf.setLineWidth(0.3);
     pdf.line(marginX, 276, marginX + contentW, 276);
 
-    pdf.setFontSize(8.5);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("IDR M&M", marginX, 281);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(113, 113, 122);
-    pdf.text("Generated with IDR M&M", marginX + 15, 281);
-
-    pdf.text("Printed version is uncontrolled", marginX + contentW / 2, 280, { align: "center" });
-    pdf.text(`Page ${page} of ${totalPages}`, marginX + contentW / 2, 284, { align: "center" });
-
-    pdf.text("This PDF was created at", marginX + contentW, 280, { align: "right" });
-    pdf.text(safePdfText(pdfCreatedTimestamp), marginX + contentW, 284, { align: "right" });
+    pdf.setFontSize(8);
+    const footerColumns = [
+      { label: "Prepared By:", value: report.metadata?.preparedBy || "Authorized user", x: marginX, align: "left" as const },
+      { label: "Project:", value: report.project, x: marginX + contentW / 2, align: "center" as const },
+      { label: "Form created:", value: formCreatedTimestamp, x: marginX + contentW, align: "right" as const },
+    ];
+    for (const column of footerColumns) {
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(24, 24, 27);
+      if (column.align === "right") {
+        pdf.text(column.label, column.x, 280, { align: column.align });
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(113, 113, 122);
+        pdf.text(pdf.splitTextToSize(safePdfText(column.value), contentW / 3 - 5), column.x, 284, { align: column.align });
+      } else {
+        const labelWidth = pdf.getTextWidth(column.label) + 1;
+        pdf.setFont("helvetica", "normal");
+        const lines = pdf.splitTextToSize(safePdfText(column.value), contentW / 3 - 5 - labelWidth) as string[];
+        const width = labelWidth + Math.max(...lines.map((line) => pdf.getTextWidth(line)));
+        const startX = column.align === "center" ? column.x - width / 2 : column.x;
+        pdf.setFont("helvetica", "bold");
+        pdf.text(column.label, startX, 280);
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(113, 113, 122);
+        pdf.text(lines, startX + labelWidth, 280);
+      }
+    }
+    pdf.setFontSize(7);
+    pdf.text(`Page ${page} of ${totalPages}`, marginX + contentW / 2, 294, { align: "center" });
   }
 
   return pdf.output("blob");
@@ -396,65 +393,46 @@ export async function exportGeneratedReport(report: GeneratedReport, format: "pd
   const pageBottom = 268;
 
   const formCreatedTimestamp = formatReportTimestamp(report.metadata?.startDate ?? `${report.asOf}T00:00:00+08:00`);
-  const pdfCreatedTimestamp = formatReportTimestamp(new Date());
 
   const drawPageHeader = () => {
     try {
-      pdf.addImage(`data:image/png;base64,${LOGO_BASE64}`, "PNG", marginX, 7.5, 38, 18.25);
+      pdf.addImage(`data:image/png;base64,${LOGO_BASE64}`, "PNG", marginX, 10.7, 29.04, 7.875);
     } catch {
       pdf.setFont("times", "bold");
-      pdf.setFontSize(18);
+      pdf.setFontSize(14);
       pdf.setTextColor(24, 24, 27);
       pdf.text("IDR M&M", marginX, 19);
     }
 
-    // Column 1
     pdf.setFontSize(8);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("Organisation:", marginX + 43, 13);
-    pdf.setFont("helvetica", "normal");
     pdf.setTextColor(39, 39, 42);
-    pdf.text("IDR M&M Construction", marginX + 64, 13);
-
+    const headerX = marginX + 34.85;
+    for (const [index, [label, value]] of [
+      ["Organisation:", "IDR M&M Construction"],
+      ["Address:", "D. Mariano St., Concepcion Uno, Marikina City"],
+    ].entries()) {
+      pdf.setFont("helvetica", "bold");
+      pdf.text(label, headerX, 12.9 + index * 4.96);
+      const valueX = headerX + pdf.getTextWidth(label) + 2;
+      pdf.setFont("helvetica", "normal");
+      pdf.text(pdf.splitTextToSize(value, marginX + contentW - 59 - valueX), valueX, 12.9 + index * 4.96);
+    }
+    pdf.setFont("helvetica", "normal");
+    const contact = "+63 967 217 3481";
+    const contactX = marginX + contentW - pdf.getTextWidth(contact);
+    pdf.text(contact, contactX, 12.9);
     pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("Project:", marginX + 43, 18);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(39, 39, 42);
-    const projClipped = (pdf.splitTextToSize(safePdfText(report.project), 52) as string[])[0] || "";
-    pdf.text(projClipped, marginX + 64, 18);
-
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("Prepared By:", marginX + 43, 23);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(39, 39, 42);
-    const preparedBy = report.metadata?.preparedBy || "Authorized user";
-    const prepClipped = (pdf.splitTextToSize(safePdfText(preparedBy), 48) as string[])[0] || "";
-    pdf.text(prepClipped, marginX + 64, 23);
-
-    // Column 2
-    const formCreatedText = safePdfText(formCreatedTimestamp);
-    pdf.setFont("helvetica", "normal");
-    const formCreatedValueWidth = pdf.getTextWidth(formCreatedText);
-    const formCreatedValueX = marginX + contentW - formCreatedValueWidth;
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("Form created:", formCreatedValueX - pdf.getTextWidth("Form created:") - 2, 13);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(39, 39, 42);
-    pdf.text(formCreatedText, formCreatedValueX, 13);
+    pdf.text("Contact Number:", contactX - pdf.getTextWidth("Contact Number:") - 2, 12.9);
 
     // Horizontal black divider line with lessened gap
     pdf.setDrawColor(24, 24, 27);
     pdf.setLineWidth(0.35);
-    pdf.line(marginX, 28, marginX + contentW, 28);
+    pdf.line(marginX, 21, marginX + contentW, 21);
   };
 
   drawPageHeader();
 
-  let y = 36;
+  let y = 29;
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(16);
   pdf.setTextColor(24, 24, 27);
@@ -465,7 +443,7 @@ export async function exportGeneratedReport(report: GeneratedReport, format: "pd
     if (y + neededHeight > pageBottom) {
       pdf.addPage();
       drawPageHeader();
-      y = 36;
+      y = 29;
       return true;
     }
     return false;
@@ -695,19 +673,35 @@ export async function exportGeneratedReport(report: GeneratedReport, format: "pd
     pdf.setLineWidth(0.3);
     pdf.line(marginX, 276, marginX + contentW, 276);
 
-    pdf.setFontSize(8.5);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(24, 24, 27);
-    pdf.text("IDR M&M", marginX, 281);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(113, 113, 122);
-    pdf.text("Generated with IDR M&M", marginX + 15, 281);
-
-    pdf.text("Printed version is uncontrolled", marginX + contentW / 2, 280, { align: "center" });
-    pdf.text(`Page ${page} of ${totalPages}`, marginX + contentW / 2, 284, { align: "center" });
-
-    pdf.text("This PDF was created at", marginX + contentW, 280, { align: "right" });
-    pdf.text(safePdfText(pdfCreatedTimestamp), marginX + contentW, 284, { align: "right" });
+    pdf.setFontSize(8);
+    const footerColumns = [
+      { label: "Prepared By:", value: report.metadata?.preparedBy || "Authorized user", x: marginX, align: "left" as const },
+      { label: "Project:", value: report.project, x: marginX + contentW / 2, align: "center" as const },
+      { label: "Form created:", value: formCreatedTimestamp, x: marginX + contentW, align: "right" as const },
+    ];
+    for (const column of footerColumns) {
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(24, 24, 27);
+      if (column.align === "right") {
+        pdf.text(column.label, column.x, 280, { align: column.align });
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(113, 113, 122);
+        pdf.text(pdf.splitTextToSize(safePdfText(column.value), contentW / 3 - 5), column.x, 284, { align: column.align });
+      } else {
+        const labelWidth = pdf.getTextWidth(column.label) + 1;
+        pdf.setFont("helvetica", "normal");
+        const lines = pdf.splitTextToSize(safePdfText(column.value), contentW / 3 - 5 - labelWidth) as string[];
+        const width = labelWidth + Math.max(...lines.map((line) => pdf.getTextWidth(line)));
+        const startX = column.align === "center" ? column.x - width / 2 : column.x;
+        pdf.setFont("helvetica", "bold");
+        pdf.text(column.label, startX, 280);
+        pdf.setFont("helvetica", "normal");
+        pdf.setTextColor(113, 113, 122);
+        pdf.text(lines, startX + labelWidth, 280);
+      }
+    }
+    pdf.setFontSize(7);
+    pdf.text(`Page ${page} of ${totalPages}`, marginX + contentW / 2, 294, { align: "center" });
   }
 
   return pdf.output("blob");

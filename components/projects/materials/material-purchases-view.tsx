@@ -2,6 +2,9 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import { RequiredMark } from "@/components/ui/required-mark";
+import { ProjectWriteButton } from "@/components/projects/project-access-context";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -85,7 +88,7 @@ function Field({
     <div className="flex min-w-0 flex-col gap-1.5">
       <label htmlFor={htmlFor} className="text-sm font-medium text-zinc-900">
         {label}
-        {required && <span className="ml-0.5 text-red-500">*</span>}
+        {required && <RequiredMark />}
       </label>
       {children}
     </div>
@@ -267,7 +270,7 @@ export function MaterialPurchasesView({
             {view === "purchases" ? `${rows.length} ${rows.length === 1 ? "purchase" : "purchases"}` : `${stocks.length} ${stocks.length === 1 ? "material" : "materials"}`}
           </span>
         </div>
-        <button
+        <ProjectWriteButton
           type="button"
           onClick={() => {
             setPurchaseDate(new Date().toISOString().slice(0, 10));
@@ -279,7 +282,7 @@ export function MaterialPurchasesView({
         >
           <Plus className="size-4" />
           Record Purchase
-        </button>
+        </ProjectWriteButton>
       </div>
 
       {error && !openModal && (
@@ -291,7 +294,7 @@ export function MaterialPurchasesView({
       <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
         <div className="border-b border-zinc-200 px-4 py-3"><ViewMenu views={PURCHASE_VIEWS} value={view} onChange={setView} /></div>
         {view === "stocks" ? (
-          stocks.length === 0 ? <p className="py-10 text-center text-sm text-zinc-400">No material stock movements recorded yet.</p> :
+          stocks.length === 0 ? <EmptyState className="py-10 text-center text-sm text-zinc-400">No material stock movements recorded yet.</EmptyState> :
           <div className="overflow-x-auto"><table className="w-full min-w-[56rem] text-left text-sm">
             <thead className="border-b border-zinc-200 bg-zinc-50 text-xs font-medium text-zinc-500"><tr>
               <th className="px-5 py-3">Material</th><th className="px-4 py-3">Unit</th>
@@ -318,9 +321,11 @@ export function MaterialPurchasesView({
               </tr>;
             })}</tbody></table></div>
         ) : rows.length === 0 ? (
-          <p className="py-10 text-center text-sm text-zinc-400">
-            {loading ? "Loading purchases…" : "No material purchases recorded yet."}
-          </p>
+          loading ? (
+            <p className="py-10 text-center text-sm text-zinc-400">Loading purchases…</p>
+          ) : (
+            <EmptyState className="py-10">No material purchases recorded yet.</EmptyState>
+          )
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[50rem] text-left text-sm">
@@ -387,7 +392,7 @@ export function MaterialPurchasesView({
                         )}
                       </td>
                       <td className="px-4 py-3.5 text-right whitespace-nowrap">
-                        <button
+                        <ProjectWriteButton
                           type="button"
                           disabled={busyId === r.id}
                           onClick={() => handleDelete(r.id)}
@@ -395,7 +400,7 @@ export function MaterialPurchasesView({
                           className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
                         >
                           <Trash2 className="size-4" />
-                        </button>
+                        </ProjectWriteButton>
                       </td>
                     </tr>
                   );
@@ -446,7 +451,7 @@ export function MaterialPurchasesView({
                 htmlFor={`${formId}-date`}
                 className="whitespace-nowrap text-sm font-medium text-zinc-700"
               >
-                Date <span className="text-red-500">*</span>
+                Date <RequiredMark />
               </label>
               <DatePicker
                 id={`${formId}-date`}
@@ -659,14 +664,14 @@ export function MaterialPurchasesView({
           >
             Cancel
           </button>
-          <button
+          <ProjectWriteButton
             type="submit"
             form={formId}
             disabled={busy}
             className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {busy ? "Saving…" : "Save Purchase"}
-          </button>
+          </ProjectWriteButton>
         </ModalFooter>
       </Modal>
 

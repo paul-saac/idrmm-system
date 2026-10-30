@@ -1,5 +1,6 @@
 "use client";
 
+import { ProjectWriteButton } from "@/components/projects/project-access-context";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { usePortal } from "@/components/portal/portal-context";
@@ -40,6 +41,15 @@ const types = [
   { id: "quality", label: "Quality assurance and inspection sign-off reports", description: "Recorded inspections, test results, linked certificates, and external inspector decisions." },
   { id: "safety", label: "Safety and incident closeout report", description: "Overall safety performance and recorded accident or incident reviews during the project.", requires: "Verified safety and incident records. Missing records cannot establish zero accidents." },
 ] as const;
+
+function SectionsLegend() {
+  return (
+    <legend className="mb-3 text-sm text-zinc-500">
+      Include sections{" "}
+      <span className="text-xs">(Select the sections to include; choose at least one.)</span>
+    </legend>
+  );
+}
 
 export function ReportBuilder({ data, projects }: { data: CloseoutReportData; projects: ProjectOption[] }) {
   const router = useRouter();
@@ -138,9 +148,9 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-semibold">{types.find(t => t.id === type)?.label}</h2>
             {type === "full" && (
-              <button className={button} disabled={busy || !data.storageAvailable} onClick={() => setEditing(true)}>
+              <ProjectWriteButton className={button} disabled={busy || !data.storageAvailable} onClick={() => setEditing(true)}>
                 <Pencil className="size-3.5" />Edit closeout details
-              </button>
+              </ProjectWriteButton>
             )}
             {type === "punch" && (
               <button className={button} disabled={busy || !data.punchListAvailable} onClick={() => setPunchEditing(true)}>
@@ -256,7 +266,7 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
 
             {type === "full" && (
               <fieldset>
-                <legend className="mb-3 text-sm text-zinc-500">Include sections</legend>
+                <SectionsLegend />
                 <div className="grid gap-2.5 sm:grid-cols-2">
                   {REPORT_SECTIONS.map(s => (
                     <label key={s.id} className="flex items-center gap-2 text-xs sm:text-sm text-zinc-800">
@@ -278,7 +288,7 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
 
             {type === "as-built" && (
               <fieldset>
-                <legend className="mb-3 text-sm text-zinc-500">Include sections</legend>
+                <SectionsLegend />
                 <div className="space-y-3">
                   {AS_BUILT_SECTIONS.map(s => (
                     <label key={s.id} className="flex items-center gap-2 text-sm">
@@ -300,7 +310,7 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
 
             {type === "financial" && (
               <fieldset>
-                <legend className="mb-3 text-sm text-zinc-500">Include sections</legend>
+                <SectionsLegend />
                 <div className="grid gap-2.5 sm:grid-cols-2">
                   {FINANCIAL_REPORT_SECTIONS.map(section => (
                     <label key={section.id} className="flex items-center gap-2 text-xs text-zinc-800 sm:text-sm">

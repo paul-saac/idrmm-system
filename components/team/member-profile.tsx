@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { AvailabilityBadge } from "@/components/team/availability";
 import { WEEKDAY_LABELS, formatHours } from "@/lib/workers/schedule";
 import { toIsoDate } from "@/lib/task-progress/calculate";
@@ -172,7 +173,7 @@ export function MemberProfile({
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-semibold text-zinc-900">Assignments</h3>
         {open.length + ended.length === 0 ? (
-          <p className="text-sm text-zinc-400">No assignments yet.</p>
+          <EmptyState compact className="text-sm text-zinc-400">No assignments yet.</EmptyState>
         ) : (
           <AssignmentsTable assignments={[...open, ...ended]} />
         )}

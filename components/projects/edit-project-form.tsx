@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useId, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { updateProject, type ProjectActionState } from "@/lib/projects/actions";
@@ -34,14 +35,11 @@ export function EditProjectForm({
   projectManagers,
   foremen,
   onSuccess,
-  onRequestDelete,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
   foremen: AccountRow[];
   onSuccess?: () => void;
-  /** Opens the Delete Project confirmation (see project-detail-view.tsx). */
-  onRequestDelete?: () => void;
 }) {
   const boundAction = updateProject.bind(null, project.id);
   const [state, formAction, pending] = useActionState(
@@ -52,7 +50,6 @@ export function EditProjectForm({
   // Holidays aren't set here — they're Holiday events on the Gantt
   // chart's Calendar view (0055_project_events.sql).
   const [workingDays, setWorkingDays] = useState<number[]>(project.workingDays);
-  const [confirmCompletion, setConfirmCompletion] = useState(project.status === "completed" && Boolean(project.actualEndDate));
 
   useEffect(() => {
     if (state.success) {
@@ -77,8 +74,7 @@ export function EditProjectForm({
           htmlFor="edit-projectName"
           className="text-sm font-medium text-zinc-900"
         >
-          Project name
-        </label>
+          Project name<RequiredMark /></label>
         <input
           id="edit-projectName"
           name="projectName"
@@ -148,7 +144,6 @@ export function EditProjectForm({
           id="edit-actualEndDate"
           name="actualEndDate"
           ariaLabel="Actual end date"
-          disabled={!confirmCompletion}
           defaultValue={project.actualEndDate ?? ""}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
@@ -173,27 +168,12 @@ export function EditProjectForm({
         />
       </div>
 
-      <div className="flex flex-col gap-1.5 sm:col-span-2">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-900">
-          <input
-            type="checkbox"
-            name="confirmCompletion"
-            checked={confirmCompletion}
-            onChange={(event) => setConfirmCompletion(event.target.checked)}
-            className="size-4 accent-zinc-800"
-          />
-          Confirm project completion
-        </label>
-        <p className="text-xs text-zinc-500">All tasks must be 100% complete from saved logs. Enter the actual end date above; early completion is allowed.</p>
-      </div>
-
       <div className="flex flex-col gap-1.5">
         <label
           htmlFor="edit-projectManagerId"
           className="text-sm font-medium text-zinc-900"
         >
-          Project Manager
-        </label>
+          Project Manager<RequiredMark /></label>
         <div className="relative">
           <select
             id="edit-projectManagerId"
@@ -224,8 +204,7 @@ export function EditProjectForm({
           htmlFor="edit-foremanId"
           className="text-sm font-medium text-zinc-900"
         >
-          Foreman
-        </label>
+          Foreman<RequiredMark /></label>
         <div className="relative">
           <select
             id="edit-foremanId"
@@ -291,15 +270,6 @@ export function EditProjectForm({
       )}
 
       <div className="mt-auto flex items-center justify-end gap-3">
-        {onRequestDelete && (
-          <button
-            type="button"
-            onClick={onRequestDelete}
-            className="cursor-pointer rounded border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
-          >
-            Delete
-          </button>
-        )}
         <button
           type="submit"
           form={formId}

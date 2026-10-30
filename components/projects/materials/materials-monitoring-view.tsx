@@ -1,5 +1,7 @@
 "use client";
 
+import { ProjectWriteButton } from "@/components/projects/project-access-context";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Fragment, useActionState, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
@@ -145,7 +147,7 @@ function DeleteMaterialButton({
           }
         }}
       >
-        <button
+        <ProjectWriteButton
           type="submit"
           disabled={pending}
           aria-label="Delete stock record"
@@ -153,7 +155,7 @@ function DeleteMaterialButton({
           className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Trash2 className="size-3.5" />
-        </button>
+        </ProjectWriteButton>
       </form>
       {state?.error && (
         <span
@@ -318,7 +320,7 @@ export function MaterialsMonitoringView({
           )}
         </div>
         {view === "materials" ? (
-          <button
+          <ProjectWriteButton
             type="button"
             onClick={() => setFormModal({ mode: "add" })}
             title="Add a stock record"
@@ -326,16 +328,16 @@ export function MaterialsMonitoringView({
           >
             <Plus className="size-4" />
             Add Material
-          </button>
+          </ProjectWriteButton>
         ) : (
-          <button
+          <ProjectWriteButton
             type="button"
             onClick={() => setRequestOpen(true)}
             className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-zinc-800"
           >
             <Plus className="size-4" />
             Request Material
-          </button>
+          </ProjectWriteButton>
         )}
       </div>
 
@@ -435,11 +437,11 @@ export function MaterialsMonitoringView({
 
         {view === "requests" ? (
           requestsShown.length === 0 ? (
-            <p className="py-10 text-center text-sm text-zinc-400">
+            <EmptyState className="py-10 text-center text-sm text-zinc-400">
               {requests.length === 0
                 ? "No material requests yet."
                 : "No material requests match your filters."}
-            </p>
+            </EmptyState>
           ) : (
             <MaterialRequestsTable
               requests={requestsShown}
@@ -449,11 +451,11 @@ export function MaterialsMonitoringView({
             />
           )
         ) : filtered.length === 0 ? (
-          <p className="py-10 text-center text-sm text-zinc-400">
+          <EmptyState className="py-10 text-center text-sm text-zinc-400">
             {records.length === 0
               ? "No materials yet — they show here once they're planned in a task's Material Breakdown, used in its progress, or added as stock."
               : "No materials match your filters."}
-          </p>
+          </EmptyState>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[60rem] text-left text-sm">
@@ -674,7 +676,7 @@ export function MaterialsMonitoringView({
                                           {STOCK_STATUS[material.status].label}
                                         </span>
                                         <span className="ml-auto flex items-center gap-1">
-                                          <button
+                                          <ProjectWriteButton
                                             type="button"
                                             onClick={() => setFormModal({ mode: "edit", material })}
                                             aria-label="View stock record"
@@ -682,7 +684,7 @@ export function MaterialsMonitoringView({
                                             className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
                                           >
                                             <Eye className="size-3.5" />
-                                          </button>
+                                          </ProjectWriteButton>
                                           <DeleteMaterialButton
                                             materialId={material.id}
                                             projectId={projectId}

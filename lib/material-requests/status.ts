@@ -14,9 +14,7 @@ import type { MaterialRequestStatus } from "@/lib/material-requests/data";
  * Plain sync helper, deliberately kept out of actions.ts — that file is
  * "use server", and Next.js requires every export from a "use server"
  * file to be an async Server Action, which this isn't (it does no I/O).
- * Shared between lib/material-requests/actions.ts (editing a request's
- * own items) and lib/daily-logs/actions.ts (crediting fulfillment when a
- * linked Material Procurement Log entry is approved).
+ * Used when request item fulfillment is updated.
  */
 export function deriveMaterialRequestStatus(
   currentStatus: MaterialRequestStatus,

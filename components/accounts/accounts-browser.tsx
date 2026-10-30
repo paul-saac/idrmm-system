@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
 import { useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Search, UserCheck, UserX } from "lucide-react";
@@ -181,9 +182,9 @@ export function AccountsBrowser({
 
       <div className="overflow-hidden rounded border border-zinc-200 bg-white">
       {filtered.length === 0 ? (
-        <p className="py-10 text-center text-sm text-zinc-400">
+        <EmptyState className="py-10 text-center text-sm text-zinc-400">
           {accounts.length === 0 ? "No users yet." : "No users match."}
-        </p>
+        </EmptyState>
       ) : (
         <AccountsTable
           accounts={filtered}

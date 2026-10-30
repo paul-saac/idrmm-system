@@ -1,5 +1,7 @@
 "use client";
 
+import { EmptyState } from "@/components/ui/empty-state";
+
 import { useMemo, useState } from "react";
 import { Package, Search, X } from "lucide-react";
 import { Modal, ModalFooter } from "@/components/ui/modal";
@@ -74,13 +76,13 @@ export function MaterialStockPickerModal({
 
         <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
           {filteredStocks.length === 0 ? (
-            <div className="py-10 text-center text-sm text-zinc-400">
+            <EmptyState compact className="py-10">
               {stocks.length === 0 ? (
                 <p>No material stock movements recorded yet.</p>
               ) : (
                 <p>No materials matching &ldquo;{search}&rdquo;</p>
               )}
-            </div>
+            </EmptyState>
           ) : (
             <div className="max-h-[50vh] overflow-x-auto overflow-y-auto">
               <table className="w-full min-w-[38rem] text-left text-sm">

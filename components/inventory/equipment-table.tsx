@@ -140,6 +140,7 @@ export function EquipmentTable({
   onCheck,
   onEdit,
   onAssign,
+  onDelete,
   basePath = "/admin",
   readOnly = false,
 }: {
@@ -149,6 +150,7 @@ export function EquipmentTable({
   onCheck: (ids: number[], checked: boolean) => void;
   onEdit: (equipment: EquipmentRow) => void;
   onAssign: (equipment: EquipmentRow) => void;
+  onDelete?: (equipment: EquipmentRow) => void;
   basePath?: string;
   readOnly?: boolean;
 }) {
@@ -271,10 +273,22 @@ export function EquipmentTable({
                         >
                           <EditIcon className="size-3.5" />
                         </button>
-                        <DeleteEquipmentButton
-                          equipmentId={item.id}
-                          equipmentName={item.name}
-                        />
+                        {onDelete ? (
+                          <button
+                            type="button"
+                            onClick={() => onDelete(item)}
+                            title="Delete equipment"
+                            aria-label={`Delete ${item.name}`}
+                            className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        ) : (
+                          <DeleteEquipmentButton
+                            equipmentId={item.id}
+                            equipmentName={item.name}
+                          />
+                        )}
                       </div>
                     </td>
                   )}

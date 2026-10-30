@@ -223,14 +223,91 @@ export async function updateCategory(
     }
 
     const supabase = await createClient();
-    const { error } = await supabase
+    const { data: savedCategory, error } = await supabase
       .from("estimate_categories")
       .update(update)
-      .eq("id", categoryId);
+      .eq("id", categoryId)
+      .eq("project_id", projectId)
+      .select("id")
+      .maybeSingle();
 
     if (error) {
       logSupabaseError("[updateCategory] Supabase update failed", error);
-      return { error: "Could not save changes. Please try again." };
+      if (["42703", "PGRST204"].includes(error.code) && error.message.includes("is_milestone")) {
+        return { error: "Standalone milestone support is missing or out of date. Run migration 0102_repair_standalone_category_milestones.sql in Supabase SQL Editor, then retry." };
+      }
+      if (error.code === "42501") {
+        return { error: "You do not have permission to edit this main task. Check your project access." };
+      }
+      return { error: `Could not save changes${error.code ? ` (${error.code})` : ""}. Please try again.` };
+    }
+    if (!savedCategory) return { error: "This main task was not found in this project, or your edit access was removed. Reopen the project and retry." };
+
+    if (formData.has("successorCategoryId")) {
+      const successorCategoryId = parseOptionalId(
+        formData.get("successorCategoryId")
+      );
+      if (successorCategoryId === categoryId) {
+        return { error: "A task can't be its own successor." };
+      }
+
+      const { data: currentSuccessors, error: selectSuccessorError } =
+        await supabase
+          .from("estimate_categories")
+          .select("id")
+          .eq("project_id", projectId)
+          .eq("predecessor_category_id", categoryId);
+
+      const isMissingPredecessorCol =
+        selectSuccessorError &&
+        ["42703", "PGRST204"].includes(selectSuccessorError.code);
+
+      if (!isMissingPredecessorCol) {
+        const toClear = (currentSuccessors ?? [])
+          .map((row) => row.id)
+          .filter((id) => id !== successorCategoryId);
+
+        if (toClear.length > 0) {
+          const { error: clearError } = await supabase
+            .from("estimate_categories")
+            .update({ predecessor_category_id: null })
+            .in("id", toClear);
+          if (clearError) {
+            logSupabaseError(
+              "[updateCategory] Supabase successor-clear failed",
+              clearError
+            );
+            return {
+              error: "Could not update the successor link. Please try again.",
+            };
+          }
+        }
+
+        const alreadyLinked = (currentSuccessors ?? []).some(
+          (row) => row.id === successorCategoryId
+        );
+        if (successorCategoryId !== null && !alreadyLinked) {
+          const { error: linkError } = await supabase
+            .from("estimate_categories")
+            .update({ predecessor_category_id: categoryId })
+            .eq("id", successorCategoryId)
+            .eq("project_id", projectId);
+          if (linkError) {
+            logSupabaseError(
+              "[updateCategory] Supabase successor-link failed",
+              linkError
+            );
+            return {
+              error: "Could not update the successor link. Please try again.",
+            };
+          }
+        }
+      } else if (successorCategoryId !== null) {
+        return {
+          error:
+            "Standalone successor support is missing. Run migration 0103_estimate_category_predecessor.sql in Supabase SQL Editor, then retry.",
+        };
+      }
     }
 
     await recordGanttCheckpoint(supabase, projectId, profile.id);

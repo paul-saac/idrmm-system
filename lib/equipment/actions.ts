@@ -280,6 +280,9 @@ export async function assignEquipment(
   if (!projectId) {
     return { error: "Select a project to assign this equipment to." };
   }
+  if (!await requireProjectAccess(projectId)) {
+    return { error: "This project is archived or you do not have edit access." };
+  }
 
   const supabase = await createClient();
 

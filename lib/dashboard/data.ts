@@ -1,12 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { listProjects, type ProjectRow } from "@/lib/projects/data";
 import { getCostEstimate, type CostCategory } from "@/lib/cost-estimate/data";
-import {
-  listEquipmentExpenses,
-  listLaborExpenses,
-  listMaterialExpenses,
-  listOtherExpenses,
-} from "@/lib/expenses/data";
+import { sumCosts } from "@/lib/task-progress/calculate";
 import { listEquipment } from "@/lib/equipment/data";
 import { listAssignments, listWorkers } from "@/lib/workers/data";
 import {
@@ -30,8 +25,7 @@ export type DashboardProject = {
   expected: number | null;
   scheduleStatus: ScheduleStatus | null;
   budget: number | null;
-  /** The four expense ledgers, the same "Actual Expense" the project's
-   * own Overview tab shows. */
+  /** Saved task/category costs, matching the project's Cost overview. */
   spent: number;
   remaining: number | null;
 };
@@ -116,18 +110,9 @@ function projectProgress(categories: CostCategory[], project: ProjectRow, today:
 }
 
 async function summarizeProject(project: ProjectRow, today: Date): Promise<DashboardProject> {
-  const [estimate, labor, material, equipment, other] = await Promise.all([
-    getCostEstimate(project.id),
-    listLaborExpenses(project.id),
-    listMaterialExpenses(project.id),
-    listEquipmentExpenses(project.id),
-    listOtherExpenses(project.id),
-  ]);
+  const estimate = await getCostEstimate(project.id);
   const { actual, expected } = projectProgress(estimate.categories, project, today);
-  const spent = [labor, material, equipment, other].reduce(
-    (sum, groups) => sum + groups.reduce((s, group) => s + group.groupTotal, 0),
-    0
-  );
+  const spent = sumCosts(estimate.summary.costsToDate);
   return {
     id: project.id,
     name: project.name,
@@ -167,7 +152,7 @@ export async function getDashboardData(): Promise<DashboardData> {
       .select("id, mr_no, request_date, priority, status, requested_by, project_id, created_at")
       .order("created_at", { ascending: false }),
     supabase
-      .from("equipment_requisitions")
+      .from("equipment_requests")
       .select("id, er_no, request_date, priority, status, requested_by, project_id, created_at")
       .order("created_at", { ascending: false }),
     supabase
@@ -223,8 +208,8 @@ export async function getDashboardData(): Promise<DashboardData> {
   const taskById = new Map((tasks ?? []).map((t) => [t.id, t]));
   const categoryById = new Map((categories ?? []).map((c) => [c.id, c]));
 
-  const pendingMaterial = (materialRequests ?? []).filter((r) => r.status === "submitted");
-  const pendingEquipment = (equipmentRequests ?? []).filter((r) => r.status === "submitted");
+  const pendingMaterial = (materialRequests ?? []).filter((r) => projectName.has(r.project_id) && r.status === "submitted");
+  const pendingEquipment = (equipmentRequests ?? []).filter((r) => projectName.has(r.project_id) && r.status === "submitted");
   const pendingRequests: PendingRequest[] = [
     ...pendingMaterial.map((r) => ({
       kind: "material" as const,
@@ -256,7 +241,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   const activity: ActivityItem[] = [];
   for (const entry of taskEntries ?? []) {
     const task = taskById.get(entry.task_id);
-    if (!task) continue;
+    if (!task || !projectName.has(task.project_id)) continue;
     activity.push({
       key: `task-progress-${entry.task_id}-${entry.created_at}`,
       kind: "progress",
@@ -270,7 +255,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   }
   for (const entry of categoryEntries ?? []) {
     const category = categoryById.get(entry.category_id);
-    if (!category) continue;
+    if (!category || !projectName.has(category.project_id)) continue;
     activity.push({
       key: `category-progress-${entry.category_id}-${entry.created_at}`,
       kind: "progress",
@@ -283,6 +268,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     });
   }
   for (const request of (materialRequests ?? []).slice(0, ACTIVITY_SIZE)) {
+    if (!projectName.has(request.project_id)) continue;
     activity.push({
       key: `material-request-${request.id}`,
       kind: "material_request",
@@ -295,6 +281,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     });
   }
   for (const request of (equipmentRequests ?? []).slice(0, ACTIVITY_SIZE)) {
+    if (!projectName.has(request.project_id)) continue;
     activity.push({
       key: `equipment-request-${request.id}`,
       kind: "equipment_request",

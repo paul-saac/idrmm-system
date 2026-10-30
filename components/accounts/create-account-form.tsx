@@ -1,5 +1,6 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
 import { ChevronDown } from "lucide-react";
 import { useActionState, useEffect, useRef } from "react";
 import { createAccount, type AccountActionState } from "@/lib/accounts/actions";
@@ -35,8 +36,7 @@ export function CreateAccountForm({
     >
       <div className="flex flex-col gap-1.5">
         <label htmlFor="firstName" className="text-sm font-medium text-zinc-900">
-          First name
-        </label>
+          First name<RequiredMark /></label>
         <input
           id="firstName"
           name="firstName"
@@ -47,8 +47,7 @@ export function CreateAccountForm({
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="lastName" className="text-sm font-medium text-zinc-900">
-          Last name
-        </label>
+          Last name<RequiredMark /></label>
         <input
           id="lastName"
           name="lastName"
@@ -59,8 +58,7 @@ export function CreateAccountForm({
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="email" className="text-sm font-medium text-zinc-900">
-          Email
-        </label>
+          Email<RequiredMark /></label>
         <input
           id="email"
           name="email"
@@ -75,8 +73,7 @@ export function CreateAccountForm({
       ) : (
         <div className="flex flex-col gap-1.5">
           <label htmlFor="role" className="text-sm font-medium text-zinc-900">
-            Role
-          </label>
+            Role<RequiredMark /></label>
           <div className="relative">
             <select
               id="role"

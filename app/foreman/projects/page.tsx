@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Projects" };
 // projects assigned to them. No project manager/foreman lists — those only
 // feed the Add Project form, which foremen don't get.
 export default async function ForemanProjectsPage() {
-  const projects = await listProjects();
+  const projects = await listProjects({ includeArchived: true });
 
   return (
     <>

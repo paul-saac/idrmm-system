@@ -1,5 +1,6 @@
 "use client";
 
+import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -17,6 +18,8 @@ import {
   Undo2,
 } from "lucide-react";
 import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
+import { ProjectInsightsPanel } from "./project-insights-panel";
+import type { ProjectInsightDestination } from "@/lib/project-insights/types";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { GanttDateInput } from "./gantt-date-input";
@@ -82,6 +85,12 @@ import {
   ZERO_COSTS,
   type ScheduleStatus,
 } from "@/lib/task-progress/calculate";
+
+type OptimisticScheduleDeletion = {
+  taskIds: number[];
+  categoryIds: number[];
+  pending: boolean;
+};
 
 // Summing decimal weights leaves float noise (99.99 + 0.010000000000005116);
 // two decimals is all a weight is ever shown to.
@@ -309,12 +318,8 @@ const VIEW_MODE: Record<TimelineView, ViewMode> = {
   year: ViewMode.Year,
 };
 
-// Baseline column width per zoom level — the actual width used is
-// whichever is wider between this and "however much it takes to fill
-// the chart's available width" (see effectiveColumnWidth below), so a
-// short project never leaves a dead strip of blank space to the right
-// of its bars, and a long one still falls back to a sane, readable
-// minimum and scrolls horizontally instead of over-compressing.
+// Day keeps a fixed width as tasks are added or their dates change.
+// Coarser zoom levels can expand these minimum widths to fill the chart.
 const BASE_COLUMN_WIDTH: Record<TimelineView, number> = {
   day: 60,
   week: 50,
@@ -633,11 +638,14 @@ function usePendingOverrides<T>(categories: CostCategory[]) {
  * — same as the SVAR build, this component still computes each phase's
  * aggregate start/end/progress itself from its tasks.
  */
+export type { ProjectInsightDestination } from "@/lib/project-insights/types";
+
 export function GanttChartView({
   projectId,
   projectName,
   categories,
   projectStartDate,
+  projectEndDate,
   workingDays,
   holidays,
   events,
@@ -656,20 +664,20 @@ export function GanttChartView({
   onOpenMaterialBreakdown,
   onImportBom,
   onNavigateToCostEstimate,
+  onNavigateInsight,
   materialStocks,
 }: {
   projectId: number;
   projectName: string;
-  /** Each task's own percentComplete (see CostTask's own doc comment)
-   * is the sole source of progress here — deliberately not fed by
-   * lib/progress/data.ts's own ProjectProgress (still used elsewhere,
-   * e.g. the Progress Overview tab, entirely unrelated to this view). */
+  /** Actual completion uses saved progress; dates determine Expected only. */
   categories: CostCategory[];
   /** Only ever used as a fallback for a task/phase with no dates of its
    * own yet (see fallbackStart/fillerDate below) — a task's own typed
    * Start/End is otherwise unbounded, see handleTaskDateEdit's own doc
    * comment for why. */
   projectStartDate: string | null;
+  /** Empty timelines cover the project schedule before any work is added. */
+  projectEndDate: string | null;
   /** The project's own working-days setting (lib/projects/data.ts) —
    * which ISO weekdays count toward a task's schedule, same convention
    * computeAutoPercentComplete already uses server-side (lib/task-
@@ -736,6 +744,7 @@ export function GanttChartView({
    * entry point into the identical flow, not a separate one. */
   onImportBom: () => void;
   onNavigateToCostEstimate?: (target: CostNavigateDestination) => void;
+  onNavigateInsight: (destination: ProjectInsightDestination) => void;
   materialStocks?: MaterialStockItem[];
 }) {
   const router = useRouter();
@@ -772,6 +781,8 @@ export function GanttChartView({
   const [editingCategoryId, setEditingCategoryId] = useState<number | null>(
     null
   );
+  const inlineNameDrafts = useRef(new Map<string, { value: string; start: number | null; end: number | null }>());
+  const pendingNameCreations = useRef(new Map<string, Promise<number | undefined>>());
   // Add Phase's own optimistic row — unlike renaming/priority (which
   // patch a field on a row that already exists), a brand new phase has
   // nothing to patch: it doesn't exist client-side until the server
@@ -838,7 +849,7 @@ export function GanttChartView({
     category: CostCategory;
   } | null>(null);
   const activeNewPhase =
-    pendingNewPhase && pendingNewPhase.categoriesAtSet === categories
+    pendingNewPhase && (pendingNewPhase.categoriesAtSet === categories || pendingNewPhase.category.id < 0)
       ? pendingNewPhase.category
       : null;
   // Same idea, one level down — a subtask added via a phase row's own
@@ -852,9 +863,22 @@ export function GanttChartView({
     task: CostTask;
   } | null>(null);
   const activeNewTask =
-    pendingNewTask && pendingNewTask.categoriesAtSet === categories
+    pendingNewTask && (pendingNewTask.categoriesAtSet === categories || pendingNewTask.task.id < 0)
       ? pendingNewTask
       : null;
+  const [optimisticDeletions, setOptimisticDeletions] = useState<OptimisticScheduleDeletion[]>([]);
+  // Keep rows hidden through unrelated refreshes while saving, and until
+  // server data confirms their absence. Then discard the mask so Undo can
+  // restore those IDs normally.
+  const activeDeletions = useMemo(() => optimisticDeletions.filter((deletion) =>
+    deletion.pending || (activeCategoriesOverride ?? categories).some((category) =>
+      deletion.categoryIds.includes(category.id) ||
+      category.tasks.some((task) => deletion.taskIds.includes(task.id))
+    )
+  ), [optimisticDeletions, categories, activeCategoriesOverride]);
+  if (activeDeletions.length !== optimisticDeletions.length) {
+    setOptimisticDeletions(activeDeletions);
+  }
   // `tasks`/`categoryById`/`taskById`/percentCompleteByCategoryId below
   // all read this merged value (a subtask needs `taskById` too, unlike
   // a phase — its own Priority/rename/etc. cells all resolve `task`
@@ -881,8 +905,16 @@ export function GanttChartView({
           : c
       );
     }
+    if (activeDeletions.length > 0) {
+      const categoryIds = new Set(activeDeletions.flatMap((item) => item.categoryIds));
+      const taskIds = new Set(activeDeletions.flatMap((item) => item.taskIds));
+      result = result.filter((category) => !categoryIds.has(category.id)).map((category) => ({
+        ...category,
+        tasks: category.tasks.filter((task) => !taskIds.has(task.id)),
+      }));
+    }
     return result;
-  }, [categories, activeCategoriesOverride, activeNewPhase, activeNewTask]);
+  }, [categories, activeCategoriesOverride, activeNewPhase, activeNewTask, activeDeletions]);
   // Same click-to-rename pattern as editingCategoryId above, just for a
   // subtask's own name cell — its pencil icon's SubtaskForm modal still
   // exists alongside it for everything else (dates, priority, milestone,
@@ -1006,6 +1038,7 @@ export function GanttChartView({
   // view menu, SCHEDULE_VIEWS) — see ProjectCalendarView.
   const [calendarView, setCalendarView] = useState(false);
   const { isAdmin } = usePortal();
+  const canEdit = useProjectCanEdit();
   // The Calendar view's Add event / event chip — a new event on a day,
   // or an existing one to edit. See ProjectEventModalContent.
   const [eventModal, setEventModal] = useState<
@@ -1013,14 +1046,14 @@ export function GanttChartView({
   >(null);
 
   // Delete from a modal's own ⋮ menu (Edit Phase / Edit Task / Edit
-  // Event) — asks first, in a centered ConfirmDialog (see its render at
-  // the bottom), which stays up while the delete runs and shows its error
-  // if it fails.
+  // Event) — asks first. Schedule rows disappear as soon as confirmed;
+  // failures restore them and reopen the confirmation with an error.
   const [pendingDelete, setPendingDelete] = useState<{
     kind: "phase" | "task" | "event" | "selection";
     name: string;
     remove: () => Promise<{ error?: string }>;
     close: () => void;
+    items?: { taskIds: number[]; categoryIds: number[] };
   } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -1042,25 +1075,51 @@ export function GanttChartView({
     kind: "phase" | "task" | "event" | "selection",
     name: string,
     remove: () => Promise<{ error?: string }>,
-    close: () => void
+    close: () => void,
+    items?: { taskIds: number[]; categoryIds: number[] }
   ) {
+    if (!canEdit || deleting) return;
     setDeleteError(null);
-    setPendingDelete({ kind, name, remove, close });
+    setPendingDelete({ kind, name, remove, close, items });
   }
 
   async function runPendingDelete() {
-    if (!pendingDelete) return;
+    if (!pendingDelete || !canEdit || deleting) return;
+    const request = pendingDelete;
+    const deletion = request.items ? { ...request.items, pending: true } : null;
     setDeleting(true);
     setDeleteError(null);
-    const result = await pendingDelete.remove();
-    setDeleting(false);
-    if (result.error) {
-      setDeleteError(result.error);
-      return;
+    if (deletion) {
+      setOptimisticDeletions((previous) => [...previous, deletion]);
+      setPendingDelete(null);
+      if (request.kind !== "selection") request.close();
     }
-    pendingDelete.close();
-    setPendingDelete(null);
-    router.refresh();
+    try {
+      const result = await request.remove();
+      if (result.error) throw new Error(result.error);
+      if (deletion) {
+        setPendingNewPhase((previous) => previous && deletion.categoryIds.includes(previous.category.id) ? null : previous);
+        setPendingNewTask((previous) => previous && (
+          deletion.categoryIds.includes(previous.categoryId) || deletion.taskIds.includes(previous.task.id)
+        ) ? null : previous);
+        setOptimisticDeletions((previous) => previous.map((item) =>
+          item === deletion ? { ...item, pending: false } : item
+        ));
+      }
+      request.close();
+      setPendingDelete(null);
+      router.refresh();
+    } catch (error) {
+      if (deletion) {
+        setOptimisticDeletions((previous) => previous.filter((item) => item !== deletion));
+      }
+      setPendingDelete(request);
+      setDeleteError(error instanceof Error ? error.message : "Could not delete. Please try again.");
+      // A multi-row delete may have partially saved before the failure.
+      router.refresh();
+    } finally {
+      setDeleting(false);
+    }
   }
 
   // A calendar bar opens the same Daily Progress Update a Gantt bar does.
@@ -1119,6 +1178,7 @@ export function GanttChartView({
   // mount, which is exactly what this feature is meant to prevent.
   const [historyReady, setHistoryReady] = useState(false);
   useEffect(() => {
+    if (!canEdit) return;
     let cancelled = false;
     // Background housekeeping — a failed call (e.g. the session changed
     // underneath this tab) must never surface as an error screen.
@@ -1142,6 +1202,7 @@ export function GanttChartView({
   }, []);
 
   async function handleUndo() {
+    if (!canEdit || deleting) return;
     if (!historyReady || !effectiveCanUndo || isUndoRedoPending) return;
     setIsUndoRedoPending(true);
     setScheduleError(null);
@@ -1158,6 +1219,7 @@ export function GanttChartView({
     // undoRedoOverride's own doc comment above for why *both* matter,
     // not just categories.
     if (result.categories) {
+      setOptimisticDeletions([]);
       setUndoRedoOverride({
         categoriesAtSet,
         categories: result.categories,
@@ -1183,6 +1245,7 @@ export function GanttChartView({
   }
 
   async function handleRedo() {
+    if (!canEdit || deleting) return;
     if (!historyReady || !effectiveCanRedo || isUndoRedoPending) return;
     setIsUndoRedoPending(true);
     setScheduleError(null);
@@ -1195,6 +1258,7 @@ export function GanttChartView({
     }
     // Same as handleUndo's own comment above.
     if (result.categories) {
+      setOptimisticDeletions([]);
       setUndoRedoOverride({
         categoriesAtSet,
         categories: result.categories,
@@ -1591,7 +1655,8 @@ export function GanttChartView({
       "selection",
       `${selectedCount} ${selectedCount === 1 ? "task" : "tasks"}`,
       () => deleteScheduleItems(projectId, { taskIds, categoryIds }),
-      () => setSelectedRowIds(new Set())
+      () => setSelectedRowIds(new Set()),
+      { taskIds, categoryIds }
     );
   }
 
@@ -1724,6 +1789,10 @@ export function GanttChartView({
           : nextDay(new Date(Math.max(...childDates.map((d) => d.end.getTime())))),
         progress: percentCompleteByCategoryId.get(category.id) ?? 0,
         hideChildren: collapsedPhaseIds.has(phaseRowId(category.id)),
+        dependencies:
+          category.tasks.length === 0 && category.predecessorCategoryId
+            ? [phaseRowId(category.predecessorCategoryId)]
+            : undefined,
       });
 
       category.tasks.forEach((task, i) => {
@@ -2035,7 +2104,7 @@ export function GanttChartView({
 
   const effectiveColumnWidth = useMemo(() => {
     const base = BASE_COLUMN_WIDTH[view];
-    if (!timelineExtent || containerWidth === 0) return base;
+    if (view === "day" || !timelineExtent || containerWidth === 0) return base;
     const chartAreaWidth =
       containerWidth - (showTaskList ? visiblePanelWidth : 0);
     if (chartAreaWidth <= 0) return base;
@@ -2249,6 +2318,9 @@ export function GanttChartView({
   // wildly different date would stretch the chart's own axis out to
   // include it.
   const fillerDate = projectStartDate ? toDate(projectStartDate) : new Date();
+  const fillerEndDate = effectiveTasks.length === 0 && projectEndDate
+    ? new Date(Math.max(fillerDate.getTime(), toDate(projectEndDate).getTime()))
+    : fillerDate;
   const fillerTasks: GanttTask[] = Array.from(
     { length: fillerTaskCount },
     (_, i) => ({
@@ -2256,7 +2328,7 @@ export function GanttChartView({
       type: "milestone",
       name: "",
       start: fillerDate,
-      end: fillerDate,
+      end: fillerEndDate,
       progress: 0,
       isDisabled: true,
       styles: {
@@ -2271,7 +2343,7 @@ export function GanttChartView({
   // rows always sort after every real one. Kept separate from
   // effectiveTasks/visibleTasks (used everywhere else) so none of that
   // ever has to know filler rows exist.
-  const chartTasks = [...effectiveTasks, ...fillerTasks];
+  const chartTasks = [...effectiveTasks.map(task => ({ ...task, isDisabled: !canEdit || task.isDisabled })), ...fillerTasks];
 
   // True for a brief moment right after a *real* bar drag (move/resize/
   // progress — actual mouse movement between mousedown and mouseup, not
@@ -2637,6 +2709,7 @@ export function GanttChartView({
   // editingCategoryId above) the instant this succeeds, so the very
   // next thing that happens is the admin typing over it.
   async function handleAddPhase() {
+    if (!canEdit) return;
     if (isAddingPhase) return;
     setScheduleError(null);
     setAddingPhaseAt(categories);
@@ -2649,6 +2722,7 @@ export function GanttChartView({
     // swapped for a real id below).
     const tempId = -Date.now();
     const categoriesAtSet = categories;
+    setEditingCategoryId(tempId);
     setPendingNewPhase({
       categoriesAtSet,
       category: {
@@ -2678,7 +2752,10 @@ export function GanttChartView({
 
     const formData = new FormData();
     formData.set("categoryName", "New Task");
-    const result = await createCategory(projectId, {}, formData);
+    const creation = createCategory(projectId, {}, formData)
+      .catch(() => ({ error: "Could not create the task. Please retry.", categoryId: undefined }));
+    pendingNameCreations.current.set(`category:${tempId}`, creation.then(result => result.categoryId));
+    const result = await creation;
     if (result.error) {
       setScheduleError(result.error);
       // Nothing was actually created — drop both markers so the button
@@ -2688,6 +2765,7 @@ export function GanttChartView({
       // otherwise keep reading as still in-flight forever).
       setAddingPhaseAt(null);
       setPendingNewPhase(null);
+      setEditingCategoryId(current => current === tempId ? null : current);
       return;
     }
     if (result.categoryId !== undefined) {
@@ -2723,7 +2801,12 @@ export function GanttChartView({
           costsToDate: { ...ZERO_COSTS },
         },
       });
-      setEditingCategoryId(result.categoryId);
+      const draft = inlineNameDrafts.current.get(`category:${tempId}`);
+      if (draft) {
+        inlineNameDrafts.current.set(`category:${result.categoryId}`, draft);
+        setCategoryNameOverride(result.categoryId, draft.value);
+      }
+      setEditingCategoryId(current => current === tempId ? result.categoryId! : current);
     }
     router.refresh();
     // Not cleared here on success — see addingPhaseAt's/pendingNewPhase's
@@ -2739,8 +2822,14 @@ export function GanttChartView({
   // icon afterward for everything this inline flow doesn't cover
   // (dates, priority, milestone, materials/labor).
   async function handleAddSubtask(categoryId: number) {
+    if (!canEdit) return;
     if (activeNewTask) return;
     setScheduleError(null);
+    setCollapsedPhaseIds(previous => {
+      const next = new Set(previous);
+      next.delete(phaseRowId(categoryId));
+      return next;
+    });
 
     // Same negative-id placeholder convention as handleAddPhase's own
     // tempId above — see its own comment for why.
@@ -2780,11 +2869,15 @@ export function GanttChartView({
       materialAssignments: [],
     };
     setPendingNewTask({ categoriesAtSet, categoryId, task: placeholderTask });
+    setEditingTaskId(tempId);
 
     const formData = new FormData();
     formData.set("taskName", "New Task");
     formData.set("categoryId", String(categoryId));
-    const result = await createTask(projectId, {}, formData);
+    const creation = createTask(projectId, {}, formData)
+      .catch(() => ({ error: "Could not create the task. Please retry.", taskId: undefined }));
+    pendingNameCreations.current.set(`task:${tempId}`, creation.then(result => result.taskId));
+    const result = await creation;
     if (result.error) {
       setScheduleError(result.error);
       // Nothing was actually created — drop the placeholder so it
@@ -2792,6 +2885,7 @@ export function GanttChartView({
       // never changes on a failed create, so it'd otherwise keep
       // reading as still in-flight forever).
       setPendingNewTask(null);
+      setEditingTaskId(current => current === tempId ? null : current);
       return;
     }
     if (result.taskId !== undefined) {
@@ -2805,7 +2899,12 @@ export function GanttChartView({
         categoryId,
         task: { ...placeholderTask, id: result.taskId },
       });
-      setEditingTaskId(result.taskId);
+      const draft = inlineNameDrafts.current.get(`task:${tempId}`);
+      if (draft) {
+        inlineNameDrafts.current.set(`task:${result.taskId}`, draft);
+        setNameOverride(result.taskId, draft.value);
+      }
+      setEditingTaskId(current => current === tempId ? result.taskId! : current);
     }
     router.refresh();
     // Not cleared here on success — see pendingNewTask's own doc
@@ -2832,6 +2931,14 @@ export function GanttChartView({
     setEditingCategoryId(null);
     const trimmed = value.trim();
     if (!trimmed || trimmed === previousValue) return;
+
+    if (categoryId < 0) {
+      setCategoryNameOverride(categoryId, trimmed);
+      const createdId = await pendingNameCreations.current.get(`category:${categoryId}`);
+      pendingNameCreations.current.delete(`category:${categoryId}`);
+      if (!createdId) return;
+      categoryId = createdId;
+    }
 
     setScheduleError(null);
     setCategoryNameOverride(categoryId, trimmed);
@@ -2865,6 +2972,14 @@ export function GanttChartView({
     setEditingTaskId(null);
     const trimmed = value.trim();
     if (!trimmed || trimmed === previousValue) return;
+
+    if (taskId < 0) {
+      setNameOverride(taskId, trimmed);
+      const createdId = await pendingNameCreations.current.get(`task:${taskId}`);
+      pendingNameCreations.current.delete(`task:${taskId}`);
+      if (!createdId) return;
+      taskId = createdId;
+    }
 
     setScheduleError(null);
     setNameOverride(taskId, trimmed);
@@ -2929,7 +3044,7 @@ export function GanttChartView({
                 style={{ width: columnWidths[id] }}
               >
                 <span>{COLUMN_LABEL[id]}</span>
-                <button
+                <ProjectWriteButton
                   type="button"
                   onClick={handleAddPhase}
                   aria-label="Add task"
@@ -2937,7 +3052,7 @@ export function GanttChartView({
                   className="shrink-0 cursor-pointer rounded p-0.5 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
                 >
                   <Plus className="size-3.5" />
-                </button>
+                </ProjectWriteButton>
                 <div
                   onMouseDown={handleResizeMouseDown(id)}
                   className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize"
@@ -3061,13 +3176,16 @@ export function GanttChartView({
                     )}
                   </button>
                 ) : isMilestoneRow ? (
-                  <Diamond aria-hidden className="mr-1.5 size-3.5 shrink-0 text-blue-600" />
+                  <Diamond
+                    aria-hidden
+                    className={`${!isProject ? "ml-4 " : ""}mr-1.5 size-3.5 shrink-0 text-blue-600`}
+                  />
                 ) : (isProject ? category?.id ?? 0 : task?.id ?? 0) > 0 ? (
                   // Drawn, not the browser's own: square, light gray, and
                   // a small check centered in it (same path as the
                   // progress window's history markers).
                   <span className="relative mr-1.5 size-3.5 shrink-0">
-                    <input
+                    <ProjectWriteInput
                       type="checkbox"
                       checked={selectedRowIds.has(row.id)}
                       onChange={() => toggleRowSelected(row.id)}
@@ -3104,20 +3222,30 @@ export function GanttChartView({
                   // it actually fills the row instead of just its own
                   // line-height, the same reason every other inline input
                   // in this table already sets it.
-                  <input
+                  <ProjectWriteInput
                     key={category.id}
                     type="text"
                     autoFocus
                     defaultValue={
                       pendingCategoryNameOverrides.get(category.id) ?? category.name
                     }
-                    onFocus={(e) => e.currentTarget.select()}
+                    onFocus={(e) => {
+                      const draft = inlineNameDrafts.current.get(`category:${category.id}`);
+                      if (draft) e.currentTarget.setSelectionRange(draft.start, draft.end);
+                      else e.currentTarget.select();
+                    }}
+                    onChange={(e) => inlineNameDrafts.current.set(`category:${category.id}`, {
+                      value: e.currentTarget.value, start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd,
+                    })}
                     onBlur={(e) =>
                       handleCategoryRename(category.id, e.target.value, category.name)
                     }
                     onKeyDown={(e) => {
                       if (e.key === "Enter") e.currentTarget.blur();
-                      else if (e.key === "Escape") setEditingCategoryId(null);
+                      else if (e.key === "Escape") {
+                        inlineNameDrafts.current.delete(`category:${category.id}`);
+                        setEditingCategoryId(null);
+                      }
                     }}
                     aria-label="Phase name"
                     className={`h-full min-w-0 flex-1 border-none bg-white px-1 text-xs text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400 ${
@@ -3125,7 +3253,7 @@ export function GanttChartView({
                     }`}
                   />
                 ) : isProject && category && category.id > 0 ? (
-                  <button
+                  <ProjectWriteButton
                     type="button"
                     onClick={() => setEditingCategoryId(category.id)}
                     title="Click to rename"
@@ -3138,7 +3266,7 @@ export function GanttChartView({
                         rename input flashed back to the *old* row.name
                         for the whole router.refresh() round trip. */}
                     {pendingCategoryNameOverrides.get(category.id) ?? category.name}
-                  </button>
+                  </ProjectWriteButton>
                 ) : isProject && category ? (
                   // The brief placeholder window (see handleAddPhase's
                   // own tempId comment) — a negative id means this row's
@@ -3163,24 +3291,36 @@ export function GanttChartView({
                   // padding instead, the visible outline wrapped that
                   // empty space too, reading as oversized/misaligned
                   // against the indent it's supposed to match.
-                  <input
+                  <ProjectWriteInput
                     key={task.id}
                     type="text"
                     autoFocus
                     defaultValue={pendingNameOverrides.get(task.id) ?? task.name}
-                    onFocus={(e) => e.currentTarget.select()}
+                    onFocus={(e) => {
+                      const draft = inlineNameDrafts.current.get(`task:${task.id}`);
+                      if (draft) e.currentTarget.setSelectionRange(draft.start, draft.end);
+                      else e.currentTarget.select();
+                    }}
+                    onChange={(e) => inlineNameDrafts.current.set(`task:${task.id}`, {
+                      value: e.currentTarget.value, start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd,
+                    })}
                     onBlur={(e) =>
                       handleTaskRename(task.id, e.target.value, task.name)
                     }
                     onKeyDown={(e) => {
                       if (e.key === "Enter") e.currentTarget.blur();
-                      else if (e.key === "Escape") setEditingTaskId(null);
+                      else if (e.key === "Escape") {
+                        inlineNameDrafts.current.delete(`task:${task.id}`);
+                        setEditingTaskId(null);
+                      }
                     }}
                     aria-label="Task name"
-                    className="h-full min-w-0 flex-1 border-none bg-white ml-4 px-1 text-xs font-medium text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400"
+                    className={`h-full min-w-0 flex-1 border-none bg-white ${
+                      isMilestoneRow ? "" : "ml-4 "
+                    }px-1 text-xs font-medium text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400`}
                   />
                 ) : !isProject && task && task.id > 0 ? (
-                  <button
+                  <ProjectWriteButton
                     type="button"
                     onClick={() => setEditingTaskId(task.id)}
                     title="Click to rename"
@@ -3194,10 +3334,10 @@ export function GanttChartView({
                       // same convention as a phase's own name button
                       // just above, not bold since a task row isn't. A
                       // milestone's name is blue, like its diamond.
-                      `min-w-0 flex-1 cursor-pointer truncate pl-4 text-left font-medium transition ${
+                      `min-w-0 flex-1 cursor-pointer truncate text-left font-medium transition ${
                         isMilestoneRow
                           ? "text-blue-600 hover:text-blue-500"
-                          : "hover:text-zinc-600"
+                          : "pl-4 hover:text-zinc-600"
                       }`
                     }
                   >
@@ -3208,14 +3348,18 @@ export function GanttChartView({
                         router.refresh() round trip before jumping to the
                         new one. */}
                     {pendingNameOverrides.get(task.id) ?? task.name}
-                  </button>
+                  </ProjectWriteButton>
                 ) : (
                   // Filler rows, or a brand new subtask's own temporary
                   // placeholder id (see handleAddSubtask's own tempId
                   // comment — renaming it here would have nothing real
                   // to persist against yet) — plain, unclickable either
                   // way.
-                  <span className="min-w-0 flex-1 truncate pl-4 font-medium">
+                  <span
+                    className={`min-w-0 flex-1 truncate font-medium ${
+                      isMilestoneRow ? "text-blue-600" : "pl-4"
+                    }`}
+                  >
                     {row.name}
                   </span>
                 )}
@@ -3227,7 +3371,7 @@ export function GanttChartView({
                     built-in Delete button), not a button here. */}
                 {isProject && category && category.id > 0 ? (
                   <>
-                    <button
+                    <ProjectWriteButton
                       type="button"
                       onClick={() => handleAddSubtask(category.id)}
                       aria-label={`Add task to ${category.name}`}
@@ -3235,8 +3379,8 @@ export function GanttChartView({
                       className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
                     >
                       <Plus className="size-3.5" />
-                    </button>
-                    <button
+                    </ProjectWriteButton>
+                    <ProjectWriteButton
                       type="button"
                       onClick={() => setCategoryModal(category)}
                       aria-label="Edit category"
@@ -3244,13 +3388,13 @@ export function GanttChartView({
                       className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
                     >
                       <EditIcon className="size-3.5" />
-                    </button>
+                    </ProjectWriteButton>
                   </>
                 ) : isProject ? null : (
                   !isProject &&
                   task &&
                   task.id > 0 && (
-                    <button
+                    <ProjectWriteButton
                       type="button"
                       onClick={() => setTaskModal(task)}
                       aria-label="Edit task item"
@@ -3258,7 +3402,7 @@ export function GanttChartView({
                       className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"
                     >
                       <EditIcon className="size-3.5" />
-                    </button>
+                    </ProjectWriteButton>
                   )
                 )}
               </div>
@@ -3295,7 +3439,7 @@ export function GanttChartView({
                   // a plain span would drift from the task rows' own
                   // date format (locale, separators) since it can't reuse
                   // the input's own native formatting.
-                  <input
+                  <ProjectWriteInput
                     key={toIsoDate(row.start)}
                     type="date"
                     readOnly
@@ -3305,7 +3449,7 @@ export function GanttChartView({
                     className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
                   />
                 ) : isFiller ? null : (
-                  <GanttDateInput
+                  <GanttDateInput disabled={!canEdit}
                     // Forces a remount (and so a freshly-evaluated
                     // defaultValue) whenever the underlying date actually
                     // changes — including live, frame-by-frame, while
@@ -3410,7 +3554,7 @@ export function GanttChartView({
                   // trueEndDate, not row.end directly — see its own doc
                   // comment for why row.end is one day later than the
                   // true planned end for a non-milestone row.
-                  <input
+                  <ProjectWriteInput
                     key={toIsoDate(trueEndDate(row))}
                     type="date"
                     readOnly
@@ -3420,7 +3564,7 @@ export function GanttChartView({
                     className="pointer-events-none h-full w-full cursor-pointer border-none bg-transparent px-2 text-xs text-zinc-600 scheme-light"
                   />
                 ) : isFiller ? null : (
-                  <GanttDateInput
+                  <GanttDateInput disabled={!canEdit}
                     // See the matching comment on the Start input above.
                     key={toIsoDate(trueEndDate(row))}
                     type="date"
@@ -3473,7 +3617,7 @@ export function GanttChartView({
                 className="flex h-full shrink-0 items-center justify-end border-r border-zinc-200 px-2"
                 style={{ width: columnWidths.duration }}
               >
-                {isFiller ? null : row.type === "milestone" ? "—" : days}
+                {isFiller || isMilestoneRow ? null : days}
               </div>
               <div
                 className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
@@ -3502,7 +3646,8 @@ export function GanttChartView({
                     are this app's own utility classes instead, same as
                     every other cell here, with a hand-drawn chevron
                     replacing the native one appearance-none removes. */}
-                {isProject &&
+                {!isMilestoneRow &&
+                  isProject &&
                   category &&
                   (() => {
                     const effectivePriority =
@@ -3510,7 +3655,7 @@ export function GanttChartView({
                       category.priority;
                     return (
                       <>
-                        <select
+                        <ProjectWriteSelect
                           key={effectivePriority}
                           defaultValue={effectivePriority}
                           onChange={(e) =>
@@ -3543,12 +3688,13 @@ export function GanttChartView({
                           <option value="low" className="text-zinc-900">
                             Low
                           </option>
-                        </select>
+                        </ProjectWriteSelect>
                         <ChevronDown className="pointer-events-none absolute right-2 size-3.5 text-zinc-400" />
                       </>
                     );
                   })()}
-                {task &&
+                {!isMilestoneRow &&
+                  task &&
                   task.id > 0 &&
                   (() => {
                     // pendingPriorityOverrides' own doc comment (see
@@ -3560,7 +3706,7 @@ export function GanttChartView({
                       pendingPriorityOverrides.get(task.id) ?? task.priority;
                     return (
                       <>
-                        <select
+                        <ProjectWriteSelect
                           key={effectivePriority}
                           defaultValue={effectivePriority}
                           onChange={(e) =>
@@ -3600,7 +3746,7 @@ export function GanttChartView({
                           <option value="low" className="text-zinc-900">
                             Low
                           </option>
-                        </select>
+                        </ProjectWriteSelect>
                         <ChevronDown className="pointer-events-none absolute right-2 size-3.5 text-zinc-400" />
                       </>
                     );
@@ -3612,7 +3758,7 @@ export function GanttChartView({
               >
                 {/* See WeightButton. A category with tasks is the sum of
                     its tasks' weights, so it's shown muted. */}
-                {isProject && category && (
+                {!isMilestoneRow && isProject && category && (
                   <WeightButton
                     weight={category.weight}
                     muted={category.hasTasks}
@@ -3621,7 +3767,7 @@ export function GanttChartView({
                     }
                   />
                 )}
-                {task && task.id > 0 && (
+                {!isMilestoneRow && task && task.id > 0 && (
                   <WeightButton
                     weight={task.weight}
                     muted={false}
@@ -3642,14 +3788,15 @@ export function GanttChartView({
                     regardless of whether it has any), so this isn't
                     gated by categoryDatesLocked/hasTasks the way the
                     Start/End cells are. */}
-                {isProject &&
+                {!isMilestoneRow &&
+                  isProject &&
                   category &&
                   (() => {
                     const assignedIds =
                       categoryWorkerAssignments[category.id] ?? [];
                     const assignedInfo = getAssignedCellDisplay(assignedIds);
                     return (
-                      <button
+                      <ProjectWriteButton
                         type="button"
                         onClick={() =>
                           setAssignWorkersModal({
@@ -3666,16 +3813,17 @@ export function GanttChartView({
                         }`}
                       >
                         {assignedInfo.label}
-                      </button>
+                      </ProjectWriteButton>
                     );
                   })()}
-                {task &&
+                {!isMilestoneRow &&
+                  task &&
                   task.id > 0 &&
                   (() => {
                     const assignedIds = taskWorkerAssignments[task.id] ?? [];
                     const assignedInfo = getAssignedCellDisplay(assignedIds);
                     return (
-                      <button
+                      <ProjectWriteButton
                         type="button"
                         onClick={() =>
                           setAssignWorkersModal({
@@ -3692,7 +3840,7 @@ export function GanttChartView({
                         }`}
                       >
                         {assignedInfo.label}
-                      </button>
+                      </ProjectWriteButton>
                     );
                   })()}
               </div>
@@ -3700,15 +3848,15 @@ export function GanttChartView({
                 className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
                 style={{ width: columnWidths.equipment }}
               >
-                {((task && task.id > 0) || (isProject && category && !category.hasTasks)) && (() => {
+                {!isMilestoneRow && ((task && task.id > 0) || (isProject && category && !category.hasTasks)) && (() => {
                   const key = task && task.id > 0 ? `task-${task.id}` : `category-${category!.id}`;
                   const name = task && task.id > 0 ? task.name : category!.name;
                   const planned = equipmentTracking?.plans.filter((p) => p.itemKey === key) ?? [];
-                  return <button type="button" onClick={() => setEquipmentTarget({ key, name })}
+                  return <ProjectWriteButton type="button" onClick={() => setEquipmentTarget({ key, name })}
                     title={planned.map((p) => `${p.name} (${p.assetTag})`).join(", ") || "Assign tools & equipment"}
                     className="h-full w-full cursor-pointer truncate px-2 text-left text-zinc-600 hover:bg-zinc-900 hover:text-white">
                     {planned.length ? `${planned[0].name}${planned.length > 1 ? ` +${planned.length - 1}` : ""}` : "Assign"}
-                  </button>;
+                  </ProjectWriteButton>;
                 })()}
               </div>
               <div
@@ -3873,7 +4021,6 @@ export function GanttChartView({
                 style={{ width: columnWidths.expected }}
               >
                 {!isFiller &&
-                  !isMilestoneRow &&
                   (() => {
                     let expected: number | null | undefined;
                     if (isProject && category) {
@@ -3991,7 +4138,7 @@ export function GanttChartView({
             <AiSparklesIcon variant="white" className="size-5 shrink-0" />
             <span>AI Project Insights</span>
           </button>
-          <button
+          <ProjectWriteButton
             type="button"
             onClick={onImportBom}
             title="Import a document with AI"
@@ -3999,7 +4146,7 @@ export function GanttChartView({
           >
             <AiSparklesIcon variant="white" className="size-5 shrink-0" />
             <span>Import with AI</span>
-          </button>
+          </ProjectWriteButton>
         </div>
       </div>
       {/* Toolbar + whatever follows (the chart, or the empty-state
@@ -4024,26 +4171,26 @@ export function GanttChartView({
             onChange={(scheduleView) => setCalendarView(scheduleView === "calendar")}
           />
           <div className="mx-1.5 h-6 w-px bg-zinc-200" />
-          <button
+          <ProjectWriteButton
             type="button"
             onClick={handleUndo}
-            disabled={!historyReady || !effectiveCanUndo || isUndoRedoPending}
+            disabled={!historyReady || !effectiveCanUndo || isUndoRedoPending || deleting}
             aria-label="Undo"
             title="Undo (Ctrl+Z)"
             className="cursor-pointer rounded p-2 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
           >
             <Undo2 className="size-4" />
-          </button>
-          <button
+          </ProjectWriteButton>
+          <ProjectWriteButton
             type="button"
             onClick={handleRedo}
-            disabled={!historyReady || !effectiveCanRedo || isUndoRedoPending}
+            disabled={!historyReady || !effectiveCanRedo || isUndoRedoPending || deleting}
             aria-label="Redo"
             title="Redo (Ctrl+Y)"
             className="cursor-pointer rounded p-2 text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:text-zinc-300 disabled:hover:bg-transparent"
           >
             <Redo2 className="size-4" />
-          </button>
+          </ProjectWriteButton>
           {/* Zoom is the Gantt view's alone. Week isn't offered here —
               see the `view` state's own doc comment above for why. */}
           {!calendarView && <div className="mx-1.5 h-6 w-px bg-zinc-200" />}
@@ -4065,14 +4212,15 @@ export function GanttChartView({
           ))}
           {/* Only while something's ticked in the task list. */}
           {!calendarView && selectedCount > 0 && (
-            <button
+            <ProjectWriteButton
               type="button"
               onClick={deleteSelected}
+              disabled={deleting}
               className="ml-auto flex cursor-pointer items-center gap-1.5 rounded border border-red-200 bg-white px-2.5 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50"
             >
               <Trash2 className="size-4" />
               Delete {selectedCount} selected
-            </button>
+            </ProjectWriteButton>
           )}
         </div>
 
@@ -4092,7 +4240,7 @@ export function GanttChartView({
             events={events}
             holidays={holidays}
             workingDays={workingDays}
-            canEditEvents={isAdmin}
+            canEditEvents={isAdmin && canEdit}
             onAddEvent={(date) => setEventModal({ date })}
             onEventClick={(event) => setEventModal({ date: event.date, event })}
             onItemClick={handleCalendarItemClick}
@@ -4274,72 +4422,11 @@ export function GanttChartView({
         bareIcon
         aiBorder
       >
-        <article className="space-y-5 text-sm leading-relaxed text-zinc-200">
-          <section>
-            <h3 className="text-base font-semibold text-zinc-100">Executive Summary</h3>
-            <p className="mt-3">
-              The &ldquo;{projectName}&rdquo; project is currently being monitored across its
-              planned phases, task schedule, assigned resources, and recorded progress. The
-              project contains {scheduleCounts.tasks} {scheduleCounts.tasks === 1 ? "task" : "tasks"} and{" "}
-              {scheduleCounts.milestones} {scheduleCounts.milestones === 1 ? "milestone" : "milestones"}.
-              Regular progress updates are important for keeping the schedule and cost records
-              accurate.
-            </p>
-          </section>
-
-          <section>
-            <h3 className="text-base font-semibold text-zinc-100">
-              Potential Risks and Recommendations
-            </h3>
-            <ol className="mt-3 list-decimal space-y-4 pl-6">
-              <li>
-                <strong className="text-zinc-100">Schedule dependencies:</strong> Tasks that
-                depend on unfinished activities may affect succeeding work.
-                <p className="mt-2 pl-4">
-                  <strong className="text-zinc-100">Recommendation:</strong> Review predecessor
-                  tasks regularly and address blocked work before it affects later phases.
-                </p>
-              </li>
-              <li>
-                <strong className="text-zinc-100">Resource availability:</strong> Workers or
-                equipment assigned to overlapping activities may create scheduling conflicts.
-                <p className="mt-2 pl-4">
-                  <strong className="text-zinc-100">Recommendation:</strong> Confirm resource
-                  availability before starting each scheduled activity.
-                </p>
-              </li>
-              <li>
-                <strong className="text-zinc-100">Progress reporting:</strong> Missing or delayed
-                updates can make the displayed project status inaccurate.
-                <p className="mt-2 pl-4">
-                  <strong className="text-zinc-100">Recommendation:</strong> Record and validate
-                  progress consistently throughout the project.
-                </p>
-              </li>
-              <li>
-                <strong className="text-zinc-100">Cost monitoring:</strong> Unplanned material,
-                labor, equipment, or other expenses may reduce the remaining project budget.
-                <p className="mt-2 pl-4">
-                  <strong className="text-zinc-100">Recommendation:</strong> Review actual costs
-                  against planned estimates whenever progress is recorded.
-                </p>
-              </li>
-              <li>
-                <strong className="text-zinc-100">Quality and closeout readiness:</strong> Pending
-                inspections or incomplete supporting records may delay project completion.
-                <p className="mt-2 pl-4">
-                  <strong className="text-zinc-100">Recommendation:</strong> Keep inspection,
-                  incident, and closeout records updated before final review.
-                </p>
-              </li>
-            </ol>
-          </section>
-
-          <p>
-            This preview demonstrates the intended presentation of project insights. It is static
-            reference content and is not yet generated or evaluated by the configured AI service.
-          </p>
-        </article>
+        {projectInsightsOpen && <ProjectInsightsPanel
+          key={projectId}
+          projectId={projectId}
+          onNavigate={destination => { setProjectInsightsOpen(false); onNavigateInsight(destination); }}
+        />}
       </Modal>
 
       <Modal
@@ -4413,29 +4500,37 @@ export function GanttChartView({
       <Modal
         open={categoryModal !== null}
         onClose={() => setCategoryModal(null)}
-        title="Edit Phase"
-        menuItems={
-          categoryModal
-            ? [
-                {
-                  label: "Delete",
-                  destructive: true,
-                  onSelect: () =>
-                    confirmAndDelete(
-                      "phase",
-                      categoryModal.name,
-                      () => deleteCategory(categoryModal.id, projectId, {}, new FormData()),
-                      () => setCategoryModal(null)
-                    ),
-                },
-              ]
-            : undefined
-        }
+        title={categoryModal ? `Edit ${categoryModal.name}` : "Edit Phase"}
       >
         {categoryModal && (
           <CategoryForm
             projectId={projectId}
-            category={categoryModal}
+            category={{
+              ...categoryModal,
+              materialAssignments:
+                categoriesForDisplay.find((c) => c.id === categoryModal.id)
+                  ?.materialAssignments ?? [],
+            }}
+            siblingCategories={categoriesForDisplay
+              .filter((c) => c.tasks.length === 0)
+              .map((c) => ({
+                id: c.id,
+                name: c.name,
+                predecessorCategoryId: c.predecessorCategoryId ?? null,
+              }))}
+            onViewMaterials={() => {
+              setCategoryModal(null);
+              onOpenMaterialBreakdown();
+            }}
+            onRequestDelete={() =>
+              confirmAndDelete(
+                "phase",
+                categoryModal.name,
+                () => deleteCategory(categoryModal.id, projectId, {}, new FormData()),
+                () => setCategoryModal(null),
+                { taskIds: [], categoryIds: [categoryModal.id] }
+              )
+            }
             onSuccess={() => setCategoryModal(null)}
           />
         )}
@@ -4444,24 +4539,7 @@ export function GanttChartView({
       <Modal
         open={taskModal !== null}
         onClose={() => setTaskModal(null)}
-        title={taskModal?.name ?? "Edit Task"}
-        menuItems={
-          taskModal
-            ? [
-                {
-                  label: "Delete",
-                  destructive: true,
-                  onSelect: () =>
-                    confirmAndDelete(
-                      "task",
-                      taskModal.name,
-                      () => deleteTask(taskModal.id, projectId, {}, new FormData()),
-                      () => setTaskModal(null)
-                    ),
-                },
-              ]
-            : undefined
-        }
+        title={taskModal ? `Edit ${taskModal.name}` : "Edit Task"}
       >
         {taskModal && (
           <SubtaskForm
@@ -4477,6 +4555,15 @@ export function GanttChartView({
               setTaskModal(null);
               onOpenMaterialBreakdown(viewedTaskId);
             }}
+            onRequestDelete={() =>
+              confirmAndDelete(
+                "task",
+                taskModal.name,
+                () => deleteTask(taskModal.id, projectId, {}, new FormData()),
+                () => setTaskModal(null),
+                { taskIds: [taskModal.id], categoryIds: [] }
+              )
+            }
             onSuccess={() => setTaskModal(null)}
           />
         )}
@@ -4532,9 +4619,10 @@ export function GanttChartView({
       </Modal>
 
       <Modal open={equipmentTarget !== null} onClose={() => { if (!equipmentSaving) setEquipmentTarget(null); }} title={equipmentTarget ? `Assign Equipment — ${equipmentTarget.name}` : "Assign Equipment"}>
-        {equipmentTarget && <EquipmentTrackingPanel key={equipmentTarget.key} projectId={projectId} itemKey={equipmentTarget.key} mode="plan" initialData={equipmentTracking} onChange={setEquipmentTracking} onClose={() => setEquipmentTarget(null)} onPendingChange={setEquipmentSaving} />}
+        {equipmentTarget && <EquipmentTrackingPanel key={equipmentTarget.key} projectId={projectId} itemKey={equipmentTarget.key} initialData={equipmentTracking} onChange={setEquipmentTracking} onClose={() => setEquipmentTarget(null)} onPendingChange={setEquipmentSaving} />}
       </Modal>
       <ProgressTrackingModal
+        readOnly={!canEdit}
         target={progressModal}
         projectId={projectId}
         projectName={projectName}

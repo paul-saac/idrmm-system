@@ -651,7 +651,7 @@ export function ImportBomModalContent({
             type="button"
             onClick={handleProcess}
             disabled={!file}
-            className="flex cursor-pointer items-center gap-2 rounded bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex cursor-pointer items-center gap-2 rounded bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100 disabled:cursor-not-allowed"
           >
             <AiSparklesIcon className="size-5 text-emerald-600 shrink-0" />
             Process with AI

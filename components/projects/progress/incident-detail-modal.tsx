@@ -1,5 +1,8 @@
 "use client";
 
+import { ProjectWriteButton } from "@/components/projects/project-access-context";
+import { EmptyState } from "@/components/ui/empty-state";
+
 import Image from "next/image";
 import { FileText } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -108,7 +111,7 @@ function IncidentDetails({ projectId, id, result, onClose, onDeleted }: {
                 })}
               </div>
             ) : (
-              <p className="mt-2 text-sm text-zinc-400">No attachments.</p>
+              <EmptyState compact className="mt-2 py-3">No attachments.</EmptyState>
             )}
           </section>
 
@@ -120,9 +123,9 @@ function IncidentDetails({ projectId, id, result, onClose, onDeleted }: {
       ) : null}
 
       <ModalFooter>
-        <button type="button" onClick={() => setConfirmingDelete(true)} disabled={!incident} className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-40">
+        <ProjectWriteButton type="button" onClick={() => setConfirmingDelete(true)} disabled={!incident} className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-40">
           Delete
-        </button>
+        </ProjectWriteButton>
         <button type="button" onClick={onClose} className="rounded border border-zinc-200 px-4 py-2 text-sm">Close</button>
       </ModalFooter>
 

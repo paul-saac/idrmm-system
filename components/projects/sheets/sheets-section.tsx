@@ -1,11 +1,15 @@
 "use client";
 
+import { RequiredMark } from "@/components/ui/required-mark";
+import { ProjectWriteButton } from "@/components/projects/project-access-context";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Check, ChevronDown, ChevronRight, ClipboardCheck, Clock3, FileText, History, Info, LayoutGrid, List, Plus, Search, ShieldCheck, Upload } from "lucide-react";
 import { DocumentThumbnail, DocumentViewer, documentFileUrl, type ThumbnailCache } from "./document-preview";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Modal, ModalFooter, ModalHeaderAddon } from "@/components/ui/modal";
 import { DatePicker } from "@/components/ui/date-picker";
-import { listSheets, submitSheet, sheetDetails, reviewSheet } from "@/lib/sheets/actions";
+import { listSheets, submitSheet, sheetDetails, reviewSheet, deleteSheet } from "@/lib/sheets/actions";
 import { DISCIPLINES, DOCUMENT_TYPES, SHEET_STATUS, formatVersion, type DocumentType, type Sheet } from "@/lib/sheets/model";
 
 const input = "w-full rounded border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500";
@@ -32,11 +36,13 @@ type Detail = Awaited<ReturnType<typeof sheetDetails>>;
 
 export function SheetsSection({
   projectId,
+  insightRequest,
   initialSheets,
   initialCanReview = false,
   initialError = null,
 }: {
   projectId: number;
+  insightRequest?: number;
   initialSheets?: Sheet[];
   initialCanReview?: boolean;
   initialError?: string | null;
@@ -51,8 +57,15 @@ export function SheetsSection({
   const [query, setQuery] = useState("");
   const [discipline, setDiscipline] = useState("");
   const [group, setGroup] = useState<"drawings" | "documents">("drawings");
+  const [handledInsightRequest, setHandledInsightRequest] = useState<number | undefined>(undefined);
+  if (insightRequest !== undefined && insightRequest !== handledInsightRequest) {
+    setHandledInsightRequest(insightRequest);
+    setOpen(true);
+    setGroup("documents");
+  }
   const [documentType, setDocumentType] = useState<DocumentType>("drawing");
   const [signedDocument, setSignedDocument] = useState(true);
+  const [uploadStage, setUploadStage] = useState("original");
   // One shared display switch: changing document categories keeps the user's
   // chosen List/Grid presentation instead of silently reverting per category.
   const [view, setView] = useState<"list" | "grid">("list");
@@ -85,9 +98,12 @@ export function SheetsSection({
   const reviewCache = useRef(new Map<number, Detail["reviews"]>());
   const inspecting = useRef<number | null>(null);
   const [reviewsLoading, setReviewsLoading] = useState(false);
-  function closeDetail() { inspecting.current = null; setSelected(null); setReviewsLoading(false); }
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  function closeDetail() { inspecting.current = null; setSelected(null); setReviewsLoading(false); setConfirmingDelete(false); setDeleteError(null); }
   async function inspect(id: number) {
-    setFormError(null); setComments("");
+    setFormError(null); setComments(""); setConfirmingDelete(false); setDeleteError(null);
     inspecting.current = id;
     const known = sheets.find(s => s.id === id);
     const knownReviews = reviewCache.current.get(id);
@@ -120,6 +136,22 @@ export function SheetsSection({
     } catch { setFormError("Could not save the review. Please retry."); }
     finally { setPending(false); }
   }
+  async function remove() {
+    if (!selected?.sheet || deleting) return;
+    const targetNumber = selected.sheet.sheet_number;
+    setDeleting(true); setDeleteError(null);
+    try {
+      const result = await deleteSheet(projectId, selected.sheet.id);
+      if (result.error) setDeleteError(result.error);
+      else {
+        sheets.filter(s => s.sheet_number === targetNumber).forEach(s => reviewCache.current.delete(s.id));
+        setSheets(current => current.filter(s => s.sheet_number !== targetNumber));
+        closeDetail();
+        await load();
+      }
+    } catch { setDeleteError("Could not delete the document. Please retry."); }
+    finally { setDeleting(false); }
+  }
   const latest = new Map<string, number>();
   sheets.forEach(s => latest.set(s.sheet_number, Math.max(latest.get(s.sheet_number) ?? 0, s.revision)));
   const visible = sheets.filter(s => s.revision === latest.get(s.sheet_number) && (group === "drawings" ? s.document_type === "drawing" : s.document_type !== "drawing") && (group !== "drawings" || !discipline || s.discipline === discipline) && `${s.sheet_number} ${s.title} ${s.change_notes}`.toLowerCase().includes(query.toLowerCase()));
@@ -151,7 +183,7 @@ export function SheetsSection({
           />
           {(["list", "grid"] as const).map(mode => <button key={mode} type="button" aria-label={mode === "list" ? "List view" : "Grid view"} aria-pressed={view === mode} onClick={() => setView(mode)} className={`relative z-10 cursor-pointer rounded p-1.5 transition-colors duration-150 ${view === mode ? "text-zinc-900" : "text-zinc-400 hover:text-zinc-700"}`}>{mode === "list" ? <List className="size-4" /> : <LayoutGrid className="size-4" />}</button>)}
         </div>
-        <button className={`${button} flex items-center gap-2 bg-zinc-900 text-white`} onClick={() => { setUpload({}); setDocumentType(group === "drawings" ? "drawing" : "bom"); setSignedDocument(true); setFormError(null); }}><Plus className="size-4" />Add document</button>
+        <ProjectWriteButton className={`${button} flex items-center gap-2 bg-zinc-900 text-white`} onClick={() => { setUpload({}); setUploadStage("original"); setDocumentType(group === "drawings" ? "drawing" : "bom"); setSignedDocument(true); setFormError(null); }}><Plus className="size-4" />Add document</ProjectWriteButton>
       </div>
       </div>
       <div key={`${group}-${view}`} className="tab-content-enter">
@@ -165,9 +197,9 @@ export function SheetsSection({
             <span className={`self-start rounded px-2 py-1 text-xs ${s.status === "accepted" ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>{SHEET_STATUS[s.status]}</span>
             <div className="mt-auto flex w-full flex-wrap justify-between gap-2 border-t border-zinc-100 pt-3 text-xs text-zinc-500"><span>{s.submitted_name}</span><span>{date(s.created_at)}</span></div>
           </button>)}
-          {!visible.length && <p className="col-span-full p-8 text-center text-sm text-zinc-400">{sheets.length ? "No documents match this category or search." : "No documents uploaded yet."}</p>}
+          {!visible.length && <EmptyState className="col-span-full p-8 text-center text-sm text-zinc-400">{sheets.length ? "No documents match this category or search." : "No documents uploaded yet."}</EmptyState>}
         </div>
-      ) : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-y border-zinc-200 bg-zinc-50 text-xs text-zinc-500"><tr>{["Reference / Document", "Version", group === "drawings" ? "Discipline" : "Document category", "Stage", "Status", "Submitted by", "Date"].map(h => <th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr></thead><tbody className="divide-y divide-zinc-100">{visible.map(s => <tr key={s.id} className="hover:bg-zinc-50"><td className="px-5 py-4"><button onClick={() => inspect(s.id)} className="flex items-center gap-3 text-left"><DocumentThumbnail key={`${s.id}-list`} url={documentFileUrl(projectId, s.id)} pdf={s.file_path.endsWith(".pdf")} title={s.title} cache={thumbnailCache} /><span><span className="block font-medium">{s.sheet_number}</span><span className="block text-xs text-zinc-500">{s.title}</span></span></button></td><td className="px-5 py-4">{formatVersion(s.revision)}</td><td className="px-5 py-4">{group === "drawings" ? s.discipline : DOCUMENT_TYPES[s.document_type]}</td><td className="px-5 py-4">{s.stage === "as_built" ? "As-built" : s.stage === "original" ? "Original" : "Revision"}</td><td className="px-5 py-4"><span className={`rounded px-2 py-1 text-xs ${s.status === "accepted" ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>{SHEET_STATUS[s.status]}</span></td><td className="px-5 py-4">{s.submitted_name}</td><td className="whitespace-nowrap px-5 py-4 text-xs text-zinc-500">{date(s.created_at)}</td></tr>)}{!visible.length && <tr><td colSpan={7} className="p-8 text-center text-zinc-400">{sheets.length ? "No documents match this category or search." : "No documents uploaded yet."}</td></tr>}</tbody></table></div>}
+      ) : <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-y border-zinc-200 bg-zinc-50 text-xs text-zinc-500"><tr>{["Reference / Document", "Version", group === "drawings" ? "Discipline" : "Document category", "Stage", "Status", "Submitted by", "Date"].map(h => <th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr></thead><tbody className="divide-y divide-zinc-100">{visible.map(s => <tr key={s.id} className="hover:bg-zinc-50"><td className="px-5 py-4"><button onClick={() => inspect(s.id)} className="flex items-center gap-3 text-left"><DocumentThumbnail key={`${s.id}-list`} url={documentFileUrl(projectId, s.id)} pdf={s.file_path.endsWith(".pdf")} title={s.title} cache={thumbnailCache} /><span><span className="block font-medium">{s.sheet_number}</span><span className="block text-xs text-zinc-500">{s.title}</span></span></button></td><td className="px-5 py-4">{formatVersion(s.revision)}</td><td className="px-5 py-4">{group === "drawings" ? s.discipline : DOCUMENT_TYPES[s.document_type]}</td><td className="px-5 py-4">{s.stage === "as_built" ? "As-built" : s.stage === "original" ? "Original" : "Revision"}</td><td className="px-5 py-4"><span className={`rounded px-2 py-1 text-xs ${s.status === "accepted" ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-600"}`}>{SHEET_STATUS[s.status]}</span></td><td className="px-5 py-4">{s.submitted_name}</td><td className="whitespace-nowrap px-5 py-4 text-xs text-zinc-500">{date(s.created_at)}</td></tr>)}{!visible.length && <tr><td colSpan={7} className="p-8 text-center text-zinc-400"><EmptyState>{sheets.length ? "No documents match this category or search." : "No documents uploaded yet."}</EmptyState></td></tr>}</tbody></table></div>}
       </div>
     </div>}
     <Modal open={!!upload} onClose={() => { if (!pending) setUpload(null); }} title={upload?.previous ? `New revision — ${upload.previous.sheet_number}` : "Add document"} size="wide">
@@ -175,39 +207,38 @@ export function SheetsSection({
         <section className="space-y-4 px-6 py-5">
           <h3 className={sectionTitle}>Document details</h3>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className={field}><span className={fieldLabel}>Reference / sheet number</span><input required maxLength={80} name="sheet_number" defaultValue={upload?.previous?.sheet_number} readOnly={!!upload?.previous} placeholder="A-01" className={`${input} read-only:bg-zinc-50`} /></label>
-            <label className={field}><span className={fieldLabel}>Document title</span><input required maxLength={200} name="title" defaultValue={upload?.previous?.title} className={input} /></label>
-            <label className={field}><span className={fieldLabel}>Document category</span><span className="relative block"><select name="document_type" value={documentType} disabled={!!upload?.previous} onChange={e => setDocumentType(e.target.value as DocumentType)} className={`${input} appearance-none pr-9 disabled:bg-zinc-50`}>{Object.entries(DOCUMENT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><ChevronDown aria-hidden className={selectChevron} /></span>{upload?.previous && <input type="hidden" name="document_type" value={documentType} />}</label>
-            {documentType === "drawing" ? <label className={field}><span className={fieldLabel}>Discipline</span><span className="relative block"><select name="discipline" defaultValue={upload?.previous?.discipline ?? "Architectural"} className={`${input} appearance-none pr-9`}>{DISCIPLINES.map(d => <option key={d}>{d}</option>)}</select><ChevronDown aria-hidden className={selectChevron} /></span></label> : <input type="hidden" name="discipline" value="General" />}
+            <label className={field}><span className={fieldLabel}>Reference / sheet number<RequiredMark /></span><input required maxLength={80} name="sheet_number" defaultValue={upload?.previous?.sheet_number} readOnly={!!upload?.previous} className={`${input} read-only:bg-zinc-50`} /></label>
+            <label className={field}><span className={fieldLabel}>Document title<RequiredMark /></span><input required maxLength={200} name="title" defaultValue={upload?.previous?.title} className={input} /></label>
+            <label className={field}><span className={fieldLabel}>Document category<RequiredMark /></span><span className="relative block"><select name="document_type" value={documentType} disabled={!!upload?.previous} onChange={e => { setDocumentType(e.target.value as DocumentType); setUploadStage(upload?.previous ? "revision" : "original"); }} className={`${input} appearance-none pr-9 disabled:bg-zinc-50`}>{Object.entries(DOCUMENT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><ChevronDown aria-hidden className={selectChevron} /></span>{upload?.previous && <input type="hidden" name="document_type" value={documentType} />}</label>
+            {documentType === "drawing" ? <label className={field}><span className={fieldLabel}>Discipline<RequiredMark /></span><span className="relative block"><select name="discipline" defaultValue={upload?.previous?.discipline ?? "Architectural"} className={`${input} appearance-none pr-9`}>{DISCIPLINES.map(d => <option key={d}>{d}</option>)}</select><ChevronDown aria-hidden className={selectChevron} /></span></label> : <input type="hidden" name="discipline" value="General" />}
           </div>
         </section>
         <section className="space-y-4 px-6 py-5">
           <h3 className={sectionTitle}>{upload?.previous ? "Revision details" : "File and notes"}</h3>
           <div className="grid gap-4 sm:grid-cols-[13rem_minmax(0,1fr)]">
-            <label className={field}><span className={fieldLabel}>Version type</span><span className="relative block"><select key={documentType} name="stage" defaultValue={upload?.previous ? "revision" : "original"} className={`${input} appearance-none pr-9`}>{!upload?.previous && <option value="original">Original / baseline</option>}<option value="revision">Revision</option>{documentType === "drawing" && <option value="as_built">As-built drawing</option>}</select><ChevronDown aria-hidden className={selectChevron} /></span></label>
-            <div className={field}><span className={fieldLabel}>Document file</span><FilePicker name="drawing" required label="Document file" /><span className="text-xs text-zinc-400">PDF, PNG, or JPEG · 8 MB maximum per file. Export CAD files and spreadsheets to PDF.</span></div>
+            <label className={field}><span className={fieldLabel}>Version type<RequiredMark /></span><span className="relative block"><select key={documentType} name="stage" onChange={e => setUploadStage(e.target.value)} defaultValue={upload?.previous ? "revision" : "original"} className={`${input} appearance-none pr-9`}>{!upload?.previous && <option value="original">Original / baseline</option>}<option value="revision">Revision</option>{documentType === "drawing" && <option value="as_built">As-built drawing</option>}</select><ChevronDown aria-hidden className={selectChevron} /></span></label>
+            <div className={field}><span className={fieldLabel}>Document file<RequiredMark /></span><FilePicker name="drawing" required label="Document file" /></div>
           </div>
-          <label className={field}><span className={fieldLabel}>Changes / revision notes</span><textarea name="change_notes" maxLength={5000} rows={3} className={`${input} resize-y`} placeholder="Describe what changed and why. For drawings, include location, implementation date, and site instruction reference. For unchanged as-builts, confirm no changes." /></label>
+          <label className={field}><span className={fieldLabel}>Changes / revision notes{(upload?.previous || uploadStage !== "original") && <RequiredMark />}</span><textarea name="change_notes" maxLength={5000} rows={3} className={`${input} resize-y`} /></label>
         </section>
         <section className="space-y-4 px-6 py-5">
           <h3 className={sectionTitle}>External technical approval / as-built verification</h3>
-          <div className="flex gap-3 rounded border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm">
-            <Info aria-hidden className="mt-0.5 size-4 shrink-0 text-zinc-500" />
-            <div><p className="text-zinc-700">Required before admin acceptance. Revised submissions must include their own evidence.</p><p className="mt-0.5 text-xs text-zinc-500">For pending submissions, uncheck the signed-document option and leave the approval fields blank.</p></div>
+          <div className="flex gap-3 rounded border border-amber-200 bg-amber-50/60 px-4 py-3 text-sm">
+            <Info aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-700" />
+            <div><p className="text-amber-900">Required before admin acceptance. Revised submissions must include their own evidence.</p><p className="mt-0.5 text-xs text-amber-700">For pending submissions, uncheck the signed-document option and leave the approval fields blank.</p></div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className={field}><span className={fieldLabel}>Professional name</span><input name="external_name" maxLength={200} className={input} /></label>
-            <label className={field}><span className={fieldLabel}>Professional role</span><input name="external_role" maxLength={200} placeholder="Architect / Civil Engineer" className={input} /></label>
-            <label className={field}><span className={fieldLabel}>Approval / verification date</span><DatePicker name="approval_date" ariaLabel="Approval or verification date" className={input} /></label>
-            {!signedDocument && <div className={field}><span className={fieldLabel}>Separate signed approval evidence</span><FilePicker name="evidence" label="Separate signed approval evidence" /></div>}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className={field}><span className={fieldLabel}>Professional name{signedDocument && <RequiredMark />}</span><input name="external_name" maxLength={200} disabled={!signedDocument} className={`${input} disabled:bg-zinc-50`} /></label>
+            <label className={field}><span className={fieldLabel}>Professional role{signedDocument && <RequiredMark />}</span><input name="external_role" maxLength={200} disabled={!signedDocument} className={`${input} disabled:bg-zinc-50`} /></label>
+            <label className={field}><span className={fieldLabel}>Approval / verification date{signedDocument && <RequiredMark />}</span><DatePicker name="approval_date" ariaLabel="Approval or verification date" disabled={!signedDocument} className={`${input} disabled:bg-zinc-50`} /></label>
           </div>
           <label className="flex items-center gap-2 text-sm text-zinc-700"><input type="checkbox" name="signed_document" checked={signedDocument} onChange={e => setSignedDocument(e.target.checked)} className="size-4 rounded accent-zinc-900" />The uploaded document already contains the professional&apos;s signature / approval</label>
         </section>
       </fieldset>
       <ModalFooter><div className="flex w-full flex-wrap items-center gap-3">
         {formError ? <p role="alert" className="mr-auto text-sm text-red-600">{formError}</p> : <p className="mr-auto flex items-center gap-2 text-sm text-zinc-500"><ClipboardCheck aria-hidden className="size-4 text-zinc-400" />{upload?.previous ? "Revisions are reviewed before acceptance." : "Documents are reviewed before acceptance."}</p>}
-        <button type="button" disabled={pending} onClick={() => setUpload(null)} className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
-        <button type="submit" form="upload-sheet" disabled={pending} className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? "Uploading..." : "Submit for review"}</button>
+        <ProjectWriteButton type="button" disabled={pending} onClick={() => setUpload(null)} className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60">Cancel</ProjectWriteButton>
+        <ProjectWriteButton type="submit" form="upload-sheet" disabled={pending} className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60">{pending ? "Uploading..." : "Submit for review"}</ProjectWriteButton>
       </div></ModalFooter></form>
     </Modal>
     <Modal open={detailLoading || !!selected} onClose={() => { if (!pending) closeDetail(); }} title={detail?.sheet_number ?? "Document"} icon={<FileText className="size-5" />} size="large">
@@ -217,23 +248,33 @@ export function SheetsSection({
         <div className="min-w-0 space-y-5 px-6 py-5">
         <div className="overflow-hidden rounded border border-zinc-200">
         <DocumentViewer key={detail.id} url={documentFileUrl(projectId, detail.id)} pdf={detail.file_path.endsWith(".pdf")} title={detail.title} />
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 p-3"><span className="text-xs text-zinc-500">{detail.sheet_number} — {formatVersion(detail.revision)}</span>{canReview && <button className={`${button} inline-flex items-center gap-2 text-xs`} disabled={pending} onClick={() => { closeDetail(); setUpload({ previous: detail }); setDocumentType(detail.document_type); setSignedDocument(true); setFormError(null); }}><Upload className="size-3.5" />Upload new revision</button>}</div>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 p-3"><span className="text-xs text-zinc-500">{detail.sheet_number} — {formatVersion(detail.revision)}</span>{canReview && <ProjectWriteButton className={`${button} inline-flex items-center gap-2 text-xs`} disabled={pending} onClick={() => { closeDetail(); setUpload({ previous: detail }); setUploadStage("revision"); setDocumentType(detail.document_type); setSignedDocument(true); setFormError(null); }}><Upload className="size-3.5" />Upload new revision</ProjectWriteButton>}</div>
         </div>
 
         <section><h4 className="text-sm font-medium">Field changes / revision notes</h4><p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600">{detail.change_notes || "No change notes recorded."}</p></section>
         </div>
         <aside className="min-w-0 border-t border-zinc-200 lg:border-t-0 lg:border-l">
           <section className="px-6 py-5"><h4 className="mb-3 text-sm font-medium">Verification</h4>
-            <div className="flex items-start justify-between gap-3 rounded border border-emerald-100 bg-emerald-50/80 p-4">
-              <div className="flex min-w-0 items-start gap-3">
-                <span className="shrink-0 rounded border border-emerald-100 bg-emerald-100 p-2 text-emerald-700"><ShieldCheck className="size-4" /></span>
+            {detail.evidence_path || detail.external_name || detail.approval_date ? (
+              <div className="flex items-start justify-between gap-3 rounded border border-emerald-100 bg-emerald-50/80 p-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="shrink-0 rounded border border-emerald-100 bg-emerald-100 p-2 text-emerald-700"><ShieldCheck className="size-4" /></span>
+                  <div className="min-w-0 space-y-0.5">
+                    <p className="break-words text-sm font-semibold text-emerald-950">{detail.external_name || "Authorized Stakeholder"}</p>
+                    <p className="text-xs font-medium text-emerald-700">{detail.external_role || "Signed & Verified"}</p>
+                  </div>
+                </div>
+                <span className="shrink-0 pt-0.5 text-xs font-medium text-emerald-800 tabular-nums">{detail.approval_date ? date(detail.approval_date) : "Oct 21, 2026"}</span>
+              </div>
+            ) : (
+              <div className="flex items-start gap-3 rounded border border-amber-200 bg-amber-50/60 p-4">
+                <span className="shrink-0 rounded border border-amber-200 bg-amber-100/80 p-2 text-amber-700"><Clock3 className="size-4" /></span>
                 <div className="min-w-0 space-y-0.5">
-                  <p className="break-words text-sm font-semibold text-emerald-950">{detail.external_name || "Authorized Stakeholder"}</p>
-                  <p className="text-xs font-medium text-emerald-700">{detail.external_role || "Signed & Verified"}</p>
+                  <p className="break-words text-sm font-semibold text-amber-950">Not yet approved by authorized professional</p>
+                  <p className="text-xs font-medium text-amber-700">Pending signature / verification</p>
                 </div>
               </div>
-              <span className="shrink-0 pt-0.5 text-xs font-medium text-emerald-800 tabular-nums">{detail.approval_date ? date(detail.approval_date) : "Oct 21, 2026"}</span>
-            </div>
+            )}
           </section>
           <section className="border-t border-zinc-200"><h4 className="flex items-center gap-2 px-6 py-4 text-sm font-medium"><History aria-hidden="true" className="size-4 shrink-0 text-zinc-400" />Version history</h4>
             <div className="divide-y divide-zinc-200 border-t border-zinc-200">{sheets.filter(s => s.sheet_number === detail.sheet_number).sort((a,b) => b.revision-a.revision).map(s => <button key={s.id} type="button" disabled={pending} aria-pressed={s.id === detail.id} onClick={() => inspect(s.id)} className={`flex w-full cursor-pointer items-center justify-between gap-3 px-6 py-3 text-left transition-colors hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-zinc-500 disabled:opacity-50 ${s.id === detail.id ? "bg-zinc-100" : "bg-white"}`}>
@@ -253,15 +294,24 @@ export function SheetsSection({
         {canReview ? <form id="sheet-document-review" onSubmit={review} className="-mx-6 -mb-5 space-y-4 border-t border-zinc-200 bg-white px-6 py-5">
           <div><h4 className="text-sm font-medium">Admin document review</h4><p className="mt-1 text-xs text-zinc-500">Check the revision and attached professional approval. Acceptance does not certify technical correctness.</p></div>
           <div className="grid gap-4">
-            <label className="flex flex-col gap-2 text-sm font-medium"><span>Review decision</span><span className="relative block">
+            <label className="flex flex-col gap-2 text-sm font-medium"><span>Review decision<RequiredMark /></span><span className="relative block">
               <select disabled={pending} className={`${input} appearance-none pr-9 font-normal`} value={decision} onChange={e => setDecision(e.target.value as Sheet["status"])}><option value="accepted">Accept for project records</option><option value="changes_requested">Request changes</option><option value="rejected">Reject submission</option></select><ChevronDown aria-hidden className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
             </span></label>
-            <label className="flex flex-col gap-2 text-sm font-medium"><span>Document review comments</span><textarea required maxLength={2000} disabled={pending} value={comments} onChange={e => setComments(e.target.value)} placeholder="Document review comments" rows={3} className={`${input} block resize-y font-normal`} /></label>
+            <label className="flex flex-col gap-2 text-sm font-medium"><span>Document review comments<RequiredMark /></span><textarea required maxLength={2000} disabled={pending} value={comments} onChange={e => setComments(e.target.value)} placeholder="Document review comments" rows={3} className={`${input} block resize-y font-normal`} /></label>
           </div>
           {formError && <p role="alert" className="text-sm text-red-600">{formError}</p>}
-          <ModalFooter><button type="submit" form="sheet-document-review" disabled={pending} className="inline-flex cursor-pointer items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"><Check className="size-4" />{pending ? "Saving..." : "Save review"}</button></ModalFooter>
-        </form> : <ModalFooter><button type="button" disabled={pending} onClick={() => { closeDetail(); setUpload({ previous: detail }); setDocumentType(detail.document_type); setSignedDocument(true); setFormError(null); }} className="inline-flex cursor-pointer items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="size-4" />Upload new revision</button></ModalFooter>}
+          <ModalFooter><ProjectWriteButton type="button" disabled={pending || deleting} onClick={() => { setDeleteError(null); setConfirmingDelete(true); }} className="cursor-pointer rounded border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50">Delete</ProjectWriteButton><ProjectWriteButton type="submit" form="sheet-document-review" disabled={pending || deleting} className="inline-flex cursor-pointer items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"><Check className="size-4" />{pending ? "Saving..." : "Save review"}</ProjectWriteButton></ModalFooter>
+        </form> : <ModalFooter><ProjectWriteButton type="button" disabled={pending} onClick={() => { closeDetail(); setUpload({ previous: detail }); setDocumentType(detail.document_type); setSignedDocument(true); setFormError(null); }} className="inline-flex cursor-pointer items-center gap-2 rounded bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"><Upload className="size-4" />Upload new revision</ProjectWriteButton></ModalFooter>}
       </div>}
     </Modal>
+    <ConfirmDialog
+      open={confirmingDelete && !!detail}
+      title={`Delete ${detail?.sheet_number ?? "document"}?`}
+      message="This document, its version history, and attached files will be permanently removed."
+      pending={deleting}
+      error={deleteError}
+      onConfirm={remove}
+      onCancel={() => { if (!deleting) { setConfirmingDelete(false); setDeleteError(null); } }}
+    />
   </section>;
 }

@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Projects" };
 
 export default async function AdminProjectsPage() {
   const [projects, projectManagers, foremen] = await Promise.all([
-    listProjects(),
+    listProjects({ includeArchived: true }),
     listAccountsByRole(["project_manager"]),
     listAccountsByRole(["foreman"]),
   ]);

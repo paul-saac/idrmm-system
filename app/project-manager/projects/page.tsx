@@ -6,7 +6,7 @@ import { ProjectsBrowser } from "@/components/projects/projects-browser";
 export const metadata: Metadata = { title: "Projects" };
 
 export default async function ProjectManagerProjectsPage() {
-  const projects = await listProjects();
+  const projects = await listProjects({ includeArchived: true });
 
   return (
     <>

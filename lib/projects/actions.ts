@@ -1,14 +1,12 @@
 "use server";
 
-import { revalidateProjectLists, revalidateProjectPaths } from "@/lib/projects/revalidate";
-import { redirect } from "next/navigation";
+import { revalidateProjectLists, revalidateProjectPaths, revalidateInventory, revalidateReports } from "@/lib/projects/revalidate";
+import { revalidatePath } from "next/cache";
+import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
 import { requireProjectAccess } from "@/lib/auth/project-access";
-import { seedDefaultSurveyQuestions } from "@/lib/daily-logs/actions";
 import { isAdminRole } from "@/lib/auth/roles";
-import { getCostEstimate } from "@/lib/cost-estimate/data";
-import { deriveProjectStatusFromProgress } from "./status";
 
 export type ProjectActionState = {
   error?: string;
@@ -56,6 +54,7 @@ async function assignmentClash(
   const { data, error } = await supabase
     .from("projects")
     .select("id, project_name, project_manager_id, foreman_id")
+    .is("archived_at", null)
     .neq("status", "completed");
   if (error) {
     console.error("[assignmentClash] Supabase read failed:", error);
@@ -165,12 +164,6 @@ export async function createProject(
     return { error: "Could not create project. Please try again." };
   }
 
-  // Every project starts with the same three Survey questions Daily
-  // Logs have always asked — an admin can rename/reorder/delete them
-  // afterward via the Survey Questions settings modal like any other
-  // question (see seedDefaultSurveyQuestions's own doc comment).
-  await seedDefaultSurveyQuestions(supabase, project.id);
-
   revalidateProjectLists();
   return { success: true };
 }
@@ -184,6 +177,9 @@ export async function updateProject(
 
   if (!profile || !isAdminRole(profile.role)) {
     return { error: "You are not authorized to edit projects." };
+  }
+  if (!await requireProjectAccess(projectId)) {
+    return { error: "This project is archived or you no longer have edit access." };
   }
 
   const projectName = String(formData.get("projectName") ?? "").trim();
@@ -227,30 +223,6 @@ export async function updateProject(
     return { error: clash };
   }
 
-  const confirmed = formData.get("confirmCompletion") === "on";
-  const actualEndDate = confirmed ? parseOptionalDate(formData.get("actualEndDate")) : null;
-  let lifecycle;
-  try {
-    lifecycle = (await getCostEstimate(projectId, true)).lifecycle;
-  } catch {
-    return { error: "Could not verify saved progress. Please try again." };
-  }
-  if (confirmed) {
-    if (!lifecycle.allItemsComplete) {
-      return { error: "Every task and standalone phase must be 100% complete from saved logs before confirming completion." };
-    }
-    const parsed = actualEndDate ? new Date(`${actualEndDate}T00:00:00Z`) : null;
-    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-    if (!actualEndDate || !/^\d{4}-\d{2}-\d{2}$/.test(actualEndDate) || !parsed ||
-      Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== actualEndDate || actualEndDate > today) {
-      return { error: "Enter a valid actual end date that is today or earlier." };
-    }
-    const startDate = parseOptionalDate(formData.get("startDate"));
-    if (startDate && actualEndDate < startDate) {
-      return { error: "Actual end date cannot be before the project start date." };
-    }
-  }
-  const status = deriveProjectStatusFromProgress(lifecycle, actualEndDate);
   const { error } = await supabase
     .from("projects")
     .update({
@@ -258,8 +230,7 @@ export async function updateProject(
       location: location || null,
       start_date: parseOptionalDate(formData.get("startDate")),
       target_end_date: parseOptionalDate(formData.get("targetEndDate")),
-      actual_end_date: actualEndDate,
-      status,
+      actual_end_date: parseOptionalDate(formData.get("actualEndDate")),
       allocated_budget: parseOptionalNumber(formData.get("allocatedBudget")),
       project_manager_id: projectManagerId,
       foreman_id: foremanId,
@@ -321,28 +292,52 @@ export async function updateProjectDefaultLaborCostPercent(
   return { success: true };
 }
 
-export async function deleteProject(
+export async function setProjectArchived(
   projectId: number,
+  archived: boolean,
   _prevState: ProjectActionState,
-  _formData: FormData
+  formData: FormData
 ): Promise<ProjectActionState> {
   const profile = await getSessionProfile();
-
   if (!profile || !isAdminRole(profile.role)) {
-    return { error: "You are not authorized to delete projects." };
+    return { error: "Only administrators can archive or unarchive projects." };
   }
-
-  const supabase = await createClient();
-  const { error } = await supabase
-    .from("projects")
-    .delete()
-    .eq("id", projectId);
-
-  if (error) {
-    console.error("[deleteProject] Supabase delete failed:", error);
-    return { error: "Could not delete project. Please try again." };
+  if (!Number.isSafeInteger(projectId) || projectId <= 0 || typeof archived !== "boolean") {
+    return { error: "Choose a valid project." };
   }
-
-  revalidateProjectLists();
-  redirect("/admin/projects");
+  const reason = String(formData.get("reason") ?? "").trim();
+  if (reason.length > 1000) return { error: "Archive reason must be 1,000 characters or fewer." };
+  try {
+    // Verify completion from saved progress, rather than trusting a stale
+    // project badge or a value submitted by the browser.
+    if (archived && await syncProjectStatusFromProgress(projectId) !== "completed") {
+      return { error: "Only completed projects can be archived. Refresh the project and check its saved progress." };
+    }
+    const supabase = await createClient();
+    const { error } = await supabase.rpc("set_project_archived", {
+      p_project_id: projectId,
+      p_archived: archived,
+      p_reason: archived ? reason || null : null,
+    });
+    if (error) {
+      if (["PGRST202", "42883"].includes(error.code)) {
+        return { error: "Project archiving is not enabled yet. Apply migration 0104 and try again." };
+      }
+      if (["P0001", "42501", "40001"].includes(error.code)) return { error: error.message };
+      console.error("[setProjectArchived] Supabase archive failed:", error.code);
+      return { error: "Could not change the project archive state. Please try again." };
+    }
+    revalidateProjectLists();
+    revalidateProjectPaths(projectId);
+    revalidateInventory();
+    revalidateReports();
+    for (const base of ["/admin", "/project-manager", "/foreman"]) {
+      revalidatePath(base);
+      revalidatePath(`${base}/team`);
+      revalidatePath(`${base}/accounts`);
+    }
+    return { success: true };
+  } catch {
+    return { error: "Could not change the project archive state. Please try again." };
+  }
 }

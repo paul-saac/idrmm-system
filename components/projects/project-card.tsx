@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { ChevronRight, Folder, MapPin } from "lucide-react";
+import { Building2, ChevronRight, MapPin } from "lucide-react";
 import type { ProjectRow } from "@/lib/projects/data";
 import type { PortalBasePath } from "@/components/portal/portal-context";
+import { initials } from "@/lib/initials";
 import { avatarColor } from "@/components/ui/list-table";
 import {
   projectStatusLabel,
@@ -17,10 +18,12 @@ export function ProjectCard({
 }) {
   return (
     <div className="flex flex-col overflow-hidden rounded border border-zinc-200 bg-white">
-      <div className="flex-1 p-6">
+      <div className="bg-white p-6">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-4">
-          <Folder aria-hidden className="size-7 shrink-0 text-zinc-500" />
+          <span className="flex size-12 shrink-0 items-center justify-center rounded-md bg-zinc-800 text-zinc-200">
+            <Building2 aria-hidden className="size-6" />
+          </span>
           <div className="min-w-0">
             <h3 className="break-words text-base font-semibold text-zinc-900">
               {project.name}
@@ -30,15 +33,18 @@ export function ProjectCard({
             )}
           </div>
         </div>
-        <span className={`shrink-0 rounded-sm px-2 py-1 text-xs font-medium whitespace-nowrap ${projectStatusBadgeClasses(project.status)}`}>{projectStatusLabel(project.status)}</span>
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+          {project.archivedAt && <span className="inline-flex h-6 items-center justify-center rounded-sm bg-zinc-100 px-2 text-center text-xs leading-none font-medium text-zinc-600">Archived</span>}
+          <span className={`inline-flex h-6 items-center justify-center rounded-sm px-2.5 text-center text-xs leading-none font-medium whitespace-nowrap ${projectStatusBadgeClasses(project.status)}`}>{projectStatusLabel(project.status)}</span>
+        </div>
+      </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-1 gap-4 border-t border-zinc-200 pt-5 sm:grid-cols-2">
+      <div className="grid flex-1 grid-cols-1 items-center gap-4 border-t border-zinc-200 bg-zinc-50 px-6 py-4 sm:grid-cols-2">
         {[["Project Manager", project.projectManagerName], ["Foreman", project.foremanName]].map(([role, name]) => <div key={role} className="flex min-w-0 items-center gap-2.5">
-          <span aria-hidden className={`flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarColor(name ?? "?")}`}>{name ? name.split(/\s+/).filter(Boolean).map(part => part[0]).filter((_, index, letters) => index === 0 || index === letters.length - 1).join("").toUpperCase() : "—"}</span>
-          <div className="min-w-0"><p className="text-xs text-zinc-500">{role}</p><p className="mt-1 break-words text-sm text-zinc-900">{name ?? "Unassigned"}</p></div>
+          <span aria-hidden className={`flex size-7 shrink-0 items-center justify-center rounded-[1px] text-[11px] font-semibold ${avatarColor(name ?? "?")}`}>{initials(name, "—")}</span>
+          <div className="min-w-0"><p className="text-[11px] text-zinc-500">{role}</p><p className="mt-0.5 break-words text-xs font-medium text-zinc-900">{name ?? "Unassigned"}</p></div>
         </div>)}
-      </div>
       </div>
 
       <Link
@@ -46,7 +52,7 @@ export function ProjectCard({
         className="flex items-center justify-between border-t border-zinc-200 px-6 py-4 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
       >
         View Details
-        <ChevronRight aria-hidden className="size-4 text-zinc-500" />
+        <ChevronRight aria-hidden className="size-4 text-zinc-400" />
       </Link>
     </div>
   );

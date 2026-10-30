@@ -78,7 +78,7 @@ async function nextErNo(
   projectId: number
 ) {
   const { data } = await supabase
-    .from("equipment_requisitions")
+    .from("equipment_requests")
     .select("er_no")
     .eq("project_id", projectId);
 
@@ -115,7 +115,7 @@ export async function createEquipmentRequest(
   const erNo = await nextErNo(supabase, projectId);
 
   const { data: request, error } = await supabase
-    .from("equipment_requisitions")
+    .from("equipment_requests")
     .insert({
       project_id: projectId,
       er_no: erNo,
@@ -132,7 +132,7 @@ export async function createEquipmentRequest(
     return { error: "Could not submit the equipment request. Please try again." };
   }
 
-  const { error: itemsError } = await supabase.from("equipment_requisition_items").insert(
+  const { error: itemsError } = await supabase.from("equipment_request_items").insert(
     items.map((item) => ({
       equipment_request_id: request.id,
       equipment_name: item.equipmentName,
@@ -178,7 +178,7 @@ export async function updateEquipmentRequest(
   const supabase = await createClient();
 
   const { data: current } = await supabase
-    .from("equipment_requisitions")
+    .from("equipment_requests")
     .select("status")
     .eq("id", requestId)
     .single();
@@ -188,7 +188,7 @@ export async function updateEquipmentRequest(
   }
 
   const { data: existingItems } = await supabase
-    .from("equipment_requisition_items")
+    .from("equipment_request_items")
     .select("id")
     .eq("equipment_request_id", requestId);
 
@@ -211,13 +211,13 @@ export async function updateEquipmentRequest(
 
   if (idsToDelete.length > 0) {
     writes.push(
-      supabase.from("equipment_requisition_items").delete().in("id", idsToDelete)
+      supabase.from("equipment_request_items").delete().in("id", idsToDelete)
     );
   }
   for (const item of toUpdate) {
     writes.push(
       supabase
-        .from("equipment_requisition_items")
+        .from("equipment_request_items")
         .update({
           equipment_name: item.equipmentName,
           specification: item.specification || null,
@@ -231,7 +231,7 @@ export async function updateEquipmentRequest(
   }
   if (toInsert.length > 0) {
     writes.push(
-      supabase.from("equipment_requisition_items").insert(
+      supabase.from("equipment_request_items").insert(
         toInsert.map((item) => ({
           equipment_request_id: requestId,
           equipment_name: item.equipmentName,
@@ -258,7 +258,7 @@ export async function updateEquipmentRequest(
   const nextStatus = deriveEquipmentRequestStatus(current.status, items);
 
   const { error } = await supabase
-    .from("equipment_requisitions")
+    .from("equipment_requests")
     .update({
       date_required: dateRequiredRaw || null,
       priority,
@@ -289,7 +289,7 @@ export async function approveEquipmentRequest(
 
   const supabase = await createClient();
   const { error } = await supabase
-    .from("equipment_requisitions")
+    .from("equipment_requests")
     .update({
       status: "approved",
       approved_by: profile.id,
@@ -320,7 +320,7 @@ export async function cancelEquipmentRequest(
 
   const supabase = await createClient();
   const { error } = await supabase
-    .from("equipment_requisitions")
+    .from("equipment_requests")
     .update({ status: "canceled" })
     .eq("id", requestId);
 
@@ -364,7 +364,7 @@ export async function recordEquipmentRequestDelivery(
 
   const supabase = await createClient();
   const { data: request, error: requestError } = await supabase
-    .from("equipment_requisitions")
+    .from("equipment_requests")
     .select("status")
     .eq("id", requestId)
     .eq("project_id", projectId)
@@ -378,7 +378,7 @@ export async function recordEquipmentRequestDelivery(
   }
 
   const { data: itemRows, error: itemsError } = await supabase
-    .from("equipment_requisition_items")
+    .from("equipment_request_items")
     .select("id, quantity_needed, quantity_fulfilled")
     .eq("equipment_request_id", requestId);
 
@@ -397,7 +397,7 @@ export async function recordEquipmentRequestDelivery(
     if (!quantity) continue;
     item.quantityFulfilled = Math.min(item.quantityNeeded, item.quantityFulfilled + quantity);
     const { error } = await supabase
-      .from("equipment_requisition_items")
+      .from("equipment_request_items")
       .update({ quantity_fulfilled: item.quantityFulfilled })
       .eq("id", item.id);
     if (error) {
@@ -409,7 +409,7 @@ export async function recordEquipmentRequestDelivery(
   const nextStatus = deriveEquipmentRequestStatus(request.status, items);
   if (nextStatus !== request.status) {
     const { error } = await supabase
-      .from("equipment_requisitions")
+      .from("equipment_requests")
       .update({ status: nextStatus })
       .eq("id", requestId);
     if (error) {
