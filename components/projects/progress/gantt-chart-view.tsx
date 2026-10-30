@@ -2,7 +2,7 @@
 
 import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
@@ -77,6 +77,7 @@ import { projectScheduleDates } from "@/lib/cost-estimate/schedule-dates";
 import type { ScheduleDateChange } from "@/lib/cost-estimate/schedule-dates";
 import { moveSelectedSchedules } from "@/lib/cost-estimate/schedule-actions";
 import { barDragDays, selectedBarChanges } from "./gantt-bar-selection";
+import { createScheduleMoveQueue } from "./schedule-move-queue";
 import { setTaskWorkers, setCategoryWorkers } from "@/lib/workers/actions";
 import type { ProjectOverrideHistory } from "@/lib/progress-logs/types";
 import type {
@@ -575,7 +576,19 @@ function usePendingOverrides<T>(categories: CostCategory[], confirmed: (rows: Co
     });
   }
 
-  return [overrides, setOverride, clearOverride] as const;
+  function updateOverrides(entries: ReadonlyMap<number, T | null>) {
+    if (entries.size === 0) return;
+    setState(prev => {
+      const next = new Map(prev?.overrides);
+      for (const [id, value] of entries) {
+        if (value === null) next.delete(id);
+        else next.set(id, value);
+      }
+      return { categoriesAtSet: categories, overrides: next };
+    });
+  }
+
+  return [overrides, setOverride, clearOverride, updateOverrides] as const;
 }
 
 /**
@@ -1903,7 +1916,7 @@ export function GanttChartView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoriesForDisplay, percentCompleteByCategoryId, collapsedPhaseIds]);
 
-  const [pendingScheduleOverrides, setScheduleOverride, clearScheduleOverride] =
+  const [pendingScheduleOverrides, setScheduleOverride, clearScheduleOverride, updateScheduleOverrides] =
     usePendingOverrides<ScheduleOverride>(categories, (rows, id, value) => {
       const task = rows.flatMap(category => category.tasks).find(task => task.id === id);
       return task?.plannedStartDate === value.start && task?.plannedEndDate === value.end;
@@ -1920,6 +1933,7 @@ export function GanttChartView({
     pendingCategoryScheduleOverrides,
     setCategoryScheduleOverride,
     clearCategoryScheduleOverride,
+    updateCategoryScheduleOverrides,
   ] = usePendingOverrides<ScheduleOverride>(categories, (rows, id, value) => {
     const category = rows.find(category => category.id === id);
     return category?.plannedStartDate === value.start && category?.plannedEndDate === value.end;
@@ -2472,6 +2486,7 @@ export function GanttChartView({
   const [savingBarGroup, setSavingBarGroup] = useState(false);
   const [barGroupError, setBarGroupError] = useState<string | null>(null);
   const groupDragCleanup = useRef<(() => void) | null>(null);
+  const [barMoveQueue] = useState(() => createScheduleMoveQueue(changes => moveSelectedSchedules(projectId, changes)));
   useEffect(() => () => groupDragCleanup.current?.(), []);
   useEffect(() => {
     const root = chartWrapRef.current;
@@ -2497,32 +2512,32 @@ export function GanttChartView({
     return () => window.removeEventListener("keydown", clear);
   }, []);
 
-  async function persistBarGroup(changes: ScheduleDateChange[]) {
-    if (changes.length === 0) return;
-    const previousTasks = new Map(pendingScheduleOverrides);
-    const previousCategories = new Map(pendingCategoryScheduleOverrides);
-    setBarGroupError(null); setSavingBarGroup(true);
+  function persistBarGroup(changes: ScheduleDateChange[]) {
+    if (changes.length === 0) return Promise.resolve();
+    setBarGroupError(null);
+    const tasks = new Map<number, ScheduleOverride | null>();
+    const categories = new Map<number, ScheduleOverride | null>();
     for (const change of changes) {
-      if (change.kind === "category") setCategoryScheduleOverride(change.id, change);
-      else setScheduleOverride(change.id, change);
+      (change.kind === "category" ? categories : tasks).set(change.id, change);
     }
-    try {
-      const result = await moveSelectedSchedules(projectId, changes);
-      if (result.error) throw new Error(result.error);
-    } catch (error) {
-      for (const change of changes) {
-        if (change.kind === "category") {
-          const previous = previousCategories.get(change.id);
-          if (previous) setCategoryScheduleOverride(change.id, previous);
-          else clearCategoryScheduleOverride(change.id);
-        } else {
-          const previous = previousTasks.get(change.id);
-          if (previous) setScheduleOverride(change.id, previous);
-          else clearScheduleOverride(change.id);
+    updateScheduleOverrides(tasks);
+    updateCategoryScheduleOverrides(categories);
+    return barMoveQueue.enqueue(changes, {
+      onBusy: setSavingBarGroup,
+      onRollback(positions, message) {
+        groupDragCleanup.current?.();
+        const tasks = new Map<number, ScheduleOverride | null>();
+        const categories = new Map<number, ScheduleOverride | null>();
+        for (const position of positions) {
+          const dates = position.start !== null && position.end !== null ? { start: position.start, end: position.end } : null;
+          (position.kind === "category" ? categories : tasks).set(position.id, dates);
         }
-      }
-      setBarGroupError(error instanceof Error ? error.message : "Could not move the selected schedules.");
-    } finally { setSavingBarGroup(false); router.refresh(); }
+        updateScheduleOverrides(tasks);
+        updateCategoryScheduleOverrides(categories);
+        setBarGroupError(message);
+      },
+      onIdle: () => router.refresh(),
+    });
   }
 
   function handleBarSelectionMouseDown(event: React.MouseEvent<HTMLDivElement>) {
@@ -2535,7 +2550,6 @@ export function GanttChartView({
     const id = bar.dataset.ganttRowId;
     const row = effectiveTasks.find(item => item.id === id);
     if (!id || !row || row.isDisabled || (!taskById.has(id) && !categoryById.has(id))) return;
-    if (savingBarGroup) { event.preventDefault(); event.stopPropagation(); return; }
     const wasSelected = selectedBarIds.has(id);
     if (!event.shiftKey && !wasSelected) { if (selectedBarIds.size > 0) setSelectedBarIds(new Set()); return; }
     event.preventDefault(); event.stopPropagation();
@@ -2547,45 +2561,67 @@ export function GanttChartView({
     if (!svg) return;
     const originX = event.clientX;
     const originLeft = svg.getBoundingClientRect().left;
+    let currentLeft = originLeft;
     const scale = svg.getScreenCTM()?.a || 1;
     const projectFirst = projectStartDate ? toDate(projectStartDate) : null;
     const first = projectFirst && (!timelineExtent || projectFirst < timelineExtent.min) ? projectFirst : timelineExtent?.min ?? row.start;
-    const daysPerColumn = barDragDays(effectiveColumnWidth, effectiveColumnWidth, view, first);
+    const previousDates = new Map<string, ScheduleOverride>();
+    for (const [id, dates] of pendingScheduleOverrides) previousDates.set(String(id), dates);
+    for (const [id, dates] of pendingCategoryScheduleOverrides) previousDates.set(phaseRowId(id), dates);
     const originals = new Map<SVGGElement, string | null>();
-    let delta = 0, moved = false, frame = 0;
+    let nodes: SVGGElement[] = [];
+    let pixels = 0, pointerX = originX, moved = false, frame = 0;
     const shiftClick = event.shiftKey;
     function displacement(clientX: number) {
-      return (clientX - originX + originLeft - svg!.getBoundingClientRect().left) / scale;
+      return (clientX - originX + originLeft - currentLeft) / scale;
+    }
+    function cacheNodes() {
+      nodes = Array.from(chartWrapRef.current?.querySelectorAll<SVGGElement>("[data-gantt-row-id]") ?? [])
+        .filter(node => previewIds.has(node.dataset.ganttRowId ?? ""));
+      for (const node of nodes) if (!originals.has(node)) originals.set(node, node.getAttribute("transform"));
+      if (moved) {
+        if (frame) window.cancelAnimationFrame(frame);
+        paint();
+      }
     }
     function paint() {
       frame = 0;
-      const pixels = delta * effectiveColumnWidth / daysPerColumn;
-      chartWrapRef.current?.querySelectorAll<SVGGElement>("[data-gantt-row-id]").forEach(node => {
-        if (!previewIds.has(node.dataset.ganttRowId ?? "")) return;
-        if (!originals.has(node)) originals.set(node, node.getAttribute("transform"));
+      for (const node of nodes) {
         node.setAttribute("transform", `${originals.get(node) ?? ""} translate(${pixels} 0)`);
-      });
+      }
     }
+    function updateScroll() {
+      currentLeft = svg!.getBoundingClientRect().left;
+      if (moved) {
+        pixels = displacement(pointerX);
+        if (!frame) frame = window.requestAnimationFrame(paint);
+      }
+    }
+    cacheNodes();
+    const observer = new MutationObserver(cacheNodes);
+    if (chartWrapRef.current) observer.observe(chartWrapRef.current, { childList: true, subtree: true });
     function cleanup() {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
       window.removeEventListener("blur", cleanup);
+      window.removeEventListener("scroll", updateScroll, true);
+      observer.disconnect();
       if (frame) window.cancelAnimationFrame(frame);
       originals.forEach((value, node) => { if (value === null) node.removeAttribute("transform"); else node.setAttribute("transform", value); });
       groupDragCleanup.current = null;
     }
     function move(e: MouseEvent) {
-      const pixels = displacement(e.clientX);
+      pointerX = e.clientX;
+      pixels = displacement(pointerX);
       if (Math.abs(pixels) > 3) moved = true;
       if (!moved) return;
       e.preventDefault();
-      delta = barDragDays(pixels, effectiveColumnWidth, view, first);
       if (!frame) frame = window.requestAnimationFrame(paint);
     }
     function up(e: MouseEvent) {
-      const pixels = displacement(e.clientX);
+      pixels = displacement(e.clientX);
       moved ||= Math.abs(pixels) > 3;
-      delta = barDragDays(pixels, effectiveColumnWidth, view, first);
+      const delta = barDragDays(pixels, effectiveColumnWidth, view, first);
       cleanup();
       if (!moved) {
         if (shiftClick && wasSelected) setSelectedBarIds(prev => { const next = new Set(prev); next.delete(id!); return next; });
@@ -2594,7 +2630,10 @@ export function GanttChartView({
       }
       barJustDraggedRef.current = true;
       window.setTimeout(() => { barJustDraggedRef.current = false; }, 0);
-      try { void persistBarGroup(selectedBarChanges(selected, effectiveTasks, categoriesForDisplay, delta)); }
+      try {
+        const changes = selectedBarChanges(selected, effectiveTasks, categoriesForDisplay, delta, previousDates);
+        flushSync(() => { void persistBarGroup(changes); });
+      }
       catch (error) { setBarGroupError(error instanceof Error ? error.message : "Could not move the selected schedules."); }
     }
     groupDragCleanup.current?.();
@@ -2602,6 +2641,7 @@ export function GanttChartView({
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
     window.addEventListener("blur", cleanup);
+    window.addEventListener("scroll", updateScroll, true);
   }
 
   // Detects a native gantt-task-react drag starting (move, resize, or

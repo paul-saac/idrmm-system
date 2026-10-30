@@ -17,24 +17,30 @@ export function barDragDays(pixels: number, columnWidth: number, view: string, f
 }
 
 /** Summary bars move their children; overlapping selections move each saved row once. */
-export function selectedBarChanges(selected: ReadonlySet<string>, rows: Task[], categories: CostCategory[], days: number): ScheduleDateChange[] {
+export function selectedBarChanges(selected: ReadonlySet<string>, rows: Task[], categories: CostCategory[], days: number,
+  previousDates: ReadonlyMap<string, { start: string; end: string }> = new Map()): ScheduleDateChange[] {
   if (!Number.isInteger(days) || days === 0) return [];
   const wanted = new Set(selected);
   for (const row of rows) {
     if (row.project && selected.has(row.project)) wanted.add(row.id);
   }
   const changes: ScheduleDateChange[] = [];
+  const sources = new Map<string, { kind: "category" | "task"; source: Pick<CostCategory, "id" | "plannedStartDate" | "plannedEndDate"> }>();
+  for (const category of categories) {
+    if (category.tasks.length === 0) sources.set(`phase-${category.id}`, { kind: "category", source: category });
+    for (const task of category.tasks) sources.set(String(task.id), { kind: "task", source: task });
+  }
   for (const row of rows) {
     if (!wanted.has(row.id) || row.type === "project" || row.isDisabled) continue;
-    const category = categories.find(c => `phase-${c.id}` === row.id && c.tasks.length === 0);
-    const task = category ? undefined : categories.flatMap(c => c.tasks).find(t => String(t.id) === row.id);
-    const source = category ?? task;
+    const entry = sources.get(row.id);
+    const source = entry?.source;
     if (!source || source.id <= 0) continue;
     const start = shiftScheduleDate(day(row.start), days);
     const end = shiftScheduleDate(day(row.end), days - (row.type === "milestone" ? 0 : 1));
     if (!isScheduleDate(start) || !isScheduleDate(end)) throw new Error("Selected schedules must stay between 1980 and 2100.");
-    changes.push({ kind: category ? "category" : "task", id: source.id, start, end,
-      previousStart: source.plannedStartDate, previousEnd: source.plannedEndDate });
+    const previous = previousDates.get(row.id);
+    changes.push({ kind: entry!.kind, id: source.id, start, end,
+      previousStart: previous?.start ?? source.plannedStartDate, previousEnd: previous?.end ?? source.plannedEndDate });
   }
   return changes;
 }
