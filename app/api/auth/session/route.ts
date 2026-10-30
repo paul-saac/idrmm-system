@@ -5,6 +5,18 @@ import { readSessionState } from "@/lib/auth/session-state";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store", Vary: "Cookie" };
 
+function isSameOrigin(request: NextRequest) {
+  let expectedOrigin = request.nextUrl.origin;
+  if (process.env.WEBSITE_HOSTNAME) {
+    // App Service terminates HTTPS before forwarding HTTP to Next.js. Use
+    // its public Host, not the internal URL or a supplied X-Forwarded-Host.
+    const host = request.headers.get("host");
+    if (!host || request.headers.get("x-forwarded-proto") !== "https") return false;
+    expectedOrigin = `https://${host}`;
+  }
+  return request.headers.get("origin") === expectedOrigin;
+}
+
 async function respond(activity = false, end = false) {
   const client = await createClient();
   const { data: { user }, error } = await client.auth.getUser();
@@ -24,7 +36,7 @@ async function respond(activity = false, end = false) {
 export async function GET() { return respond(); }
 
 export async function POST(request: NextRequest) {
-  if (request.headers.get("origin") !== request.nextUrl.origin ||
+  if (!isSameOrigin(request) ||
     !request.headers.get("content-type")?.startsWith("application/json"))
     return Response.json({ error: "Invalid session request." }, { status: 403, headers });
   let body;
