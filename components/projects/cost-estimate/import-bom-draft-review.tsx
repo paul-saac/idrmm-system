@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 import { AlertTriangle, Check, ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
 import { ViewMenu } from "@/components/ui/view-menu";
 import { DIVIDER, GROUP_ROW, MAIN_TASK_ROW, SUBTASK_NAME_CELL, TREE_CELL, TreeLine } from "./breakdown-table-shared";
-import { importResourceTotals, type ImportCostType } from "@/lib/bom-import/estimate-resources";
+import { importResourceTotals } from "@/lib/bom-import/estimate-resources";
 import type { DraftCategory, DraftResources } from "./import-bom-modal-content";
 
 type DraftTask = DraftCategory["tasks"][number];
@@ -29,6 +29,9 @@ function sumKnown(values: (number | null)[]): number | null {
   return known.length ? known.reduce((sum, value) => sum + value, 0) : null;
 }
 
+function hasResources(owner: DraftResources) {
+  return !!owner.materials?.length || !!owner.equipment?.length || !!owner.otherCosts?.length || owner.laborEstimate !== undefined;
+}
 function taskAmount(task: DraftTask) { return resourceAmount(task); }
 function resourceAmount(owner: DraftResources) {
   const hasValues = !!owner.amount?.trim() || !!owner.laborEstimate?.trim() || (owner.materials ?? []).some(line => materialAmount(line) !== null) ||
@@ -165,13 +168,6 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
     }));
     setQuery(""); setFilter("all"); expandCategory(id); setSelectedCategoryId(id); setSelectedTaskId(taskId); setFocusName(taskId);
   }
-  function addMaterial(id: string, taskId: string) {
-    const materialId = crypto.randomUUID();
-    onChange(previous => previous.map(category => category.id !== id ? category : { ...category, tasks: category.tasks.map(task => task.id !== taskId ? task : { ...task, materials: [...task.materials, { id: materialId, name: "", quantity: "", unit: "", unitCost: "" }] }) }));
-    setQuery(""); setFilter("all"); expandCategory(id);
-    setCollapsedTasks(previous => { const next = new Set(previous); next.delete(taskId); return next; });
-    setSelectedCategoryId(id); setSelectedTaskId(taskId); setFocusName(materialId);
-  }
   function updateOwner(categoryId: string, taskId: string | null, patch: Partial<DraftResources>) {
     onChange(previous => previous.map(category => category.id !== categoryId ? category : taskId
       ? { ...category, tasks: category.tasks.map(task => task.id === taskId ? { ...task, ...patch } : task) }
@@ -179,48 +175,54 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
   }
   function resourceActions(categoryId: string, taskId: string | null, owner: DraftResources) {
     const update = (patch: Partial<DraftResources>) => {
-      updateOwner(categoryId, taskId, patch); expandCategory(categoryId);
+      updateOwner(categoryId, taskId, patch); setQuery(""); setFilter("all"); expandCategory(categoryId);
       if (taskId) setCollapsedTasks(previous => { const next = new Set(previous); next.delete(taskId); return next; });
     };
     return [
-      { label: "Add material", run: () => { update({ materials: [...(owner.materials ?? []), { id: crypto.randomUUID(), name: "", quantity: "", unit: "", unitCost: "" }] }); if (taskId) setCollapsedTasks(previous => { const next = new Set(previous); next.delete(taskId); return next; }); } },
+      { label: "Add material", run: () => { const id = crypto.randomUUID(); update({ materials: [...(owner.materials ?? []), { id, name: "", quantity: "", unit: "", unitCost: "" }] }); setFocusName(id); } },
       { label: "Add labor amount", run: () => update({ laborEstimate: owner.laborEstimate ?? "" }) },
       ...(["equipment", "otherCosts"] as const).map(key => ({ label: key === "equipment" ? "Add equipment cost" : "Add other cost", run: () => {
-        update({ [key]: [...(owner[key] ?? []), { id: crypto.randomUUID(), name: "", amount: "" }] });
+        const id = crypto.randomUUID();
+        update({ [key]: [...(owner[key] ?? []), { id, name: "", amount: "" }] }); setFocusName(id);
         if (taskId) setCollapsedTasks(previous => { const next = new Set(previous); next.delete(taskId); return next; });
       } })),
     ];
   }
+  function addSelectedResource(label: string) {
+    if (!categoryId || !selectedCategory) return;
+    const owner = selectedTask ?? selectedCategory;
+    resourceActions(categoryId, selectedTask?.id ?? null, owner).find(action => action.label === label)?.run();
+  }
   function resourceRows(categoryId: string, taskId: string | null, owner: DraftResources & { id: string; name: string }, nameMatches: boolean, lastTask: boolean) {
     const update = (patch: Partial<DraftResources>) => updateOwner(categoryId, taskId, patch);
-    const hasLines = (owner.materials?.length ?? 0) + (owner.equipment?.length ?? 0) + (owner.otherCosts?.length ?? 0) > 0 || owner.laborEstimate !== undefined;
+    const selectOwner = () => { setSelectedCategoryId(categoryId); setSelectedTaskId(taskId); };
+    const costLabel = owner.amountType === "labor" ? "Labor" : owner.amountType === "equipment" ? "Equipment" : owner.amountType === "other" ? "Other cost" : "Material";
     return <>
-      {(!hasLines || !!owner.amount?.trim()) && <tr className={`${GROUP_ROW} bg-white`}>
+      {hasResources(owner) && !!owner.amount?.trim() && <tr onClick={selectOwner} className={`${GROUP_ROW} bg-white`}>
         <td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
-        <td colSpan={4} className={`${DIVIDER} pl-6 pr-2`}><div className="flex items-center justify-between gap-3"><span className="text-zinc-500">Direct planned cost</span>
-          <ViewMenu value={owner.amountType ?? "material"} onChange={value => update({ amountType: value as ImportCostType })}
-            views={[{ value: "material", label: "Material" }, { value: "labor", label: "Labor" }, { value: "equipment", label: "Equipment" }, { value: "other", label: "Other cost" }]} />
-        </div></td>
-        <td className={DIVIDER}><Cell value={owner.amount ?? ""} label={`Direct amount for ${owner.name}`} numeric money missing={numberValue(owner.amount ?? "") === null} onChange={amount => update({ amount })} /></td><td />
+        <td className={`${DIVIDER} pl-6 pr-2`}><span className="text-[10px] text-zinc-400">{costLabel}</span><p className="py-2">{owner.name}</p></td>
+        <td className={DIVIDER}><Cell value={owner.amount} label={`Direct amount for ${owner.name}`} numeric money missing={numberValue(owner.amount) === null} onChange={amount => update({ amount })} /></td><td />
       </tr>}
-      {owner.laborEstimate !== undefined && <tr className={`${GROUP_ROW} bg-white`}><td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
-        <td colSpan={4} className={`${DIVIDER} pl-6 text-zinc-500`}>Planned labor</td>
+      {owner.laborEstimate !== undefined && <tr onClick={selectOwner} className={`${GROUP_ROW} bg-white`}><td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
+        <td className={`${DIVIDER} pl-6 text-zinc-500`}>Labor</td>
         <td className={DIVIDER}><Cell value={owner.laborEstimate} label={`Labor amount for ${owner.name}`} numeric money missing={numberValue(owner.laborEstimate) === null} onChange={laborEstimate => update({ laborEstimate })} /></td>
         <td className="pr-1"><RowMenu name={`labor for ${owner.name}`} actions={[{ label: "Remove labor amount", destructive: true, run: () => update({ laborEstimate: undefined }) }]} /></td>
       </tr>}
-      {(owner.materials ?? []).filter(line => (filter === "all" || materialMissing(line)) && (nameMatches || matches(line.name))).map(material => <tr key={material.id} className={`${GROUP_ROW} bg-[rgba(252,211,77,0.08)]`}>
+      {(owner.materials ?? []).filter(line => (filter === "all" || materialMissing(line)) && (nameMatches || matches(line.name))).map(material => <tr key={material.id} onClick={selectOwner} data-resource-kind="material" className={`${GROUP_ROW} bg-[rgba(252,211,77,0.08)]`}>
         <td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
-        <td className={`${DIVIDER} border-l-3 border-l-zinc-300 pl-6 pr-2`}><Cell nameId={material.id} value={material.name} label="Material name" missing={!material.name.trim()} onChange={name => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, name } : line) })} /></td>
-        <td className={DIVIDER}><Cell value={material.quantity} label={`Material quantity for ${material.name || "material"}`} numeric missing={numberValue(material.quantity) === null} onChange={quantity => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, quantity } : line) })} /></td>
-        <td className={DIVIDER}><Cell value={material.unit} label={`Unit for ${material.name || "material"}`} alignRight missing={!material.unit.trim()} onChange={unit => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, unit } : line) })} /></td>
-        <td className={DIVIDER}><Cell value={material.unitCost} label={`Unit cost for ${material.name || "material"}`} numeric missing={numberValue(material.unitCost) === null} onChange={unitCost => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, unitCost } : line) })} /></td>
+        <td className={`${DIVIDER} border-l-3 border-l-zinc-300`}><div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,.8fr)_minmax(0,1fr)] divide-x divide-zinc-200">
+          <label className="min-w-0 pl-4 pt-1.5"><span className="block px-2 text-[10px] text-zinc-400">Material</span><Cell nameId={material.id} value={material.name} label="Material name" missing={!material.name.trim()} onChange={name => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, name } : line) })} /></label>
+          <label className="min-w-0 pt-1.5"><span className="block px-2 text-right text-[10px] text-zinc-400">Quantity</span><Cell value={material.quantity} label={`Material quantity for ${material.name || "material"}`} numeric missing={numberValue(material.quantity) === null} onChange={quantity => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, quantity } : line) })} /></label>
+          <label className="min-w-0 pt-1.5"><span className="block px-2 text-right text-[10px] text-zinc-400">Unit</span><Cell value={material.unit} label={`Unit for ${material.name || "material"}`} alignRight missing={!material.unit.trim()} onChange={unit => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, unit } : line) })} /></label>
+          <label className="min-w-0 pt-1.5"><span className="block px-2 text-right text-[10px] text-zinc-400">Unit Cost</span><Cell value={material.unitCost} label={`Unit cost for ${material.name || "material"}`} numeric missing={numberValue(material.unitCost) === null} onChange={unitCost => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, unitCost } : line) })} /></label>
+        </div></td>
         <td className={`${DIVIDER} px-4 text-right tabular-nums`}>{currency(materialAmount(material))}</td>
         <td className="pr-1"><RowMenu name={material.name || "material"} actions={[{ label: "Delete material", destructive: true, run: () => update({ materials: owner.materials!.filter(line => line.id !== material.id) }) }]} /></td>
       </tr>)}
-      {(["equipment", "otherCosts"] as const).flatMap(key => (owner[key] ?? []).filter(line => (filter === "all" || !line.name.trim() || numberValue(line.amount) === null) && (nameMatches || matches(line.name))).map(line => <tr key={line.id} className={`${GROUP_ROW} bg-zinc-50/50`}>
+      {(["equipment", "otherCosts"] as const).flatMap(key => (owner[key] ?? []).filter(line => (filter === "all" || !line.name.trim() || numberValue(line.amount) === null) && (nameMatches || matches(line.name))).map(line => <tr key={line.id} onClick={selectOwner} data-resource-kind={key} className={`${GROUP_ROW} bg-zinc-50/50`}>
         <td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
-        <td colSpan={4} className={`${DIVIDER} pl-6 pr-2`}><div className="flex items-center gap-3"><span className="shrink-0 text-[10px] text-zinc-500">{key === "equipment" ? "Equipment" : "Other cost"}</span>
-          <Cell nameId={line.id} value={line.name} label={`${key === "equipment" ? "Equipment" : "Other cost"} name`} missing={!line.name.trim()} onChange={name => update({ [key]: owner[key]!.map(item => item.id === line.id ? { ...item, name } : item) })} /></div></td>
+        <td className={`${DIVIDER} pl-6 pr-2`}><label className="block min-w-0 pt-1.5"><span className="block px-2 text-[10px] text-zinc-400">{key === "equipment" ? "Equipment description" : "Other cost description"}</span>
+          <Cell nameId={line.id} value={line.name} label={`${key === "equipment" ? "Equipment" : "Other cost"} name`} missing={!line.name.trim()} onChange={name => update({ [key]: owner[key]!.map(item => item.id === line.id ? { ...item, name } : item) })} /></label></td>
         <td className={DIVIDER}><Cell value={line.amount} label={`Amount for ${line.name || (key === "equipment" ? "equipment" : "other cost")}`} numeric money missing={numberValue(line.amount) === null} onChange={amount => update({ [key]: owner[key]!.map(item => item.id === line.id ? { ...item, amount } : item) })} /></td>
         <td className="pr-1"><RowMenu name={line.name || key} actions={[{ label: key === "equipment" ? "Delete equipment cost" : "Delete other cost", destructive: true, run: () => update({ [key]: owner[key]!.filter(item => item.id !== line.id) }) }]} /></td>
       </tr>))}
@@ -278,12 +280,9 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
       <div className="flex min-w-0 flex-1 flex-col">
         <div ref={tableScroll} className="min-h-0 flex-1 overflow-auto border border-zinc-200 [scroll-padding-top:32px]">
           <table className="w-full min-w-180 table-fixed border-collapse text-left text-xs">
-            <colgroup><col className="w-9" /><col /><col className="w-36" /><col className="w-24" /><col className="w-28" /><col className="w-32" /><col className="w-8" /></colgroup>
+            <colgroup><col className="w-9" /><col /><col className="w-32" /><col className="w-8" /></colgroup>
             <thead className="sticky top-0 z-10 bg-zinc-50 text-xs font-medium text-zinc-500"><tr>
               <th scope="col" colSpan={2} className={`${DIVIDER} border-b px-4 py-2.5 font-medium`}>Task</th>
-              <th scope="col" className={`${DIVIDER} border-b px-4 py-2.5 text-right font-medium`}>Material Quantity</th>
-              <th scope="col" className={`${DIVIDER} border-b px-4 py-2.5 text-right font-medium`}>Unit</th>
-              <th scope="col" className={`${DIVIDER} border-b px-4 py-2.5 text-right font-medium`}>Unit Cost</th>
               <th scope="col" className={`${DIVIDER} border-b px-4 py-2.5 text-right font-medium`}>Amount</th>
               <th scope="col" className="border-b border-zinc-200"><span className="sr-only">Row actions</span></th>
             </tr></thead>
@@ -293,12 +292,14 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
                 const tasks = category.tasks.filter(task => (filter === "all" || taskMissing(task) || resourcesMissing(task)) && (categoryMatch || matches(task.name) || resourceMatch(task, matches)));
                 const collapsed = collapsedCategories.has(category.id);
                 return <Fragment key={category.id}>
-                  <tr data-draft-category={category.id} onClick={() => setSelectedCategoryId(category.id)} className={MAIN_TASK_ROW}>
-                    <td colSpan={5} className={`${DIVIDER} px-4`}><div className="flex items-center gap-1">
+                  <tr data-draft-category={category.id} onClick={() => { setSelectedCategoryId(category.id); setSelectedTaskId(null); }} className={MAIN_TASK_ROW}>
+                    <td colSpan={2} className={`${DIVIDER} px-4`}><div className="flex items-center gap-1">
                       <button type="button" onClick={() => { toggle(setCollapsedCategories, category.id); setFocusName(null); }} aria-label={`${collapsed ? "Expand" : "Collapse"} ${category.name}`} aria-expanded={!collapsed} disabled={!category.tasks.length} className="flex size-5 shrink-0 cursor-pointer items-center justify-center text-zinc-400 disabled:hidden">{collapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}</button>
                       <Cell nameId={category.id} value={category.name} label="Category name" missing={!category.name.trim()} onChange={name => updateCategory(category.id, { name })} />
                     </div></td>
-                    <td className={`${DIVIDER} px-4 text-right font-medium tabular-nums`}>{currency(categoryAmount(category))}</td>
+                    <td className={`${DIVIDER} text-right font-medium tabular-nums`}>{!category.tasks.length && !hasResources(category)
+                      ? <Cell value={category.amount} label={`Amount for ${category.name}`} numeric money onChange={amount => updateCategory(category.id, { amount })} />
+                      : <span className="px-4">{currency(categoryAmount(category))}</span>}</td>
                     <td className="pr-1"><RowMenu name={category.name} actions={[{ label: "Add task", run: () => addTask(category.id) }, ...(!category.tasks.length ? resourceActions(category.id, null, category) : []), { label: "Delete category", destructive: true, run: () => { setFocusName(null); onChange(previous => previous.filter(row => row.id !== category.id)); } }]} /></td>
                   </tr>
                   {!collapsed && !category.tasks.length && resourceRows(category.id, null, category, categoryMatch, true)}
@@ -313,8 +314,9 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
                           {<button type="button" disabled={!task.materials.length && !task.equipment?.length && !task.otherCosts?.length && task.laborEstimate === undefined} aria-label={`${taskCollapsed ? "Expand" : "Collapse"} ${task.name}`} aria-expanded={!taskCollapsed} onClick={() => { toggle(setCollapsedTasks, task.id); setFocusName(null); }} className="flex size-5 shrink-0 cursor-pointer items-center justify-center text-zinc-400 disabled:hidden">{taskCollapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}</button>}
                           <Cell nameId={task.id} value={task.name} label="Task name" missing={!task.name.trim()} onChange={name => updateTask(category.id, task.id, { name })} />
                         </div></td>
-                        <td className={`${DIVIDER} px-4 text-right text-zinc-300`}></td><td className={`${DIVIDER} px-4 text-right text-zinc-300`}></td><td className={`${DIVIDER} px-4 text-right text-zinc-300`}></td>
-                        <td className={`${DIVIDER} px-4 text-right font-medium tabular-nums`}>{currency(taskAmount(task))}</td>
+                        <td className={`${DIVIDER} text-right font-medium tabular-nums`}>{!hasResources(task)
+                          ? <Cell value={task.amount ?? ""} label={`Amount for ${task.name}`} numeric money onChange={amount => updateOwner(category.id, task.id, { amount })} />
+                          : <span className="px-4">{currency(taskAmount(task))}</span>}</td>
                         <td className="pr-1"><RowMenu name={task.name} actions={[...resourceActions(category.id, task.id, task), { label: "Delete task", destructive: true, run: () => { setFocusName(null); onChange(previous => previous.map(row => row.id !== category.id ? row : { ...row, tasks: row.tasks.filter(item => item.id !== task.id) })); } }]} /></td>
                       </tr>
                       {!taskCollapsed && resourceRows(category.id, task.id, task, taskMatch, lastTask)}
@@ -322,13 +324,16 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
                   })}
                 </Fragment>;
               })}
-              {!visibleCategories.length && <tr><td colSpan={7} className="px-5 py-14 text-center text-xs text-zinc-500">{categories.length ? "No items match your search or filter." : "Add a category to start your draft."}</td></tr>}
+              {!visibleCategories.length && <tr><td colSpan={4} className="px-5 py-14 text-center text-xs text-zinc-500">{categories.length ? "No items match your search or filter." : "Add a category to start your draft."}</td></tr>}
             </tbody>
           </table>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pt-2 text-[10px] text-zinc-500">
           <button type="button" onClick={() => tableScroll.current?.scrollBy({ top: tableScroll.current.clientHeight * 0.75, behavior: "smooth" })} className="flex cursor-pointer items-center gap-1 hover:text-zinc-800"><ChevronDown aria-hidden className="size-3" />Scroll down</button>
-          <div className="flex items-center gap-2"><button type="button" disabled={!categoryId || !selectedTask} onClick={() => categoryId && selectedTask && addMaterial(categoryId, selectedTask.id)} className="cursor-pointer hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-40">+ Add material</button><span aria-hidden>·</span><span className="flex items-center gap-1"><MoreHorizontal aria-hidden className="size-3.5" />Manage row</span></div>
+          <div className="flex flex-wrap items-center gap-3">
+            {([ ["+ Add material", "Add material"], ["+ Add equipment", "Add equipment cost"], ["+ Add other", "Add other cost"] ] as const).map(([label, action]) => <button key={action} type="button" disabled={!categoryId} title={`${action} to ${selectedTask?.name ?? selectedCategory?.name ?? "the selected task"}`} onClick={() => addSelectedResource(action)} className="cursor-pointer hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-40">{label}</button>)}
+            <span aria-hidden>&middot;</span><span className="flex items-center gap-1"><MoreHorizontal aria-hidden className="size-3.5" />Manage row</span>
+          </div>
         </div>
       </div>
     </div>

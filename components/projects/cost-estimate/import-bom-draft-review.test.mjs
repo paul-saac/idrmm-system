@@ -133,12 +133,15 @@ test('clicking a table row does not activate the outline filter', () => {
   assert.equal(descendants(f.render(), node => node.type === 'button' && node.props['aria-current'] === 'location').length, 0);
 });
 
-test('the rendered table keeps the material headers, tree columns, and right-hand row menus', () => {
+test('the table has only Task and Amount headers with material fields labeled inside the row', () => {
   const f = fixture(); f.select('Earthworks'); const html = f.html();
-  for (const label of ['Task', 'Material Quantity', 'Unit Cost', 'Amount']) assert.match(html, new RegExp(`>${label}</th>`));
+  for (const label of ['Task', 'Amount']) assert.match(html, new RegExp(`>${label}</th>`));
   assert.doesNotMatch(html, /Unit cost \(₱\)|Amount \(₱\)/);
-  assert.match(html, /colSpan="5"/i);
+  assert.match(html, /colSpan="2"/i);
+  assert.doesNotMatch(html, />(?:Material Quantity|Quantity|Unit|Unit Cost)<\/th>/);
+  for (const label of ['Material', 'Quantity', 'Unit', 'Unit Cost']) assert.match(html, new RegExp(`>${label}</span>`));
   assert.match(html, /Manage Earthworks/); assert.match(html, /Manage Excavation/); assert.match(html, /Manage Gravel/);
+  assert.doesNotMatch(html, /<span[^>]*>\?<\/span>/);
 });
 
 test('reviewing equipment, labor and other costs edits the draft and updates its total', () => {
@@ -165,4 +168,43 @@ test('adding a first subtask preserves standalone resource costs by moving them 
   assert.equal(f.data[0].amount,'');
   assert.equal(f.data[0].tasks[0].amount,'5000');
   assert.match(f.html(),/5,200/);
+});
+
+test('footer add controls create only the selected resource rows with description and amount',()=>{
+  const f=fixture();f.select('Earthworks');
+  assert.doesNotMatch(f.html(),/Direct planned cost|Planned labor/);
+  assert.equal(descendants(f.render(),node=>node.props['data-resource-kind']==='equipment').length,0);
+  f.find(node=>node.type==='button' && node.props.children==='+ Add equipment').props.onClick();f.render();
+  assert.equal(f.data[1].tasks[0].equipment.length,1);
+  const equipment=f.find(node=>node.props['data-resource-kind']==='equipment');
+  assert.equal(descendants(equipment,node=>node.props.label==='Equipment name').length,1);
+  assert.equal(descendants(equipment,node=>node.props.label==='Amount for equipment').length,1);
+  assert.equal(descendants(equipment,node=>node.type==='label').length,1);
+  f.find(node=>node.type==='button' && node.props.children==='+ Add other').props.onClick();f.render();
+  assert.equal(f.data[1].tasks[0].otherCosts.length,1);
+  const other=f.find(node=>node.props['data-resource-kind']==='otherCosts');
+  assert.equal(descendants(other,node=>node.props.label==='Other cost name').length,1);
+  assert.equal(descendants(other,node=>node.props.label==='Amount for other cost').length,1);
+  const material=f.find(node=>node.props['data-resource-kind']==='material');
+  assert.equal(descendants(material,node=>node.type==='label').length,4);
+});
+
+test('footer additions work for standalone tasks and preserve their original amounts',()=>{
+  const f=fixture();f.select('Mobilization');
+  f.find(node=>node.type==='button' && node.props.children==='+ Add other').props.onClick();f.render();
+  assert.equal(f.data[0].otherCosts.length,1);
+  assert.equal(f.data[0].tasks.length,0);
+  assert.equal(f.data[0].amount,'5000');
+  assert.equal(f.find(node=>node.props.label==='Direct amount for Mobilization').props.value,'5000');
+});
+
+test('clicking a resource row targets its task for footer additions, even after selecting another task',()=>{
+  const f=fixture();
+  f.data[1].tasks.push({id:'second',name:'Second task',quantity:'',unit:'',materials:[]});f.render();
+  const second=f.find(node=>node.type==='tr' && descendants(node,cell=>cell.props.label==='Task name' && cell.props.value==='Second task').length>0);
+  second.props.onClick();f.render();
+  f.find(node=>node.props['data-resource-kind']==='material').props.onClick();f.render();
+  f.find(node=>node.type==='button' && node.props.children==='+ Add equipment').props.onClick();f.render();
+  assert.equal(f.data[1].tasks[0].equipment.length,1);
+  assert.equal(f.data[1].tasks[1].equipment,undefined);
 });
