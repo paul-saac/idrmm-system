@@ -29,7 +29,16 @@ type DraftMaterialLine = {
   unitCost: string;
 };
 
-type DraftTask = {
+export type DraftResources = {
+  amount?: string;
+  amountType?: "material" | "labor" | "equipment" | "other";
+  laborEstimate?: string;
+  materials?: DraftMaterialLine[];
+  equipment?: { id: string; name: string; amount: string }[];
+  otherCosts?: { id: string; name: string; amount: string }[];
+};
+
+type DraftTask = DraftResources & {
   id: string;
   name: string;
   // A task-level quantity/unit isn't always present in a BOM (see
@@ -42,7 +51,7 @@ type DraftTask = {
   materials: DraftMaterialLine[];
 };
 
-export type DraftCategory = {
+export type DraftCategory = DraftResources & {
   id: string;
   name: string;
   // Only meaningful (and only ever shown/editable — see the review
@@ -70,11 +79,22 @@ function draftStorageKey(projectId: number) {
   return `idrmm:ai-import-drafts:${projectId}`;
 }
 
+function isResourceDraft(value: Record<string, unknown>): boolean {
+  if (!value || typeof value !== "object") return false;
+  return ["amount", "laborEstimate"].every(key => value[key] === undefined || typeof value[key] === "string") &&
+    (value.amountType === undefined || ["material", "labor", "equipment", "other"].includes(String(value.amountType))) &&
+    ["equipment", "otherCosts"].every(key => value[key] === undefined || (Array.isArray(value[key]) && value[key].every(line =>
+      line && typeof line.id === "string" && typeof line.name === "string" && typeof line.amount === "string"))) &&
+    (value.materials === undefined || (Array.isArray(value.materials) && value.materials.every(line => line &&
+      ["id", "name", "quantity", "unit", "unitCost"].every(key => typeof line[key] === "string"))));
+}
+
 function isDraftCategories(value: unknown): value is DraftCategory[] {
   return (
     Array.isArray(value) &&
     value.every(
       (category) =>
+        isResourceDraft(category) &&
         typeof category?.id === "string" &&
         typeof category?.name === "string" &&
         typeof category?.amount === "string" &&
@@ -84,6 +104,7 @@ function isDraftCategories(value: unknown): value is DraftCategory[] {
             if (typeof task !== "object" || task === null) return false;
             const row = task as Record<string, unknown>;
             return (
+              isResourceDraft(row) &&
               typeof row.id === "string" &&
               typeof row.name === "string" &&
               typeof row.quantity === "string" &&
@@ -137,13 +158,23 @@ function nextId() {
 // attaches a fresh client-generated id to every category/task/material
 // line, same as addCategory/addTask/addMaterial below already do for a
 // row created straight in the browser.
+function draftResources(owner: import("@/lib/bom-import/estimate-resources").ImportResources): DraftResources {
+  return { amount: owner.amount, amountType: owner.amountType, laborEstimate: owner.laborEstimate,
+    materials: owner.materials?.map(line => ({ ...line, id: nextId() })),
+    equipment: owner.equipment?.map(line => ({ ...line, id: nextId() })),
+    otherCosts: owner.otherCosts?.map(line => ({ ...line, id: nextId() })),
+  };
+}
+
 function toDraftCategories(extracted: ExtractedCategory[]): DraftCategory[] {
   return extracted.map((category) => ({
     id: nextId(),
+    ...draftResources(category),
     name: category.name,
     amount: category.amount,
     tasks: category.tasks.map((task) => ({
       id: nextId(),
+      ...draftResources(task),
       name: task.name,
       quantity: task.quantity,
       unit: task.unit,
@@ -301,7 +332,7 @@ export function ImportBomModalContent({
     // Sends exactly what's currently in the draft (whatever the admin
     // has corrected by hand) — the id fields on DraftCategory/DraftTask/
     // DraftMaterialLine are harmless excess properties here, applyBomImport
-    // only reads name/quantity/unit/materials.
+    // reads the reviewed task and planned cost fields.
     const result = await applyBomImport(projectId, categories);
     if (result.error) {
       setConfirmError(result.error);
@@ -314,18 +345,16 @@ export function ImportBomModalContent({
   }
 
   const taskCount = categories.reduce((sum, c) => sum + c.tasks.length, 0);
-  const materialCount = categories.reduce(
-    (sum, c) => sum + c.tasks.reduce((s, t) => s + t.materials.length, 0),
-    0
-  );
+  const materialCount = categories.reduce((sum, category) => sum + [category, ...category.tasks].reduce((total, owner) => total +
+    (owner.materials?.length ?? 0) + (owner.equipment?.length ?? 0) + (owner.otherCosts?.length ?? 0) + (owner.laborEstimate !== undefined ? 1 : 0), 0), 0);
 
   if (step === "upload") {
     return (
       <div className="flex flex-col gap-4 text-zinc-200">
         <p className="text-sm text-zinc-400">
           Upload a document (PDF, photo, CSV, or Excel) — a Bill of
-          Materials, a quotation, or any similar cost estimate — and AI
-          will draft the phases, tasks, and material lists for you to
+          Materials, a quotation, a work plan, or a scope of work — and AI
+          will draft tasks and planned labor, materials, equipment, and other costs for you to
           review before anything is added to the project.
         </p>
 
@@ -463,7 +492,7 @@ export function ImportBomModalContent({
         <Loader2 className="size-6 animate-spin text-emerald-400" />
         <p className="text-sm font-medium text-white">Reading your document…</p>
         <p className="text-xs text-zinc-400">
-          Extracting phases, tasks, and materials from {file?.name}
+          Extracting tasks and planned costs from {file?.name}
         </p>
       </div>
     );
@@ -477,7 +506,7 @@ export function ImportBomModalContent({
         <p className="text-xs text-zinc-400">
           Creating {categories.length} categor
           {categories.length === 1 ? "y" : "ies"}, {taskCount} task
-          {taskCount === 1 ? "" : "s"}, and {materialCount} material line
+          {taskCount === 1 ? "" : "s"}, and {materialCount} planned cost line
           {materialCount === 1 ? "" : "s"}
         </p>
       </div>
@@ -494,7 +523,7 @@ export function ImportBomModalContent({
         <p className="max-w-sm text-xs text-zinc-400">
           Created {categories.length} categor
           {categories.length === 1 ? "y" : "ies"}, {taskCount} task
-          {taskCount === 1 ? "" : "s"}, and {materialCount} material line
+          {taskCount === 1 ? "" : "s"}, and {materialCount} planned cost line
           {materialCount === 1 ? "" : "s"}.
         </p>
         <button

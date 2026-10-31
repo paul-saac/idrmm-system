@@ -47,7 +47,7 @@ function fixture() {
   function FilterMenu() { return React.createElement('div'); }
   const shared = load('./breakdown-table-shared.tsx');
   const { ImportBomDraftReview } = load('./import-bom-draft-review.tsx', {
-    react: hooks, './breakdown-table-shared': shared, '@/components/ui/view-menu': { ViewMenu: FilterMenu },
+    react: hooks, '@/lib/bom-import/estimate-resources': load('../../../lib/bom-import/estimate-resources.ts'), './breakdown-table-shared': shared, '@/components/ui/view-menu': { ViewMenu: FilterMenu },
   });
   let tree;
   const render = () => {
@@ -88,18 +88,35 @@ test('search and missing-field filters select an eligible item rather than hidin
   f.render(); assert.deepEqual(f.selected(), ['c']);
 });
 
-test('task quantity editing is separate from material quantities and preserves hidden draft items', () => {
+test('material quantity remains editable without task quantity controls', () => {
   const f = fixture(); f.select('Earthworks');
   const menu = f.find(node => node.type?.name === 'RowMenu' && node.props.name === 'Excavation');
-  menu.props.actions.find(action => action.label === 'Task quantity & unit').run(); f.render();
-  f.find(node => node.props.label === 'Task quantity for Excavation').props.onChange('25'); f.render();
+  assert.equal(menu.props.actions.some(action => action.label === 'Task quantity & unit'), false);
   f.find(node => node.props.label === 'Material quantity for Gravel').props.onChange('3'); f.render();
-  assert.equal(f.data[1].tasks[0].quantity, '25');
+  assert.equal(f.data[1].tasks[0].quantity, '10');
   assert.equal(f.data[1].tasks[0].materials[0].quantity, '3');
   assert.equal(f.data[0].amount, '5000');
   assert.equal(f.data[2].name, 'Electrical');
   f.find(node => node.type === 'button' && node.props.onClick && node.props.children?.[1] === 'Confirm & create tasks').props.onClick();
   assert.equal(f.confirmations, 1);
+});
+
+test('clicking the selected outline item again restores all tasks', () => {
+  const f = fixture(); f.select('Earthworks');
+  assert.deepEqual(f.selected(), ['b']);
+  f.select('Earthworks');
+  assert.deepEqual(f.selected(), ['a', 'b', 'c']);
+  assert.equal(descendants(f.render(), node => node.props['aria-current'] === 'location').length, 0);
+  assert.doesNotMatch(f.html(), />\?<\/td>/);
+});
+
+test('missing materials stay highlighted without warning icons beside task names', () => {
+  const f = fixture();
+  f.data[1].tasks[0].materials[0].unitCost = '';
+  f.render(); f.select('Earthworks');
+  assert.equal(f.find(node => node.props.label === 'Unit cost for Gravel').props.missing, true);
+  // Only the overall warning banner has an alert icon; task rows do not.
+  assert.equal((f.html().match(/lucide-triangle-alert/g) || []).length, 1);
 });
 
 test('deleting the selected outline item returns to all remaining items without selecting another', () => {
@@ -122,4 +139,30 @@ test('the rendered table keeps the material headers, tree columns, and right-han
   assert.doesNotMatch(html, /Unit cost \(₱\)|Amount \(₱\)/);
   assert.match(html, /colSpan="5"/i);
   assert.match(html, /Manage Earthworks/); assert.match(html, /Manage Excavation/); assert.match(html, /Manage Gravel/);
+});
+
+test('reviewing equipment, labor and other costs edits the draft and updates its total', () => {
+  const f=fixture();f.select('Earthworks');
+  const action=label=>{f.find(node=>node.type?.name==='RowMenu' && node.props.name==='Excavation').props.actions.find(action=>action.label===label).run();f.render();};
+  action('Add equipment cost');
+  f.find(node=>node.props.label==='Equipment name').props.onChange('Mixer');f.render();
+  f.find(node=>node.props.label==='Amount for Mixer').props.onChange('500');f.render();
+  action('Add other cost');
+  f.find(node=>node.props.label==='Other cost name').props.onChange('Permit');f.render();
+  f.find(node=>node.props.label==='Amount for Permit').props.onChange('150');f.render();
+  action('Add labor amount');
+  f.find(node=>node.props.label==='Labor amount for Excavation').props.onChange('1000');f.render();
+  assert.equal(f.data[1].tasks[0].equipment[0].amount,'500');
+  assert.equal(f.data[1].tasks[0].otherCosts[0].amount,'150');
+  assert.equal(f.data[1].tasks[0].laborEstimate,'1000');
+  assert.match(f.html(),/6,850/); // 5,000 standalone + 200 materials + 1,650 new costs.
+  assert.doesNotMatch(f.html(),/Import steps|Review &amp; edit|Project data/);
+});
+
+test('adding a first subtask preserves standalone resource costs by moving them into that subtask',()=>{
+  const f=fixture();f.select('Mobilization');
+  f.find(node=>node.type?.name==='RowMenu' && node.props.name==='Mobilization').props.actions.find(action=>action.label==='Add task').run();f.render();
+  assert.equal(f.data[0].amount,'');
+  assert.equal(f.data[0].tasks[0].amount,'5000');
+  assert.match(f.html(),/5,200/);
 });

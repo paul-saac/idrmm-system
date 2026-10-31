@@ -4,6 +4,7 @@ import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
+import { importResourceTotals, validImportResources, type ImportResources } from "@/lib/bom-import/estimate-resources";
 import { validOtherCostChanges, type OtherCostChange } from "./other-cost-lines";
 import { recordGanttCheckpoint } from "@/lib/cost-estimate/undo-redo";
 import type { CostCategory } from "@/lib/cost-estimate/data";
@@ -697,14 +698,14 @@ export type BomImportMaterialInput = {
   unitCost: string;
 };
 
-export type BomImportTaskInput = {
+export type BomImportTaskInput = ImportResources & {
   name: string;
   quantity: string;
   unit: string;
   materials: BomImportMaterialInput[];
 };
 
-export type BomImportCategoryInput = {
+export type BomImportCategoryInput = ImportResources & {
   name: string;
   /** This category's own direct amount — only meaningful (and only
    * ever applied below) while `tasks` is empty. See ExtractedCategory's
@@ -714,47 +715,9 @@ export type BomImportCategoryInput = {
   tasks: BomImportTaskInput[];
 };
 
-/**
- * Writes an admin-reviewed "Import with AI" draft to the project —
- * every category becomes a real estimate_categories row, every task a
- * real estimate_tasks row under it, every material line a real
- * estimate_task_material_assignments row under that. Called once, from
- * the review step's own "Confirm & Create Tasks" button, with whatever
- * the admin has at that point (Gemini's own extraction from
- * extractBomFromFile in lib/bom-import/actions.ts, corrected by hand as
- * needed) — nothing before this point ever touches the database.
- *
- * Rows are created sequentially, not as one batch insert per table —
- * each category/task needs its own id back before the next level can
- * reference it as a foreign key, and a multi-row INSERT isn't
- * guaranteed to return its rows in the same order they were given, so
- * batching them and matching ids back up by array index would be a
- * real (if rare) correctness risk — a task silently attached to the
- * wrong category. Materials are the one exception: they have no
- * children of their own to need an id back for, so each task's own
- * material lines go in as a single batch insert.
- *
- * A task's own material_estimate/total_estimate_cost are computed here
- * from its material lines' own (quantity * unitCost) sum — the same
- * formula updateTaskMaterialAssignments already uses for the same two
- * columns — so an imported task's own cost total is correct immediately,
- * not left at 0 until someone happens to reopen Material Breakdown and
- * resave it. A category with no tasks of its own instead gets its own
- * `amount` written straight to material_direct_amount/
- * category_material_estimate (the same two columns
- * updateCategoryMaterialAssignments uses for a category created by hand) —
- * this is the standalone-line-item case (e.g. a BOM's own "MOBILIZATION"
- * row with a peso amount and nothing broken out underneath it); a
- * category that does have tasks leaves those two columns at their
- * defaults, since its own total is already a rollup of its tasks.
- *
- * recordGanttCheckpoint runs once at the very end (or as soon as
- * something fails), not per row — this reads as one single undo step,
- * matching what a bulk import actually is to the admin, not dozens of
- * separate ones. Imported tasks/categories need no weight of their own:
- * weights are computed from cost when the estimate is read (see
- * lib/cost-estimate/weights.ts).
- */
+/** Save reviewed planned costs to existing estimate tables. Resource imports never
+ * create actual spend, worker accounts, inventory assets or equipment assignments.
+ * The import is one undo checkpoint; a partial write failure is reported explicitly. */
 export async function applyBomImport(
   projectId: number,
   categories: BomImportCategoryInput[]
@@ -765,27 +728,13 @@ export async function applyBomImport(
       return { error: "You are not authorized to manage cost estimates." };
     }
 
-    const cleanCategories = categories
-      .map((category) => ({
-        name: category.name.trim(),
-        amount: parseNumber(category.amount),
-        tasks: category.tasks
-          .map((task) => ({
-            name: task.name.trim(),
-            quantity: parseNumber(task.quantity),
-            unit: task.unit.trim(),
-            materials: task.materials
-              .map((material) => ({
-                name: material.name.trim(),
-                quantity: parseNumber(material.quantity),
-                unit: material.unit.trim(),
-                unitCost: parseNumber(material.unitCost),
-              }))
-              .filter((material) => material.name.length > 0),
-          }))
-          .filter((task) => task.name.length > 0),
-      }))
-      .filter((category) => category.name.length > 0);
+    if (!Array.isArray(categories) || categories.some(category => !validImportResources(category) ||
+      !Array.isArray(category.tasks) || category.tasks.some(task => !validImportResources(task)))) {
+      return { error: "Check the draft costs: use nonnegative numbers and name every resource line before confirming." };
+    }
+    const cleanCategories = categories.map(category => ({ ...category, name: category.name.trim(),
+      tasks: category.tasks.filter(task => task.name.trim()).map(task => ({ ...task, name: task.name.trim() })),
+    })).filter(category => category.name);
 
     if (cleanCategories.length === 0) {
       return {
@@ -818,8 +767,44 @@ export async function applyBomImport(
       planned_end_date: project.start_date,
     };
 
+    async function saveResources(kind: "category" | "task", id: number, owner: ImportResources) {
+      const lines = owner.materials ?? [];
+      if (lines.length) {
+        const values = lines.map(line => ({ material_name: line.name.trim(), planned_quantity: parseNumber(line.quantity),
+          unit: line.unit.trim() || null, unit_cost: parseNumber(line.unitCost) }));
+        const { error } = kind === "task"
+          ? await supabase.from("estimate_task_material_assignments").insert(values.map(line => ({ ...line, task_id: id })))
+          : await supabase.from("estimate_category_material_assignments").insert(values.map(line => ({ ...line, category_id: id })));
+        if (error) return error;
+      }
+      const otherLines = [...(owner.otherCosts ?? []), ...(owner.amountType === "other" && owner.amount?.trim() ? [{ name: "Direct planned cost", amount: owner.amount }] : [])];
+      if (otherLines.length) {
+        const { error } = await supabase.from("estimate_task_other_costs").insert(otherLines.map(line => ({
+          ...(kind === "task" ? { task_id: id } : { category_id: id }), cost_name: line.name.trim(),
+          amount: parseNumber(line.amount), amount_override: parseNumber(line.amount),
+        })));
+        if (error) return error;
+      }
+      const equipmentLines = [...(owner.equipment ?? []), ...(owner.amountType === "equipment" && owner.amount?.trim() ? [{ name: "Direct planned cost", amount: owner.amount }] : [])];
+      if (equipmentLines.length) {
+        const { error } = await supabase.rpc("save_equipment_cost_breakdown", { p_project_id: projectId, p_changes: [{ kind, id,
+          lines: equipmentLines.map(line => ({ costName: line.name.trim(), quantity: 0, unit: "", unitCost: 0, amountOverride: parseNumber(line.amount) })),
+        }] });
+        if (error) return error;
+      }
+      return null;
+    }
+    const directMaterial = (owner: ImportResources) => (owner.amountType ?? "material") === "material" ? parseNumber(owner.amount ?? "") : 0;
+    async function detailsFailed(name: string, error: PostgrestError) {
+      logSupabaseError("[applyBomImport] Resource details insert failed", error);
+      await recordGanttCheckpoint(supabase, projectId, profile!.id);
+      revalidateProjectPaths(projectId);
+      return { error: `The import stopped after creating "${name}" because its resource details could not be saved. Some records are already saved; review the project before importing again.` };
+    }
+
     for (const category of cleanCategories) {
-      const isStandalone = category.tasks.length === 0 && category.amount > 0;
+      const costs = importResourceTotals(category);
+      const isStandalone = category.tasks.length === 0;
 
       const { data: categoryRow, error: categoryError } = await supabase
         .from("estimate_categories")
@@ -828,8 +813,11 @@ export async function applyBomImport(
           category_name: category.name,
           ...initialSchedule,
           ...(isStandalone && {
-            material_direct_amount: category.amount,
-            category_material_estimate: category.amount,
+            material_direct_amount: directMaterial(category),
+            category_material_estimate: costs.material,
+            category_labor_estimate: costs.labor,
+            category_equipment_estimate: costs.equipment,
+            category_other_estimate: costs.other,
           }),
         })
         .select("id")
@@ -849,11 +837,12 @@ export async function applyBomImport(
         };
       }
 
+      if (isStandalone) {
+        const error = await saveResources("category", categoryRow.id, category);
+        if (error) return detailsFailed(category.name, error);
+      }
       for (const task of category.tasks) {
-        const materialEstimate = task.materials.reduce(
-          (sum, material) => sum + material.quantity * material.unitCost,
-          0
-        );
+        const costs = importResourceTotals(task);
 
         const { data: taskRow, error: taskError } = await supabase
           .from("estimate_tasks")
@@ -862,10 +851,14 @@ export async function applyBomImport(
             category_id: categoryRow.id,
             task_name: task.name,
             ...initialSchedule,
-            estimated_quantity: task.quantity,
-            unit: task.unit || null,
-            material_estimate: materialEstimate,
-            total_estimate_cost: materialEstimate,
+            estimated_quantity: parseNumber(task.quantity),
+            unit: task.unit.trim() || null,
+            material_direct_amount: directMaterial(task),
+            material_estimate: costs.material,
+            labor_estimate: costs.labor,
+            equipment_estimate: costs.equipment,
+            other_cost_estimate: costs.other,
+            total_estimate_cost: costs.total,
             priority: "medium",
           })
           .select("id")
@@ -882,32 +875,8 @@ export async function applyBomImport(
           };
         }
 
-        if (task.materials.length > 0) {
-          const { error: materialError } = await supabase
-            .from("estimate_task_material_assignments")
-            .insert(
-              task.materials.map((material) => ({
-                task_id: taskRow.id,
-                material_name: material.name,
-                planned_quantity: material.quantity,
-                unit: material.unit || null,
-                unit_cost: material.unitCost,
-              }))
-            );
-
-          if (materialError) {
-            // Doesn't abort the import — the task row itself already
-            // saved correctly, same "a partial failure is still real
-            // DB state, not nothing" reasoning createTask's own material-
-            // assignment error path above already uses. Only this one
-            // task's own material breakdown is affected; it can always
-            // be re-added by hand from Material Breakdown afterward.
-            logSupabaseError(
-              "[applyBomImport] Supabase material-assignment insert failed",
-              materialError
-            );
-          }
-        }
+        const error = await saveResources("task", taskRow.id, task);
+        if (error) return detailsFailed(task.name, error);
       }
     }
 

@@ -1,7 +1,8 @@
 "use server";
 
 import { requireAdminOrForeman } from "@/lib/auth/project-access";
-import { pdfToText } from "./pdf-text";
+import type { ImportResources } from "./estimate-resources";
+import { readPdfForImport, PdfImportError } from "./pdf-text";
 import { getAIProvider, aiModel, aiChatRequest, aiResponseFormat, nextAIResponseMode, isAIJsonFormatError, type AIProvider, type AIResponseMode } from "@/lib/ai/provider";
 
 export type ExtractedMaterialLine = {
@@ -11,14 +12,14 @@ export type ExtractedMaterialLine = {
   unitCost: string;
 };
 
-export type ExtractedTask = {
+export type ExtractedTask = ImportResources & {
   name: string;
   quantity: string;
   unit: string;
   materials: ExtractedMaterialLine[];
 };
 
-export type ExtractedCategory = {
+export type ExtractedCategory = ImportResources & {
   name: string;
   /** This category's own direct amount — only meaningful (and only ever
    * non-empty) when `tasks` is empty, for a top-level line item the
@@ -40,7 +41,7 @@ export type BomExtractionState = {
 
 // Images are sent to an explicitly configured vision model as data URLs.
 // Base64 inflates the raw file by roughly 4/3. Keep the existing upload
-// bound; PDFs are converted to text locally and never sent as raw files.
+// bound; PDFs use extracted text and page images, never raw PDF uploads.
 // Doesn't apply to a CSV/Excel upload — see MAX_SPREADSHEET_BYTES/
 // isCsvFile/isExcelFile below, a wholly separate, non-multimodal path.
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
@@ -195,20 +196,29 @@ function sleep(ms: number) {
 // of Materials is the common case, but a quotation or any similar
 // construction cost estimate laid out as phases/tasks/materials works
 // the same way, and the modal itself no longer calls this a BOM import.
-const EXTRACTION_PROMPT = `You are extracting a construction cost estimate document (e.g. a Bill of Materials, a quotation, or a similar breakdown) into structured data for a project management system.
+const EXTRACTION_PROMPT = `Extract construction project information from the uploaded document (cost estimate, quotation, BOQ, BOM, work plan, equipment rental quote, labor estimate or scope of work) into the provided JSON schema.
+Preserve the source hierarchy: categories/main tasks contain subtasks, which contain resources. Strip item numbering from names. A standalone work item is a category with an empty tasks array; do not duplicate it as a subtask. Keep cost/resource lines under their work item, not as extra schedulable tasks.
+Extract ONLY stated information. Never invent quantities, rates, costs, equipment, people, dates, or missing values. Empty strings and arrays mean not stated. A schedule or scope without costs still yields tasks with blank cost fields.
+For every category and task:
+- materials: itemized physical supplies with name, quantity, unit and unitCost. Leave unknown fields blank.
+- laborEstimate: the source's planned labor amount, not a worker assignment or actual expense. Sum stated labor lines only when there is no labor subtotal; never add both.
+- equipment: itemized equipment/tool allowances or rental planned costs, with name and amount. Do not discard these or pretend they are materials or inventory assignments.
+- otherCosts: itemized permits, transport, fees and other direct planned costs, with name and amount.
+- amount and amountType: a standalone stated amount without a resource breakdown. Use material/labor/equipment when explicitly identified, otherwise other. Leave amount blank if the same cost is already represented in materials, laborEstimate, equipment or otherCosts. Do not copy task/category/grand totals into resource costs; that double counts them.
+- A category with subtasks has empty resource arrays and blank own amounts: its cost rolls up from subtasks. A category without subtasks may have its own resources.
+Keep task quantity and unit only if stated; do not confuse task quantities with material quantities. For an equipment/other line, use the stated line amount, or multiply its explicitly stated quantity and rate. Do not infer missing rates or amounts.
+Return JSON only: {categories:[...]}. Every category has name, amount, amountType, laborEstimate, materials, equipment, otherCosts, tasks. Every task has name, quantity, unit, amount, amountType, laborEstimate, materials, equipment, otherCosts. Material lines have name, quantity, unit, unitCost. Equipment/other lines have name, amount.`;
 
-The document is organized as phases/categories, each containing tasks (work items), each of which may list the materials it needs (name, quantity, unit, unit cost). A document's own item numbering (e.g. "A", "B", "E" for categories, "E.1", "E.2" for tasks under category E, plain "1", "2", "3" for a task's own material lines) is usually the clearest signal of this structure — use it to figure out the hierarchy, but never copy the number/letter itself into a \`name\` field. A row written as "A — MOBILIZATION" or "E.1  Excavation" means the name is just "MOBILIZATION" or "Excavation" — strip the leading item number/letter (and any dash/period/space separating it from the text) before writing it into \`name\`. This applies at every level: categories, tasks, and materials.
-
-Rules:
-- Extract every category, task, and material line exactly as stated in the document — do not invent, estimate, or round any value that isn't actually written there. The one deliberate exception is the item number/letter prefix itself (see above) — that's a document-numbering artifact, not part of the actual name, so it's the one thing you do NOT copy verbatim.
-- A category that has real sub-items in the document (e.g. "E — EARTHWORKS" with "E.1 Excavation" and "E.2 Backfilling" nested under it) gets those as its own \`tasks\` (named "Excavation"/"Backfilling", not "E.1 Excavation"/"E.2 Backfilling"), and its own \`amount\` must be left as an empty string — its total is a rollup of those tasks, not something to also state separately.
-- A category that has NO sub-items at all in the document — just its own single row with a name and a peso amount, nothing nested underneath it (e.g. "A — MOBILIZATION ... 20,000.00" with no A.1, A.2, etc.) — is a standalone line item: its own \`tasks\` array must be empty, its \`name\` is "MOBILIZATION" (not "A — MOBILIZATION" or "A MOBILIZATION"), and whatever amount is shown on that row goes in \`amount\` instead. Do NOT invent a task with the same name as the category just to give it somewhere to put that amount — that duplicates the category for no reason. This is the most common mistake to avoid.
-- A task sometimes has its own overall quantity/unit (e.g. "12 cu.m excavation") and no material lines; other times it's just a group header, with all quantity/cost living on its own material lines instead (e.g. "Concrete Footings" listing Cement, Sand, Gravel, Rebar underneath it). Both are valid — reproduce whichever shape the source document actually uses, per task.
-- If a task or material's quantity, unit, or unit cost is not stated in the document, leave that field as an empty string rather than guessing a value.
-- Skip generic equipment/tool provisioning or miscellaneous overhead line items (e.g. "Power Tools," "Hand Tools," a general equipment allowance) — these aren't schedulable construction work or a real material, so leave them out of the output entirely rather than turning them into a category, task, or material line.
-- Respond with JSON only, matching the provided schema exactly.
-- The top-level value must be an object with a categories array. Every category must contain string name, string amount, and array tasks. Every task must contain string name, string quantity, string unit, and array materials. Every material must contain string name, string quantity, string unit, and string unitCost.`;
-
+const resourceSchema = {
+  amount: { type: "string" },
+  amountType: { type: "string", enum: ["material", "labor", "equipment", "other"] },
+  laborEstimate: { type: "string" },
+  equipment: { type: "array", items: { type: "object", additionalProperties: false, properties: { name: { type: "string" }, amount: { type: "string" } }, required: ["name", "amount"] } },
+  otherCosts: { type: "array", items: { type: "object", additionalProperties: false, properties: { name: { type: "string" }, amount: { type: "string" } }, required: ["name", "amount"] } },
+};
+const materialSchema = { type: "array", items: { type: "object", additionalProperties: false, properties: {
+  name: { type: "string" }, quantity: { type: "string" }, unit: { type: "string" }, unitCost: { type: "string" },
+}, required: ["name", "quantity", "unit", "unitCost"] } };
 const RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -220,13 +230,15 @@ const RESPONSE_SCHEMA = {
         additionalProperties: false,
         properties: {
           name: { type: "string" },
-          amount: { type: "string" },
+          ...resourceSchema,
+          materials: materialSchema,
           tasks: {
             type: "array",
             items: {
               type: "object",
               additionalProperties: false,
               properties: {
+                ...resourceSchema,
                 name: { type: "string" },
                 quantity: { type: "string" },
                 unit: { type: "string" },
@@ -245,11 +257,11 @@ const RESPONSE_SCHEMA = {
                   },
                 },
               },
-              required: ["name", "quantity", "unit", "materials"],
+              required: ["name", "quantity", "unit", "materials", "amount", "amountType", "laborEstimate", "equipment", "otherCosts"],
             },
           },
         },
-        required: ["name", "amount", "tasks"],
+        required: ["name", "amount", "amountType", "laborEstimate", "materials", "equipment", "otherCosts", "tasks"],
       },
     },
   },
@@ -269,6 +281,21 @@ function asString(value: unknown): string {
  * material with no name (never a valid row in the review draft either)
  * rather than failing the whole extraction over one bad entry.
  */
+function resourceFields(record: Record<string, unknown>): ImportResources {
+  const result: ImportResources = {};
+  if ("amount" in record) result.amount = asString(record.amount);
+  if (["material", "labor", "equipment", "other"].includes(String(record.amountType))) result.amountType = record.amountType as ImportResources["amountType"];
+  if (asString(record.laborEstimate).trim()) result.laborEstimate = asString(record.laborEstimate);
+  for (const key of ["equipment", "otherCosts"] as const) {
+    if (!Array.isArray(record[key])) continue;
+    result[key] = record[key].filter((line): line is Record<string, unknown> => typeof line === "object" && line !== null && !!asString(line.name).trim())
+      .map(line => ({ name: asString(line.name).trim(), amount: asString(line.amount) }));
+  }
+  if (Array.isArray(record.materials)) result.materials = record.materials.filter((line): line is Record<string, unknown> => typeof line === "object" && line !== null && !!asString(line.name).trim())
+    .map(line => ({ name: asString(line.name).trim(), quantity: asString(line.quantity), unit: asString(line.unit), unitCost: asString(line.unitCost) }));
+  return result;
+}
+
 function normalizeCategories(value: unknown): ExtractedCategory[] | null {
   if (!Array.isArray(value)) return null;
 
@@ -304,6 +331,7 @@ function normalizeCategories(value: unknown): ExtractedCategory[] | null {
         }
 
         tasks.push({
+          ...resourceFields(taskRecord),
           name: taskName,
           quantity: asString(taskRecord.quantity),
           unit: asString(taskRecord.unit),
@@ -313,6 +341,7 @@ function normalizeCategories(value: unknown): ExtractedCategory[] | null {
     }
 
     categories.push({
+      ...resourceFields(categoryRecord),
       name: categoryName,
       amount: asString(categoryRecord.amount),
       tasks,
@@ -378,7 +407,7 @@ export async function extractBomFromFile(
   const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
   const isImage = !isSpreadsheet && !isPdf;
 
-  if (!isSpreadsheet && !ACCEPTED_MIME_TYPES.has(file.type)) {
+  if (!isSpreadsheet && !isPdf && !ACCEPTED_MIME_TYPES.has(file.type)) {
     return {
       error: "Upload a PDF, image (PNG, JPG, WEBP, HEIC), CSV, or Excel (.xlsx) file.",
     };
@@ -409,16 +438,20 @@ export async function extractBomFromFile(
     ];
   } else {
     let documentText: string;
+    let pdfImages: { page: number; url: string }[] = [];
     try {
       if (isCsv) {
         documentText = await file.text();
       } else if (isExcel) {
         documentText = await excelToText(file);
       } else {
-        documentText = await pdfToText(file);
+        const pdf = await readPdfForImport(file);
+        documentText = pdf.text;
+        pdfImages = pdf.images;
       }
     } catch (error) {
       console.error("[extractBomFromFile] Could not read uploaded file:", error);
+      if (error instanceof PdfImportError) return { error: error.message };
       return {
         error: isExcel
           ? "Couldn't read that Excel file — make sure it's a valid .xlsx file."
@@ -426,10 +459,10 @@ export async function extractBomFromFile(
       };
     }
 
-    if (!documentText.trim()) {
+    if (!documentText.trim() && !pdfImages.length) {
       return {
         error:
-          "No readable text was found in that PDF. For a scanned document, upload its pages as PNG or JPG images.",
+          "No readable content was found in this file. Check that it contains a construction estimate.",
       };
     }
     if (documentText.length > MAX_DOCUMENT_TEXT_CHARS) {
@@ -437,7 +470,14 @@ export async function extractBomFromFile(
         error: "That document contains too much text for one AI import. Upload a smaller document or split it into sections.",
       };
     }
-    userContent = `Extract the construction estimate from this document:\n\n${documentText}`;
+    if (pdfImages.length) {
+      try { model = aiModel(provider, true); }
+      catch { return { error: "This PDF contains scanned pages. Configure AZURE_AI_VISION_MODEL with an image-capable deployment to read them automatically." }; }
+      userContent = [{ type: "text", text: `Extract the construction estimate from this PDF. Read the attached scanned pages together with its text, in page order.\n\n${documentText}` }];
+      for (const image of pdfImages) {
+        userContent.push({ type: "text", text: `Scanned PDF page ${image.page}:` }, { type: "image_url", image_url: { url: image.url } });
+      }
+    } else userContent = `Extract the construction estimate from this document:\n\n${documentText}`;
   }
 
   const requestBody = {
