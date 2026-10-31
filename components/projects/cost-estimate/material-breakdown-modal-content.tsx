@@ -763,7 +763,7 @@ export function MaterialBreakdownModalContent({
           <colgroup>
             <col className="w-9" />
             <col />
-            <col className="w-28" />
+            <col className="w-36" />
             <col className="w-24" />
             <col className="w-28" />
             <col className="w-32" />
@@ -774,7 +774,7 @@ export function MaterialBreakdownModalContent({
                 Task
               </th>
               <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">
-                Quantity
+                Material Quantity
               </th>
               <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">
                 Unit

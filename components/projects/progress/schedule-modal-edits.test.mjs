@@ -11,6 +11,7 @@ function compile(source, dependencies = {}, globals = {}) {
   runInNewContext(code, { exports, require: name => dependencies[name], FormData, Error, ...globals });return exports;
 }
 const { applyScheduleModalEdits, scheduleModalEdit, unconfirmedScheduleModalEdits } = compile(modelSource);
+const { createGanttOperationQueue } = compile(readFileSync(new URL('./gantt-operation-queue.ts', import.meta.url), 'utf8'));
 const plain = value => JSON.parse(JSON.stringify(value));
 const fixture = () => [
   { id: 1, name: 'Mobilization', tasks: [], isMilestone: false, predecessorCategoryId: 3, categoryLaborEstimate: 100, plannedStartDate: '2026-10-30', percentComplete: 20 },
@@ -72,7 +73,11 @@ visit(ast);assert.ok(handler);
 function saveFixture() {
   const state = { edits: [], error: null, categoryModal: { id: 1 }, taskModal: { id: 11 } };
   const calls = [], resolvers = [], refreshes = [];
+  const queue = createGanttOperationQueue();
   const context = {
+    queueEdit: run => context.modalSaveQueue.current = queue.run(run),
+    markHistoryEdit() {}, previewHistory: {invalidate() {}}, setHistoryPreview() {},
+    refreshAfterSaves: () => queue.whenIdle(() => refreshes.push(true)),
     canEdit: true, projectId: 7, modalEditSequence: { current: 0 }, modalSaveQueue: { current: Promise.resolve() },
     setModalSaveError: value => state.error = value,
     setModalEdits: fn => state.edits = fn(state.edits),
@@ -81,7 +86,7 @@ function saveFixture() {
     updateSubtask: id => { calls.push(['task', id]);return new Promise(resolve => resolvers.push(resolve)); },
     router: { refresh: () => refreshes.push(true) }, scheduleModalEdit,
   };
-  const { bind } = compile(`export function bind(context) { const { canEdit, projectId, modalEditSequence, modalSaveQueue,
+  const { bind } = compile(`export function bind(context) { const { canEdit, projectId, modalEditSequence, modalSaveQueue, queueEdit, markHistoryEdit, previewHistory, setHistoryPreview, refreshAfterSaves,
     setModalSaveError, setModalEdits, setCategoryModal, setTaskModal, updateCategory, updateSubtask, router, scheduleModalEdit } = context;
     ${handler}; return handleModalSave; }`);
   return { save: bind(context), state, context, calls, resolvers, refreshes };
@@ -104,7 +109,7 @@ test('background edits save in click order; failures roll back their patch, repo
   assert.deepEqual(f.calls, [['task', 11], ['category', 1]]);
   assert.equal(f.state.edits.length, 1);assert.match(f.state.error, /Footings.*Edit access was removed/);
   f.resolvers.shift()({ success: true });await f.context.modalSaveQueue.current;
-  assert.equal(f.state.edits[0].pending, false);assert.equal(f.refreshes.length, 2);
+  assert.equal(f.state.edits[0].pending, false);assert.equal(f.refreshes.length, 1);
 });
 test('both edit forms intercept submission only for the parent-owned edit save; normal create actions remain available', () => {
   for (const relative of ['./subtask-form.tsx', '../cost-estimate/category-form.tsx']) {

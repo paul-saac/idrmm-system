@@ -1,7 +1,7 @@
 "use client";
 
 import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, useProjectCanEdit } from "@/components/projects/project-access-context";
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ComponentProps, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
@@ -77,9 +77,11 @@ import { projectScheduleDates } from "@/lib/cost-estimate/schedule-dates";
 import type { ScheduleDateChange } from "@/lib/cost-estimate/schedule-dates";
 import { moveSelectedSchedules } from "@/lib/cost-estimate/schedule-actions";
 import { barDragDays, selectedBarChanges } from "./gantt-bar-selection";
+import { createDependencyDragPreview } from "./gantt-dependency-preview";
 import { createScheduleMoveQueue } from "./schedule-move-queue";
 import { ganttBarColors } from "./gantt-bar-colors";
 import { createGanttOperationQueue } from "./gantt-operation-queue";
+import { createGanttPreviewHistory } from "./gantt-preview-history";
 import { setTaskWorkers, setCategoryWorkers } from "@/lib/workers/actions";
 import type { ProjectOverrideHistory } from "@/lib/progress-logs/types";
 import type {
@@ -107,6 +109,23 @@ type OptimisticScheduleDeletion = {
   pending: boolean;
 };
 const NO_ESTIMATE_CHANGES: EstimateChange[] = [];
+
+type TaskListProps = ComponentProps<NonNullable<ComponentProps<typeof Gantt>["TaskListTable"]>>;
+type TaskHeaderProps = ComponentProps<NonNullable<ComponentProps<typeof Gantt>["TaskListHeader"]>>;
+const TaskListRenderContext = createContext<{
+  table: (props: TaskListProps) => ReactNode;
+  header: (props: TaskHeaderProps) => ReactNode;
+} | null>(null);
+// Keep the element type stable. Passing a nested component to Gantt remounts
+// every input whenever a save, selection, or notification causes a render.
+function StableTaskListTable(props: TaskListProps) {
+  const render = useContext(TaskListRenderContext);
+  return render?.table(props);
+}
+function StableTaskListHeader(props: TaskHeaderProps) {
+  const render = useContext(TaskListRenderContext);
+  return render?.header(props);
+}
 
 // Summing decimal weights leaves float noise (99.99 + 0.010000000000005116);
 // two decimals is all a weight is ever shown to.
@@ -772,12 +791,28 @@ export function GanttChartView({
 }) {
   const router = useRouter();
   const [operationQueue] = useState(createGanttOperationQueue);
+  const [previewHistory] = useState(() => createGanttPreviewHistory(categories));
+  const [historyPreview, setHistoryPreview] = useState<CostCategory[] | null>(null);
+  const historyPreviewRef = useRef(historyPreview);
+  historyPreviewRef.current = historyPreview;
+  const gestureVersion = useRef(0);
+  const creationSequence = useRef(0);
+  const clientRowKeys = useRef(new Map<string, string>());
+  function clientRowKey(kind: string, id: number) {
+    return clientRowKeys.current.get(`${kind}:${id}`) ?? `${kind}:${id}`;
+  }
+  function refreshAfterSaves() { operationQueue.whenIdle(() => router.refresh()); }
   const historyQueued = useRef(0);
   const categoriesRef = useRef(categories);
   categoriesRef.current = categories;
   const estimateSync = useEstimateSync();
   const sharedCostChanges = estimateSync?.changes ?? NO_ESTIMATE_CHANGES;
   const savingSharedCost = sharedCostChanges.some(change => change.pending);
+  // Cost-estimate edits have their own persistence path. Their server history
+  // remains available, but cannot be previewed from this chart's local stack.
+  useEffect(() => {
+    if (sharedCostChanges.length) previewHistory.invalidate();
+  }, [sharedCostChanges, previewHistory]);
   const successorArrowId = useId();
   // Month is the default — unlike Week, its column labels are plain
   // month names with no "W##" numbering that could read as resetting
@@ -814,54 +849,9 @@ export function GanttChartView({
   );
   const inlineNameDrafts = useRef(new Map<string, { value: string; start: number | null; end: number | null }>());
   const pendingNameCreations = useRef(new Map<string, Promise<number | undefined>>());
-  // Add Phase's own optimistic row — unlike renaming/priority (which
-  // patch a field on a row that already exists), a brand new phase has
-  // nothing to patch: it doesn't exist client-side until the server
-  // hands back a real id. This synthesizes a temporary one (negative id,
-  // guaranteed not to collide with a real DB id) the instant "+" is
-  // clicked, fed into `categoriesForDisplay` below so it flows through
-  // the exact same `tasks`/`categoryById` pipeline a real phase does —
-  // no separate rendering branch needed, it just looks like a real row
-  // until the genuine one replaces it.
-  //
-  // Tied to the `categories` reference active when it was set, same
-  // auto-expiry trick pendingScheduleOverrides uses (see
-  // usePendingOverrides' own doc comment) — it stops showing the
-  // instant a fresh `categories` prop (containing the *real* phase, via
-  // router.refresh()) lands, with nothing to reconcile field-by-field.
-  //
-  // Deliberately positioned here, before percentCompleteByCategoryId/
-  // taskById/categoryById/tasks below (all of which need to see it) —
-  // NOT in this file's other usual "new hooks go after visibleTasks"
-  // safe zone, since those three are computed earlier in render order
-  // than visibleTasks and can't read state declared after themselves.
-  // Verified directly this doesn't break the React Compiler's own
-  // memoization of effectiveTasks/timelineExtent/visibleTasks
-  // downstream (the exact failure mode this file's other doc comments
-  // describe) via eslint's react-hooks/preserve-manual-memoization rule
-  // before considering this safe to ship.
-  // Undo/Redo's own optimistic full-state swap — unlike every other
-  // override here, which patches one field/adds one row on top of the
-  // existing `categories`, an undo/redo genuinely replaces the *whole*
-  // schedule with a past (or future) snapshot fetched server-side (see
-  // undoGanttAction/redoGanttAction in undo-redo-actions.ts, which now
-  // fetch and return the restored categories directly instead of
-  // leaving the caller to wait on router.refresh() to find out what
-  // changed). Set the instant that round trip resolves; categoriesForDisplay
-  // below treats it as the new base in place of the (now stale) `categories`
-  // prop until a fresh one actually lands.
-  //
-  // Carries canUndo/canRedo alongside categories, not just the restored
-  // schedule — confirmed directly this was needed, not just nice to
-  // have: without it, the buttons kept reading their stale *pre*-undo
-  // enabled props (still true right after an undo that emptied the
-  // history) for however long router.refresh() below took to land, so
-  // Undo stayed clickable and a second click in that window fired a
-  // second real undo. Tied to the exact same `categoriesAtSet` — both
-  // pieces come from the same undoGanttAction/redoGanttAction round
-  // trip and both go stale the instant a fresh `categories` prop
-  // (carrying its own fresh canUndo/canRedo alongside it, from the same
-  // page.tsx fetch) actually lands.
+  // The server confirms history; local snapshots preview each gesture without
+  // waiting for a round trip. Creation rows persist until their IDs arrive in
+  // refreshed data, and retain their React keys when temporary IDs are replaced.
   const [undoRedoOverride, setUndoRedoOverride] = useState<{
     categoriesAtSet: CostCategory[];
     categories: CostCategory[];
@@ -882,35 +872,48 @@ export function GanttChartView({
   function markHistoryEdit() {
     setHistoryAvailability({ categoriesAtSet: categoriesRef.current, canUndo: true, canRedo: false });
   }
-  function queueEdit<T extends { error?: string }>(operation: () => Promise<T>) {
+  function queueEdit<T>(operation: () => Promise<T>, after?: CostCategory[]) {
+    previewHistory.edit(after);
+    const version = ++gestureVersion.current;
+    if (historyPreviewRef.current) {
+      setUndoRedoOverride({ categoriesAtSet: categoriesRef.current, categories: previewHistory.current, canUndo: true, canRedo: false });
+      setHistoryPreview(previewHistory.current);
+    }
+    markHistoryEdit();
     return operationQueue.run(async () => {
-      const result = await operation();
-      if (!result.error) markHistoryEdit();
-      return result;
+      try {
+        const result = await operation();
+        if (result && typeof result === "object" && "error" in result && result.error) { previewHistory.invalidate(); setHistoryPreview(null); }
+        else if (version === gestureVersion.current) {
+          markHistoryEdit();
+          if (historyPreviewRef.current) {
+            setUndoRedoOverride({ categoriesAtSet: categoriesRef.current, categories: previewHistory.current, canUndo: true, canRedo: false });
+            setHistoryPreview(null);
+          }
+        }
+        return result;
+      } catch (error) {
+        previewHistory.invalidate(); setHistoryPreview(null);
+        throw error;
+      }
     });
   }
-  const [pendingNewPhase, setPendingNewPhase] = useState<{
-    categoriesAtSet: CostCategory[];
+  const [pendingNewPhases, setPendingNewPhases] = useState<{
     category: CostCategory;
-  } | null>(null);
-  const activeNewPhase =
-    pendingNewPhase && !categories.some(category => category.id === pendingNewPhase.category.id)
-      ? pendingNewPhase.category
-      : null;
+  }[]>([]);
+  const activeNewPhases = useMemo(() => pendingNewPhases.filter(entry =>
+    !categories.some(category => category.id === entry.category.id)), [pendingNewPhases, categories]);
   // Same idea, one level down — a subtask added via a phase row's own
   // "+" (see handleAddSubtask below). Keyed by which category it's
   // going into (categoryId) rather than embedding the whole CostTask
   // pre-merged, since categoriesForDisplay below needs to splice it
   // into that *specific* category's own `tasks` array each render.
-  const [pendingNewTask, setPendingNewTask] = useState<{
-    categoriesAtSet: CostCategory[];
+  const [pendingNewTasks, setPendingNewTasks] = useState<{
     categoryId: number;
     task: CostTask;
-  } | null>(null);
-  const activeNewTask =
-    pendingNewTask && !categories.some(category => category.tasks.some(task => task.id === pendingNewTask.task.id))
-      ? pendingNewTask
-      : null;
+  }[]>([]);
+  const activeNewTasks = useMemo(() => pendingNewTasks.filter(entry =>
+    !categories.some(category => category.tasks.some(task => task.id === entry.task.id))), [pendingNewTasks, categories]);
   const [optimisticDeletions, setOptimisticDeletions] = useState<OptimisticScheduleDeletion[]>([]);
   const [modalEdits, setModalEdits] = useState<PendingScheduleModalEdit[]>([]);
   const modalEditSequence = useRef(0);
@@ -946,7 +949,7 @@ export function GanttChartView({
   // through that map; percentCompleteByCategoryId needs it specifically
   // for activeCategoriesOverride — an undo/redo's restored tasks have
   // real, non-zero percentages that a phase's own rollup must reflect
-  // immediately too, unlike activeNewPhase/activeNewTask's always-0%
+  // immediately too, unlike newly created rows' always-0%
   // placeholders, which the rollup's own `?? 0` fallback already
   // handles fine without the extra merge). Every usePendingOverrides(...)
   // call elsewhere still deliberately reads the raw `categories` prop,
@@ -955,15 +958,14 @@ export function GanttChartView({
   // any of these three overrides is active, so using it there would
   // make every override expire the render after it's set.
   const localCategoriesForDisplay = useMemo(() => {
+    if (historyPreview) return historyPreview;
     let result = activeCategoriesOverride ?? categories;
-    if (activeNewPhase) {
-      result = [...result, activeNewPhase];
+    if (activeNewPhases.length) {
+      result = [...result, ...activeNewPhases.filter(entry => !result.some(c => c.id === entry.category.id)).map(entry => entry.category)];
     }
-    if (activeNewTask) {
+    if (activeNewTasks.length) {
       result = result.map((c) =>
-        c.id === activeNewTask.categoryId
-          ? { ...c, tasks: [...c.tasks, activeNewTask.task] }
-          : c
+        ({ ...c, tasks: [...c.tasks, ...activeNewTasks.filter(entry => entry.categoryId === c.id && !c.tasks.some(t => t.id === entry.task.id)).map(entry => entry.task)] })
       );
     }
     if (activeModalEdits.length > 0) {
@@ -979,7 +981,7 @@ export function GanttChartView({
     }
     if (activeRowMoves.length > 0) result = applyPendingScheduleMoves(result, activeRowMoves);
     return result;
-  }, [categories, activeCategoriesOverride, activeNewPhase, activeNewTask, activeDeletions, activeModalEdits, activeRowMoves]);
+  }, [categories, activeCategoriesOverride, activeNewPhases, activeNewTasks, activeDeletions, activeModalEdits, activeRowMoves, historyPreview]);
   const categoriesForDisplay = useMemo(() => {
     const updated = withSavedEstimateProgress(applyEstimateChanges(localCategoriesForDisplay, sharedCostChanges), {
       task: taskProgressToday, category: categoryProgressToday, workingDays, holidays,
@@ -1174,17 +1176,16 @@ export function GanttChartView({
       const result = await request.remove();
       if (result.error) throw new Error(result.error);
       if (deletion) {
-        setPendingNewPhase((previous) => previous && deletion.categoryIds.includes(previous.category.id) ? null : previous);
-        setPendingNewTask((previous) => previous && (
-          deletion.categoryIds.includes(previous.categoryId) || deletion.taskIds.includes(previous.task.id)
-        ) ? null : previous);
+        setPendingNewPhases(previous => previous.filter(entry => !deletion.categoryIds.includes(entry.category.id)));
+        setPendingNewTasks(previous => previous.filter(entry =>
+          !deletion.categoryIds.includes(entry.categoryId) && !deletion.taskIds.includes(entry.task.id)));
         setOptimisticDeletions((previous) => previous.map((item) =>
           item === deletion ? { ...item, pending: false } : item
         ));
       }
       request.close();
       setPendingDelete(null);
-      router.refresh();
+      refreshAfterSaves();
     } catch (error) {
       if (deletion) {
         setOptimisticDeletions((previous) => previous.filter((item) => item !== deletion));
@@ -1192,7 +1193,7 @@ export function GanttChartView({
       setPendingDelete(request);
       setDeleteError(error instanceof Error ? error.message : "Could not delete. Please try again.");
       // A multi-row delete may have partially saved before the failure.
-      router.refresh();
+      refreshAfterSaves();
     } finally {
       setDeleting(false);
     }
@@ -1223,7 +1224,7 @@ export function GanttChartView({
   // Read side (the message itself) is intentionally unused — validation
   // still rejects/snaps back bad input at every setScheduleError(...)
   // call site below, only the visible error text was removed.
-  const [, setScheduleError] = useState<string | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   // No existing "disable while a direct server-action call is in
   // flight" convention in this component to reuse (updateTaskSchedule
   // below is called directly, not through useActionState — only the 3
@@ -1246,7 +1247,7 @@ export function GanttChartView({
     // Update rows and bars before starting any network work. Keep later drops
     // responsive while serializing writes to preserve their exact click order.
     setRowMoves(previous => [...previous, { token, move, pending: true }]);
-    void operationQueue.run(async () => {
+    void queueEdit(async () => {
       try {
         const result = await moveScheduleRow(projectId, move);
         if (result.error || !result.order) throw new Error(result.error ?? "Could not save the task order.");
@@ -1254,10 +1255,11 @@ export function GanttChartView({
         setRowMoves(previous => previous.map(entry => entry.token === token
           ? { ...entry, pending: false, savedOrder: result.order } : entry));
       } catch (error) {
+        previewHistory.invalidate(); setHistoryPreview(null);
         setRowMoves(previous => previous.filter(entry => entry.token !== token));
         setRowMoveError(error instanceof Error ? error.message : "Could not save the task order. Please try again.");
       } finally {
-        router.refresh();
+        refreshAfterSaves();
       }
     });
   }
@@ -1270,7 +1272,7 @@ export function GanttChartView({
     let cancelled = false;
     operationQueue.run(() => resetGanttHistory(projectId)).then(() => {
       if (!cancelled) {
-        setHistoryAvailability({ categoriesAtSet: categoriesRef.current, canUndo: false, canRedo: false });
+        if (gestureVersion.current === 0) setHistoryAvailability({ categoriesAtSet: categoriesRef.current, canUndo: false, canRedo: false });
         setHistoryReady(true);
       }
     }).catch(() => {
@@ -1283,39 +1285,58 @@ export function GanttChartView({
 
   function handleUndo() {
     if (!canEdit || savingSharedCost) return;
-    if (!historyReady || (!effectiveCanUndo && operationQueue.pending === 0)) return;
+    if ((!historyReady && !previewHistory.canUndo) || (!previewHistory.canUndo && (previewHistory.complete || !effectiveCanUndo))) return;
     return handleHistory("undo");
   }
 
   function handleRedo() {
     if (!canEdit || savingSharedCost) return;
-    if (!historyReady || (!effectiveCanRedo && historyQueued.current === 0)) return;
+    if ((!historyReady && !previewHistory.canRedo) || (!previewHistory.canRedo && (previewHistory.complete || !effectiveCanRedo))) return;
     return handleHistory("redo");
   }
 
   function handleHistory(direction: "undo" | "redo") {
+    const preview = previewHistory.move(direction);
+    if (preview === undefined && previewHistory.complete) return;
+    const version = ++gestureVersion.current;
     groupDragCleanup.current?.();
+    setEditingCategoryId(null); setEditingTaskId(null);
+    if (preview !== undefined) {
+      clearHistoryOverrides();
+      setRowMoves([]); setModalEdits([]); setOptimisticDeletions([]);
+      setPendingNewPhases([]); setPendingNewTasks([]);
+      setHistoryPreview(preview);
+      setHistoryAvailability({ categoriesAtSet: categoriesRef.current,
+        canUndo: previewHistory.canUndo, canRedo: previewHistory.canRedo });
+    }
     historyQueued.current++;
     setIsUndoRedoPending(true);
     setHistoryError(null);
-    // Each click runs after earlier saves in exact order, even during another Undo.
+    // Every gesture previews locally now, then persists in the same FIFO as
+    // edits. Intermediate commands need no expensive full-estimate refetch.
     return operationQueue.run(async () => {
       try {
-        const result = await (direction === "undo" ? undoGanttAction(projectId) : redoGanttAction(projectId));
-        if (result.error) { setHistoryError(result.error); return; }
-        setHistoryAvailability({ categoriesAtSet: categoriesRef.current, canUndo: result.canUndo ?? false, canRedo: result.canRedo ?? false });
-        if (result.categories) {
-          setRowMoves([]); setModalEdits([]); setOptimisticDeletions([]);
-          setUndoRedoOverride({ categoriesAtSet: categoriesRef.current, categories: result.categories,
-            canUndo: result.canUndo ?? false, canRedo: result.canRedo ?? false });
-          clearHistoryOverrides();
+        const includeCategories = historyQueued.current === 1;
+        const result = await (direction === "undo" ? undoGanttAction(projectId, includeCategories) : redoGanttAction(projectId, includeCategories));
+        if (result.error) {
+          previewHistory.invalidate(); setHistoryPreview(null);
+          setHistoryError(result.error); return;
         }
-        setPendingNewPhase(null); setPendingNewTask(null);
+        if (version === gestureVersion.current) {
+          setHistoryAvailability({ categoriesAtSet: categoriesRef.current, canUndo: result.canUndo ?? false, canRedo: result.canRedo ?? false });
+          if (result.categories) {
+            previewHistory.observe(result.categories);
+            setUndoRedoOverride({ categoriesAtSet: categoriesRef.current, categories: result.categories,
+              canUndo: result.canUndo ?? false, canRedo: result.canRedo ?? false });
+            setHistoryPreview(null);
+          }
+        }
       } catch {
+        previewHistory.invalidate(); setHistoryPreview(null);
         setHistoryError("Could not reach the server. Please try again.");
       } finally {
         historyQueued.current--;
-        if (historyQueued.current === 0) { setIsUndoRedoPending(false); router.refresh(); }
+        if (historyQueued.current === 0) { setIsUndoRedoPending(false); refreshAfterSaves(); }
       }
     });
   }
@@ -1411,41 +1432,8 @@ export function GanttChartView({
       window.removeEventListener("scroll", handleScroll, true);
     };
   }, [cellInfoTooltip]);
-  // A task row's own Start/End cell's "focused" look (white background +
-  // border, plus the calendar icon itself — see its own opacity rule in
-  // globals.css) is driven by a plain `data-cell-active` DOM attribute,
-  // toggled directly by each input's own onFocus/onBlur (see the inputs
-  // themselves below) — deliberately NOT React state, and this is the
-  // second attempt at that: a first version tracked it as state right
-  // here (`activeDateCell`, since removed) and confirmed directly that
-  // doing so broke the calendar icon entirely (clicking it opened
-  // nothing). Root cause: CustomTaskListTable is declared *inside* this
-  // component (see handleChartMouseDown's own doc comment above for the
-  // same hazard hit once already, there for a different reason) — a
-  // fresh function reference every render — so any state update here
-  // that re-renders this component hands gantt-task-react's <Gantt> a
-  // brand-new TaskListTable prop, which gantt-task-react (ordinary React
-  // reconciliation on a changed element type) responds to by unmounting
-  // and remounting the *entire* task list. setActiveDateCell(...) inside
-  // onFocus was triggering exactly that remount, on every single click —
-  // destroying the real DOM node the browser had just focused a moment
-  // earlier and replacing it with an unfocused twin, right as the
-  // browser would otherwise have opened the native picker from that same
-  // click. A plain DOM attribute mutation never touches React state, so
-  // it never re-renders this component and never triggers that remount.
-  //
-  // :focus itself was ruled out before this (twice — an !important
-  // :focus rule didn't help either): confirmed directly that Chromium
-  // stops matching :focus on a date input the moment its own calendar
-  // popup opens, even though the field never actually blurs — which is
-  // also exactly why plain onFocus/onBlur (real DOM events, not a CSS
-  // pseudo-class) is the right primitive to hang this off of: the field
-  // never actually blurs while its own popup is open, so the attribute
-  // stays set for that whole time with no dependency on :focus at all,
-  // and each input manages only its own attribute — no shared "which
-  // cell is active" bookkeeping (state or otherwise) needed at all,
-  // since a direct field-to-field click always pairs blur (old field)
-  // with focus (new field), no cross-cell coordination required.
+  // Date cells manage their focus styling locally. StableTaskListTable keeps
+  // these DOM nodes mounted across background saves and calendar interactions.
 
   const [columnWidths, setColumnWidths] =
     useState<Record<ResizableColumnId, number>>(DEFAULT_COLUMN_WIDTHS);
@@ -2248,30 +2236,10 @@ export function GanttChartView({
   }), [localCategoriesForDisplay, pendingCategoryScheduleOverrides, pendingCategoryNameOverrides, pendingCategoryPriorityOverrides,
     pendingScheduleOverrides, pendingNameOverrides, pendingPriorityOverrides]);
   const publishGantt = estimateSync?.publishGantt;
-  useLayoutEffect(() => { publishGantt?.(categories, publishedCategories); }, [publishGantt, categories, publishedCategories]);
-
-  // Add Phase ("+" next to the Task column header, see handleAddPhase
-  // below) — a pure double-submission guard now, no UI of its own
-  // (there used to be a disabled+spinner treatment on the "+" button
-  // itself here, removed once pendingNewPhase below started showing the
-  // new row immediately, which made it redundant). Still needed
-  // internally: without it, mashing "+" twice before the first
-  // createCategory call resolves would create two phases from one
-  // burst of clicks.
-  //
-  // Tracked the same "tied to the exact `categories` reference active
-  // when it was set" way pendingScheduleOverrides is (see
-  // usePendingOverrides' own doc comment) rather than a plain boolean —
-  // this component doesn't unmount/reset its own state on a prop
-  // change, router.refresh() just flows fresh `categories` down, so a
-  // plain useState(false) flipped true here would have nothing to ever
-  // flip it back on the success path. Comparing against the *current*
-  // `categories` prop each render means it's automatically "false"
-  // again the instant a fresh one lands, no useEffect required.
-  const [addingPhaseAt, setAddingPhaseAt] = useState<CostCategory[] | null>(
-    null
-  );
-  const isAddingPhase = addingPhaseAt === categories;
+  useLayoutEffect(() => {
+    previewHistory.observe(publishedCategories);
+    publishGantt?.(categories, publishedCategories);
+  }, [publishGantt, categories, publishedCategories, previewHistory]);
 
   // A click on a task's own bar opens Progress Tracking Override — the
   // flow this whole feature is centered on ("the user simply clicks the
@@ -2460,7 +2428,7 @@ export function GanttChartView({
     const result = await moveSelectedSchedules(projectId, changes);
     if (!result.error) markHistoryEdit();
     return result;
-  }, operation => operationQueue.run(operation)));
+  }, operation => queueEdit(operation)));
   useEffect(() => () => groupDragCleanup.current?.(), []);
   useEffect(() => {
     const root = chartWrapRef.current;
@@ -2499,6 +2467,7 @@ export function GanttChartView({
     return barMoveQueue.enqueue(changes, {
       onBusy: setSavingBarGroup,
       onRollback(positions, message) {
+        previewHistory.invalidate(); setHistoryPreview(null);
         groupDragCleanup.current?.();
         const tasks = new Map<number, ScheduleOverride | null>();
         const categories = new Map<number, ScheduleOverride | null>();
@@ -2510,7 +2479,7 @@ export function GanttChartView({
         updateCategoryScheduleOverrides(categories);
         setBarGroupError(message);
       },
-      onIdle: () => router.refresh(),
+      onIdle: refreshAfterSaves,
     });
   }
 
@@ -2543,6 +2512,7 @@ export function GanttChartView({
     for (const [id, dates] of pendingScheduleOverrides) previousDates.set(String(id), dates);
     for (const [id, dates] of pendingCategoryScheduleOverrides) previousDates.set(phaseRowId(id), dates);
     const originals = new Map<SVGGElement, string | null>();
+    const dependencyPreview = createDependencyDragPreview(chartWrapRef.current ?? svg, previewIds);
     let nodes: SVGGElement[] = [];
     let pixels = 0, pointerX = originX, moved = false, frame = 0;
     const shiftClick = event.shiftKey;
@@ -2550,6 +2520,7 @@ export function GanttChartView({
       return (clientX - originX + originLeft - currentLeft) / scale;
     }
     function cacheNodes() {
+      dependencyPreview.recache();
       nodes = Array.from(chartWrapRef.current?.querySelectorAll<SVGGElement>("[data-gantt-row-id]") ?? [])
         .filter(node => previewIds.has(node.dataset.ganttRowId ?? ""));
       for (const node of nodes) if (!originals.has(node)) originals.set(node, node.getAttribute("transform"));
@@ -2563,6 +2534,7 @@ export function GanttChartView({
       for (const node of nodes) {
         node.setAttribute("transform", `${originals.get(node) ?? ""} translate(${pixels} 0)`);
       }
+      dependencyPreview.paint(pixels);
     }
     function updateScroll() {
       currentLeft = svg!.getBoundingClientRect().left;
@@ -2582,6 +2554,7 @@ export function GanttChartView({
       observer.disconnect();
       if (frame) window.cancelAnimationFrame(frame);
       originals.forEach((value, node) => { if (value === null) node.removeAttribute("transform"); else node.setAttribute("transform", value); });
+      dependencyPreview.restore();
       groupDragCleanup.current = null;
     }
     function move(e: MouseEvent) {
@@ -2752,7 +2725,7 @@ export function GanttChartView({
       clearScheduleOverride(taskId);
       return false;
     }
-    router.refresh(); // pulls the recomputed phase-row rollup back down
+    refreshAfterSaves(); // pulls the recomputed phase-row rollup back down
     return true;
   }
 
@@ -2822,7 +2795,7 @@ export function GanttChartView({
       clearCategoryScheduleOverride(categoryId);
       return false;
     }
-    router.refresh();
+    refreshAfterSaves();
     return true;
   }
 
@@ -2941,7 +2914,7 @@ export function GanttChartView({
       clearPriorityOverride(taskId);
       return;
     }
-    router.refresh();
+    refreshAfterSaves();
   }
 
   // Same idea as handleTaskPriorityEdit above, one level up.
@@ -2957,7 +2930,7 @@ export function GanttChartView({
       clearCategoryPriorityOverride(categoryId);
       return;
     }
-    router.refresh();
+    refreshAfterSaves();
   }
 
   // The header's own "+" (Add task, next to the Task column label) —
@@ -2967,206 +2940,108 @@ export function GanttChartView({
   // created row drops straight into its own inline rename input (see
   // editingCategoryId above) the instant this succeeds, so the very
   // next thing that happens is the admin typing over it.
+  function settleCreatedRow(kind: "category" | "task", temporaryId: number, savedId: number) {
+    clientRowKeys.current.set(`${kind}:${savedId}`, `${kind}:${temporaryId}`);
+    const remap = (items: CostCategory[]) => items.map(category => ({
+      ...category,
+      id: kind === "category" && category.id === temporaryId ? savedId : category.id,
+      tasks: category.tasks.map(task => ({ ...task,
+        id: kind === "task" && task.id === temporaryId ? savedId : task.id,
+        categoryId: kind === "category" && task.categoryId === temporaryId ? savedId : task.categoryId,
+      })),
+    }));
+    previewHistory.reconcile(remap);
+    setUndoRedoOverride(current => current ? { ...current, categories: remap(current.categories) } : null);
+    setHistoryPreview(current => current ? remap(current) : null);
+    setPendingNewPhases(current => current.map(entry => ({ category: remap([entry.category])[0] })));
+    setPendingNewTasks(current => current.map(entry => ({
+      categoryId: kind === "category" && entry.categoryId === temporaryId ? savedId : entry.categoryId,
+      task: { ...entry.task,
+        id: kind === "task" && entry.task.id === temporaryId ? savedId : entry.task.id,
+        categoryId: kind === "category" && entry.task.categoryId === temporaryId ? savedId : entry.task.categoryId,
+      },
+    })));
+    const draft = inlineNameDrafts.current.get(`${kind}:${temporaryId}`);
+    if (draft) {
+      inlineNameDrafts.current.set(`${kind}:${savedId}`, draft);
+      inlineNameDrafts.current.delete(`${kind}:${temporaryId}`);
+      if (kind === "category") setCategoryNameOverride(savedId, draft.value);
+      else setNameOverride(savedId, draft.value);
+    }
+    if (kind === "category") setEditingCategoryId(current => current === temporaryId ? savedId : current);
+    else setEditingTaskId(current => current === temporaryId ? savedId : current);
+  }
+
   async function handleAddPhase() {
     if (!canEdit) return;
-    if (isAddingPhase) return;
     setScheduleError(null);
-    setAddingPhaseAt(categories);
-
-    // Negative — guaranteed to never collide with a real DB id (a
-    // Postgres identity column never produces one) — so this row can be
-    // told apart from a genuine, persisted phase at a glance (see the
-    // `category.id > 0` check on its own name button further down,
-    // which uses exactly that to keep it non-renameable until it's
-    // swapped for a real id below).
-    const tempId = -Date.now();
-    const categoriesAtSet = categories;
+    const tempId = --creationSequence.current;
     const dates = projectScheduleDates(projectStartDate, projectEndDate);
+    const category: CostCategory = {
+      id: tempId, name: "New Task", weight: 0, tasks: [],
+      materialDirectQuantity: 0, materialDirectUnit: null, materialUnitCost: 0,
+      materialDirectAmountOverride: null, categoryMaterialEstimate: 0, materialAssignments: [],
+      plannedStartDate: dates.start, plannedEndDate: dates.end, priority: "medium", isMilestone: false,
+      categoryLaborEstimate: 0, categoryEquipmentEstimate: 0, categoryOtherEstimate: 0,
+      estimatedQuantity: 0, unit: null, percentComplete: 0, costsToDate: { ...ZERO_COSTS },
+    };
+    setPendingNewPhases(current => [...current, { category }]);
     setEditingCategoryId(tempId);
-    setPendingNewPhase({
-      categoriesAtSet,
-      category: {
-        id: tempId,
-        name: "New Task",
-        weight: 0,
-        tasks: [],
-        materialDirectQuantity: 0,
-        materialDirectUnit: null,
-        materialUnitCost: 0,
-        materialDirectAmountOverride: null,
-        categoryMaterialEstimate: 0,
-        materialAssignments: [],
-        plannedStartDate: dates.start,
-        plannedEndDate: dates.end,
-        priority: "medium",
-        isMilestone: false,
-        categoryLaborEstimate: 0,
-        categoryEquipmentEstimate: 0,
-        categoryOtherEstimate: 0,
-        estimatedQuantity: 0,
-        unit: null,
-        percentComplete: 0,
-        costsToDate: { ...ZERO_COSTS },
-      },
-    });
-
     const formData = new FormData();
     formData.set("categoryName", "New Task");
-    const creation = queueEdit(() => createCategory(projectId, {}, formData))
+    const creation = queueEdit(() => createCategory(projectId, {}, formData), [...previewHistory.current, category])
       .catch(() => ({ error: "Could not create the task. Please retry.", categoryId: undefined }));
     pendingNameCreations.current.set(`category:${tempId}`, creation.then(result => result.categoryId));
     const result = await creation;
-    if (result.error) {
-      setScheduleError(result.error);
-      // Nothing was actually created — drop both markers so the button
-      // re-enables and the placeholder row disappears immediately,
-      // instead of staying stuck (neither `categories` nor
-      // `categoriesAtSet` change on a failed create, so both would
-      // otherwise keep reading as still in-flight forever).
-      setAddingPhaseAt(null);
-      setPendingNewPhase(null);
+    if (result.error || result.categoryId === undefined) {
+      previewHistory.invalidate();
+      setScheduleError(result.error ?? "Could not create the task. Please retry.");
+      setPendingNewPhases(current => current.filter(entry => entry.category.id !== tempId));
       setEditingCategoryId(current => current === tempId ? null : current);
-      return;
-    }
-    if (result.categoryId !== undefined) {
-      // Swap the placeholder over to its real id the moment it's known
-      // — well before router.refresh() below actually lands — so the
-      // rename input opened next targets a real, persistable row
-      // instead of the temporary placeholder one (renaming *that*
-      // would silently do nothing: updateCategory's own `.eq("id", ...)`
-      // would just match zero rows).
-      setPendingNewPhase({
-        categoriesAtSet,
-        category: {
-          id: result.categoryId,
-          name: "New Task",
-          weight: 0,
-          tasks: [],
-          materialDirectQuantity: 0,
-          materialDirectUnit: null,
-          materialUnitCost: 0,
-          materialDirectAmountOverride: null,
-          categoryMaterialEstimate: 0,
-          materialAssignments: [],
-          plannedStartDate: dates.start,
-          plannedEndDate: dates.end,
-          priority: "medium",
-          isMilestone: false,
-          categoryLaborEstimate: 0,
-          categoryEquipmentEstimate: 0,
-          categoryOtherEstimate: 0,
-          estimatedQuantity: 0,
-          unit: null,
-          percentComplete: 0,
-          costsToDate: { ...ZERO_COSTS },
-        },
-      });
-      const draft = inlineNameDrafts.current.get(`category:${tempId}`);
-      if (draft) {
-        inlineNameDrafts.current.set(`category:${result.categoryId}`, draft);
-        inlineNameDrafts.current.delete(`category:${tempId}`);
-        setCategoryNameOverride(result.categoryId, draft.value);
-      }
-      setEditingCategoryId(current => current === tempId ? result.categoryId! : current);
-    }
-    router.refresh();
-    // Not cleared here on success — see addingPhaseAt's/pendingNewPhase's
-    // own doc comments above: both read false/null again on their own
-    // the instant the fresh `categories` this refresh fetches (now
-    // containing the real phase) actually lands as a new prop.
+    } else settleCreatedRow("category", tempId, result.categoryId);
+    refreshAfterSaves();
   }
 
-  // Same "instant optimistic row, no modal" treatment as handleAddPhase
-  // above, one level down — a phase row's own "+" (Add task to this
-  // phase). No taskModal/SubtaskForm involved at all here per an
-  // explicit request; that modal still opens from the row's own pencil
-  // icon afterward for everything this inline flow doesn't cover
-  // (dates, priority, milestone, materials/labor).
   async function handleAddSubtask(categoryId: number) {
     if (!canEdit) return;
-    if (activeNewTask) return;
     setScheduleError(null);
     setCollapsedPhaseIds(previous => {
-      const next = new Set(previous);
-      next.delete(phaseRowId(categoryId));
-      return next;
+      const next = new Set(previous); next.delete(phaseRowId(categoryId)); return next;
     });
-
-    // Same negative-id placeholder convention as handleAddPhase's own
-    // tempId above — see its own comment for why.
-    const tempId = -Date.now();
-    const categoriesAtSet = categories;
+    const tempId = --creationSequence.current;
     const dates = projectScheduleDates(projectStartDate, projectEndDate);
-    const placeholderTask: CostTask = {
-      id: tempId,
-      categoryId,
-      name: "New Task",
-      estimatedQuantity: 0,
-      unit: null,
-      laborEstimate: 0,
-      materialEstimate: 0,
-      materialDirectQuantity: 0,
-      materialDirectUnit: null,
-      materialUnitCost: 0,
-      materialDirectAmountOverride: null,
-      equipmentEstimate: 0,
-      otherCostEstimate: 0,
-      otherCostItems: [],
-      totalEstimateCost: 0,
-      weight: 0,
-      plannedStartDate: dates.start,
-      plannedEndDate: dates.end,
-      predecessorTaskId: null,
-      isMilestone: false,
-      priority: "medium",
-      percentComplete: 0,
-      costsToDate: { ...ZERO_COSTS },
-      materialAssignments: [],
+    const task: CostTask = {
+      id: tempId, categoryId, name: "New Task", estimatedQuantity: 0, unit: null,
+      laborEstimate: 0, materialEstimate: 0, materialDirectQuantity: 0, materialDirectUnit: null,
+      materialUnitCost: 0, materialDirectAmountOverride: null, equipmentEstimate: 0,
+      otherCostEstimate: 0, otherCostItems: [], totalEstimateCost: 0, weight: 0,
+      plannedStartDate: dates.start, plannedEndDate: dates.end, predecessorTaskId: null,
+      isMilestone: false, priority: "medium", percentComplete: 0,
+      costsToDate: { ...ZERO_COSTS }, materialAssignments: [],
     };
-    setPendingNewTask({ categoriesAtSet, categoryId, task: placeholderTask });
+    setPendingNewTasks(current => [...current, { categoryId, task }]);
     setEditingTaskId(tempId);
-
-    const formData = new FormData();
-    formData.set("taskName", "New Task");
-    formData.set("categoryId", String(categoryId));
-    const creation = queueEdit(() => createTask(projectId, {}, formData))
+    // Resolve the parent inside the FIFO so children can be added immediately,
+    // even before their newly created parent has received its database ID.
+    const parentCreation = categoryId < 0 ? pendingNameCreations.current.get(`category:${categoryId}`) : null;
+    const creation = queueEdit(async () => {
+      const parentId = categoryId < 0 ? await parentCreation : categoryId;
+      if (!parentId) return { error: "The parent task could not be saved. Please retry.", taskId: undefined };
+      const formData = new FormData();
+      formData.set("taskName", "New Task"); formData.set("categoryId", String(parentId));
+      return createTask(projectId, {}, formData);
+    }, previewHistory.current.map(category => category.id === categoryId
+      ? { ...category, tasks: [...category.tasks, task] } : category))
       .catch(() => ({ error: "Could not create the task. Please retry.", taskId: undefined }));
     pendingNameCreations.current.set(`task:${tempId}`, creation.then(result => result.taskId));
     const result = await creation;
-    if (result.error) {
-      setScheduleError(result.error);
-      // Nothing was actually created — drop the placeholder so it
-      // disappears immediately instead of staying stuck (`categories`
-      // never changes on a failed create, so it'd otherwise keep
-      // reading as still in-flight forever).
-      setPendingNewTask(null);
+    if (result.error || result.taskId === undefined) {
+      previewHistory.invalidate();
+      setScheduleError(result.error ?? "Could not create the task. Please retry.");
+      setPendingNewTasks(current => current.filter(entry => entry.task.id !== tempId));
       setEditingTaskId(current => current === tempId ? null : current);
-      return;
-    }
-    if (result.taskId !== undefined) {
-      // Swap the placeholder over to its real id the moment it's known
-      // — well before router.refresh() below actually lands — same
-      // reasoning as handleAddPhase's own swap above: renaming the
-      // temporary id would silently do nothing once a real row exists
-      // to persist against instead.
-      setPendingNewTask({
-        categoriesAtSet,
-        categoryId,
-        task: { ...placeholderTask, id: result.taskId },
-      });
-      const draft = inlineNameDrafts.current.get(`task:${tempId}`);
-      if (draft) {
-        inlineNameDrafts.current.set(`task:${result.taskId}`, draft);
-        inlineNameDrafts.current.delete(`task:${tempId}`);
-        setNameOverride(result.taskId, draft.value);
-      }
-      setEditingTaskId(current => current === tempId ? result.taskId! : current);
-    }
-    router.refresh();
-    // Not cleared here on success — see pendingNewTask's own doc
-    // comment above: it reads null again on its own the instant the
-    // fresh `categories` this refresh fetches (now containing the real
-    // subtask) actually lands as a new prop.
+    } else settleCreatedRow("task", tempId, result.taskId);
+    refreshAfterSaves();
   }
 
   // Saves the inline rename input's own value on blur (or Enter, which
@@ -3181,9 +3056,12 @@ export function GanttChartView({
   // back to the *old* name for the whole router.refresh() round trip.
   async function handleCategoryRename(categoryId: number, value: string, previousValue: string) {
     setEditingCategoryId(null);
-    inlineNameDrafts.current.delete(`category:${categoryId}`);
+    const originalId = categoryId;
     const trimmed = value.trim();
-    if (!trimmed || trimmed === previousValue) return;
+    if (!trimmed || trimmed === previousValue) {
+      inlineNameDrafts.current.delete(`category:${categoryId}`);
+      return;
+    }
     setScheduleError(null);
     setCategoryNameOverride(categoryId, trimmed);
     // Reserve this gesture's queue position before waiting for a temporary ID.
@@ -3196,13 +3074,16 @@ export function GanttChartView({
         setCategoryNameOverride(categoryId, trimmed);
       }
       const formData = new FormData();formData.set("categoryName", trimmed);return updateCategory(categoryId, projectId, {}, formData);
-    });
+    }).catch(() => ({ error: "Could not save the task name. Please retry." }));
     if (result.error) {
       setScheduleError(result.error);
       clearCategoryNameOverride(categoryId, trimmed);
       return;
     }
-    router.refresh();
+    for (const id of [originalId, categoryId]) {
+      if (inlineNameDrafts.current.get(`category:${id}`)?.value.trim() === trimmed) inlineNameDrafts.current.delete(`category:${id}`);
+    }
+    refreshAfterSaves();
   }
 
   // Same shape as handleCategoryRename above, just against renameTask
@@ -3215,9 +3096,12 @@ export function GanttChartView({
   // prop) for the whole round trip before jumping to the new one.
   async function handleTaskRename(taskId: number, value: string, previousValue: string) {
     setEditingTaskId(null);
-    inlineNameDrafts.current.delete(`task:${taskId}`);
+    const originalId = taskId;
     const trimmed = value.trim();
-    if (!trimmed || trimmed === previousValue) return;
+    if (!trimmed || trimmed === previousValue) {
+      inlineNameDrafts.current.delete(`task:${taskId}`);
+      return;
+    }
     setScheduleError(null);
     setNameOverride(taskId, trimmed);
     // Reserve this gesture's queue position before waiting for a temporary ID.
@@ -3230,13 +3114,16 @@ export function GanttChartView({
         setNameOverride(taskId, trimmed);
       }
       return renameTask(taskId, projectId, trimmed);
-    });
+    }).catch(() => ({ error: "Could not save the task name. Please retry." }));
     if (result.error) {
       setScheduleError(result.error);
       clearNameOverride(taskId, trimmed);
       return;
     }
-    router.refresh();
+    for (const id of [originalId, taskId]) {
+      if (inlineNameDrafts.current.get(`task:${id}`)?.value.trim() === trimmed) inlineNameDrafts.current.delete(`task:${id}`);
+    }
+    refreshAfterSaves();
   }
 
   function handleModalSave(kind: ScheduleModalEdit["kind"], id: number, name: string, form: FormData) {
@@ -3250,7 +3137,7 @@ export function GanttChartView({
 
     // Preserve click order even when another modal is saved before the first
     // request finishes. Only the existing authorized server actions persist it.
-    void operationQueue.run(async () => {
+    void queueEdit(async () => {
       try {
         const result = kind === "category"
           ? await updateCategory(id, projectId, {}, form)
@@ -3259,12 +3146,13 @@ export function GanttChartView({
         markHistoryEdit();
         setModalEdits(current => current.map(entry => entry.token === token ? { ...entry, pending: false } : entry));
       } catch (error) {
+        previewHistory.invalidate(); setHistoryPreview(null);
         setModalEdits(current => current.filter(entry => entry.token !== token));
         setModalSaveError(`Could not save changes to ${name}. ${error instanceof Error ? error.message : "Please try again."}`);
       } finally {
         // Some existing server actions can partially change a relationship
         // before failing. Reconcile with actual server data on either outcome.
-        router.refresh();
+        refreshAfterSaves();
       }
     });
   }
@@ -3353,6 +3241,9 @@ export function GanttChartView({
     setSelectedTask: (taskId: string) => void;
     onExpanderClick: (task: GanttTask) => void;
   }) {
+    // Gantt's internal bar rows can lag an optimistic deletion by one render.
+    // Never render those removed records as anonymous rows with a shared key.
+    const tableRows = rows.filter(row => row.id.startsWith(FILLER_ROW_ID_PREFIX) || categoryById.has(row.id) || taskById.has(row.id));
     return (
       // Same outer-clip / inner-natural-width split as
       // CustomTaskListHeader above — see visiblePanelWidth's own doc
@@ -3384,7 +3275,7 @@ export function GanttChartView({
         onKeyDown={(e) => e.stopPropagation()}
       >
       <div style={{ width: totalColumnsWidth }}>
-        {rows.map((row) => {
+        {tableRows.map((row) => {
           // Id-based, not row.type === "project" — a task-less category
           // is deliberately type: "task" now (see this component's own
           // doc comment above), so every category-only behavior below
@@ -3410,7 +3301,10 @@ export function GanttChartView({
           const rowKind = isProject ? "category" : "task";
           const savedRowId = category?.id ?? task?.id ?? 0;
           const parentId = task?.categoryId ?? null;
-          const canReorder = canEdit && !isFiller && savedRowId > 0 && !deleting && !isUndoRedoPending;
+          const rowAccent = isFiller ? undefined : category
+            ? ganttBarColors(category.id, isGroup ? "summary" : isMilestoneRow ? "milestone" : "standalone").backgroundColor
+            : task ? ganttBarColors(task.categoryId, "subtask").backgroundColor : undefined;
+          const canReorder = canEdit && !isFiller && !deleting && !isUndoRedoPending;
           function allowedDrop() {
             const source = draggedRow.current;
             return canReorder && source && source.kind === rowKind && source.id !== savedRowId &&
@@ -3419,7 +3313,7 @@ export function GanttChartView({
 
           return (
             <div
-              key={row.id}
+              key={category || task ? clientRowKey(rowKind, savedRowId) : row.id}
               data-gantt-order-row={row.id}
               onDragOver={(event) => {
                 if (!allowedDrop()) return;
@@ -3453,10 +3347,11 @@ export function GanttChartView({
               // background is. A phase row's own divider is a shade darker
               // than its fill — border-zinc-100 on a bg-zinc-100 row
               // vanished, so back-to-back phases read as one gray block.
-              className={`flex items-center border-b text-xs text-zinc-600 ${
+              className={`relative flex items-center border-b text-xs text-zinc-600 ${
                 isGroup ? "border-zinc-200 bg-zinc-100" : "border-zinc-100"
               }`}
             >
+              {rowAccent && <span aria-hidden="true" className="pointer-events-none absolute top-0 -bottom-px left-0 w-1" style={{ backgroundColor: rowAccent }} />}
               <div
                 className="flex h-full shrink-0 items-center gap-1 border-r border-zinc-200 px-2 text-zinc-900"
                 style={{ width: columnWidths.text }}
@@ -3464,7 +3359,7 @@ export function GanttChartView({
                 {canReorder && (
                   <button
                     type="button"
-                    draggable
+                    draggable={savedRowId > 0}
                     aria-label={`Reorder ${category?.name ?? task?.name ?? row.name}`}
                     title="Drag to reorder. Use Alt + Up or Down to move with the keyboard."
                     onDragStart={(event) => {
@@ -3476,7 +3371,7 @@ export function GanttChartView({
                     }}
                     onDragEnd={clearRowDrag}
                     onKeyDown={(event) => {
-                      if (!event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+                      if (savedRowId <= 0 || !event.altKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
                       event.preventDefault();
                       const siblings = rowKind === "category" ? categoriesForDisplay
                         : categoriesForDisplay.find(item => item.id === parentId)?.tasks ?? [];
@@ -3516,13 +3411,14 @@ export function GanttChartView({
                     aria-hidden
                     className={`${!isProject ? "ml-4 " : ""}mr-1.5 size-3.5 shrink-0 text-blue-600`}
                   />
-                ) : (isProject ? category?.id ?? 0 : task?.id ?? 0) > 0 ? (
+                ) : (isProject ? category : task) ? (
                   // Drawn, not the browser's own: square, light gray, and
                   // a small check centered in it (same path as the
                   // progress window's history markers).
                   <span className="relative mr-1.5 size-3.5 shrink-0">
                     <ProjectWriteInput
                       type="checkbox"
+                      disabled={savedRowId < 0}
                       checked={selectedRowIds.has(row.id)}
                       onChange={() => toggleRowSelected(row.id)}
                       aria-label={`Select ${row.name}`}
@@ -3559,7 +3455,7 @@ export function GanttChartView({
                   // line-height, the same reason every other inline input
                   // in this table already sets it.
                   <ProjectWriteInput
-                    key={category.id}
+                    key={clientRowKey("category", category.id)}
                     type="text"
                     autoFocus
                     defaultValue={
@@ -3589,7 +3485,7 @@ export function GanttChartView({
                       isGroup ? "font-bold" : "font-medium"
                     }`}
                   />
-                ) : isProject && category && category.id > 0 ? (
+                ) : isProject && category ? (
                   <ProjectWriteButton
                     type="button"
                     onClick={() => setEditingCategoryId(category.id)}
@@ -3604,20 +3500,6 @@ export function GanttChartView({
                         for the whole router.refresh() round trip. */}
                     {pendingCategoryNameOverrides.get(category.id) ?? category.name}
                   </ProjectWriteButton>
-                ) : isProject && category ? (
-                  // The brief placeholder window (see handleAddPhase's
-                  // own tempId comment) — a negative id means this row's
-                  // real one hasn't come back from the server yet, so
-                  // renaming here has nothing real to persist against.
-                  // Plain, not clickable, same look otherwise; swaps to
-                  // the button above itself the instant the real id
-                  // lands (categoryById/tasks re-derive from the exact
-                  // same pendingNewPhase update that swaps it in).
-                  <span
-                    className={`min-w-0 flex-1 truncate text-left ${isGroup ? "font-bold" : "font-medium"}`}
-                  >
-                    {row.name}
-                  </span>
                 ) : !isProject && task && editingTaskId === task.id ? (
                   // Same inline rename input as a phase's own name above,
                   // just indented to match a task row's own nesting level.
@@ -3629,7 +3511,7 @@ export function GanttChartView({
                   // empty space too, reading as oversized/misaligned
                   // against the indent it's supposed to match.
                   <ProjectWriteInput
-                    key={task.id}
+                    key={clientRowKey("task", task.id)}
                     type="text"
                     autoFocus
                     // The table can remount during creation/revalidation. Its
@@ -3659,7 +3541,7 @@ export function GanttChartView({
                       isMilestoneRow ? "" : "ml-4 "
                     }px-1 text-xs font-medium text-zinc-900 outline-1 -outline-offset-1 outline-zinc-400`}
                   />
-                ) : !isProject && task && task.id > 0 ? (
+                ) : !isProject && task ? (
                   <ProjectWriteButton
                     type="button"
                     onClick={() => setEditingTaskId(task.id)}
@@ -3709,7 +3591,7 @@ export function GanttChartView({
                     Delete lives inside each row's own Edit modal (see
                     CategoryForm's/SubtaskForm's own showDeleteButton /
                     built-in Delete button), not a button here. */}
-                {isProject && category && category.id > 0 ? (
+                {isProject && category ? (
                   <>
                     <ProjectWriteButton
                       type="button"
@@ -3722,6 +3604,7 @@ export function GanttChartView({
                     </ProjectWriteButton>
                     <ProjectWriteButton
                       type="button"
+                      disabled={category.id < 0}
                       onClick={() => setCategoryModal(category)}
                       aria-label="Edit category"
                       title="Edit phase"
@@ -3733,9 +3616,10 @@ export function GanttChartView({
                 ) : isProject ? null : (
                   !isProject &&
                   task &&
-                  task.id > 0 && (
+                  task && (
                     <ProjectWriteButton
                       type="button"
+                      disabled={task.id < 0}
                       onClick={() => setTaskModal(task)}
                       aria-label="Edit task item"
                       title="Edit task"
@@ -3997,6 +3881,7 @@ export function GanttChartView({
                       <>
                         <ProjectWriteSelect
                           key={effectivePriority}
+                          disabled={savedRowId < 0}
                           defaultValue={effectivePriority}
                           onChange={(e) =>
                             handleCategoryPriorityEdit(
@@ -4035,7 +3920,6 @@ export function GanttChartView({
                   })()}
                 {!isMilestoneRow &&
                   task &&
-                  task.id > 0 &&
                   (() => {
                     // pendingPriorityOverrides' own doc comment (see
                     // usePendingOverrides) — without this, `task.priority`
@@ -4048,6 +3932,7 @@ export function GanttChartView({
                       <>
                         <ProjectWriteSelect
                           key={effectivePriority}
+                          disabled={savedRowId < 0}
                           defaultValue={effectivePriority}
                           onChange={(e) =>
                             handleTaskPriorityEdit(task.id, e.target.value)
@@ -4107,7 +3992,7 @@ export function GanttChartView({
                     }
                   />
                 )}
-                {!isMilestoneRow && task && task.id > 0 && (
+                {!isMilestoneRow && task && (
                   <WeightButton
                     weight={task.weight}
                     muted={false}
@@ -4138,6 +4023,7 @@ export function GanttChartView({
                     return (
                       <ProjectWriteButton
                         type="button"
+                        disabled={savedRowId < 0}
                         onClick={() =>
                           setAssignWorkersModal({
                             kind: "category",
@@ -4158,13 +4044,13 @@ export function GanttChartView({
                   })()}
                 {!isMilestoneRow &&
                   task &&
-                  task.id > 0 &&
                   (() => {
                     const assignedIds = taskWorkerAssignments[task.id] ?? [];
                     const assignedInfo = getAssignedCellDisplay(assignedIds);
                     return (
                       <ProjectWriteButton
                         type="button"
+                        disabled={savedRowId < 0}
                         onClick={() =>
                           setAssignWorkersModal({
                             kind: "task",
@@ -4188,11 +4074,11 @@ export function GanttChartView({
                 className="relative flex h-full shrink-0 items-center border-r border-zinc-200"
                 style={{ width: columnWidths.equipment }}
               >
-                {!isMilestoneRow && ((task && task.id > 0) || (isProject && category && !category.hasTasks)) && (() => {
-                  const key = task && task.id > 0 ? `task-${task.id}` : `category-${category!.id}`;
-                  const name = task && task.id > 0 ? task.name : category!.name;
+                {!isMilestoneRow && (task || (isProject && category && !category.hasTasks)) && (() => {
+                  const key = task ? `task-${task.id}` : `category-${category!.id}`;
+                  const name = task ? task.name : category!.name;
                   const planned = equipmentTracking?.plans.filter((p) => p.itemKey === key) ?? [];
-                  return <ProjectWriteButton type="button" onClick={() => setEquipmentTarget({ key, name })}
+                  return <ProjectWriteButton type="button" disabled={savedRowId < 0} onClick={() => setEquipmentTarget({ key, name })}
                     title={planned.map((p) => `${p.name} (${p.assetTag})`).join(", ") || "Assign tools & equipment"}
                     className="h-full w-full cursor-pointer truncate px-2 text-left text-zinc-600 hover:bg-zinc-900 hover:text-white">
                     {planned.length ? `${planned[0].name}${planned.length > 1 ? ` +${planned.length - 1}` : ""}` : "Assign"}
@@ -4490,6 +4376,7 @@ export function GanttChartView({
           </ProjectWriteButton>
         </div>
       </div>
+      {scheduleError && <p role="alert" className="text-sm text-red-600">{scheduleError}</p>}
       {modalSaveError && <p role="alert" className="text-sm text-red-600">{modalSaveError}</p>}
       {rowMoveError && <p role="alert" className="text-sm text-red-600">{rowMoveError}</p>}
       {/* Toolbar + whatever follows (the chart, or the empty-state
@@ -4517,7 +4404,7 @@ export function GanttChartView({
           <ProjectWriteButton
             type="button"
             onClick={handleUndo}
-            disabled={!historyReady || (!effectiveCanUndo && operationQueue.pending === 0) || savingSharedCost}
+            disabled={(!historyReady && !previewHistory.canUndo) || (!previewHistory.canUndo && (previewHistory.complete || !effectiveCanUndo)) || savingSharedCost}
             aria-label="Undo"
             title="Undo last action (Ctrl+Z)"
             aria-busy={isUndoRedoPending}
@@ -4528,7 +4415,7 @@ export function GanttChartView({
           <ProjectWriteButton
             type="button"
             onClick={handleRedo}
-            disabled={!historyReady || (!effectiveCanRedo && !isUndoRedoPending) || savingSharedCost}
+            disabled={(!historyReady && !previewHistory.canRedo) || (!previewHistory.canRedo && (previewHistory.complete || !effectiveCanRedo)) || savingSharedCost}
             aria-label="Redo"
             title="Redo last action (Ctrl+Y)"
             aria-busy={isUndoRedoPending}
@@ -4709,6 +4596,7 @@ export function GanttChartView({
                   }
                 }}>
                 <WorkScheduleContext.Provider value={workSchedule}>
+                <TaskListRenderContext.Provider value={{ table: CustomTaskListTable, header: CustomTaskListHeader }}>
                 <Gantt
                   tasks={chartTasks}
                   viewMode={VIEW_MODE[view]}
@@ -4731,8 +4619,8 @@ export function GanttChartView({
                   projectProgressColor="#ffffff"
                   projectProgressSelectedColor="#ffffff"
                   TooltipContent={GanttTooltipContent}
-                  TaskListHeader={CustomTaskListHeader}
-                  TaskListTable={CustomTaskListTable}
+                  TaskListHeader={StableTaskListHeader}
+                  TaskListTable={StableTaskListTable}
                   onDateChange={(task) => persistDrag(task)}
                   onClick={handleBarClick}
                   onExpanderClick={(task) => {
@@ -4744,6 +4632,7 @@ export function GanttChartView({
                     });
                   }}
                 />
+                </TaskListRenderContext.Provider>
                 </WorkScheduleContext.Provider>
                 {/* The whole task-list panel's own resize handle — see
                     handlePanelResizeMouseDown's own doc comment. Height

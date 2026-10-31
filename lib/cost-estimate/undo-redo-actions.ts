@@ -6,7 +6,7 @@ import { requireProjectAccess } from "@/lib/auth/project-access";
 import { getCostEstimate } from "@/lib/cost-estimate/data";
 import type { CostEstimateActionState } from "@/lib/cost-estimate/actions";
 
-async function moveGanttHistory(projectId: number, direction: "undo" | "redo"): Promise<CostEstimateActionState> {
+async function moveGanttHistory(projectId: number, direction: "undo" | "redo", includeCategories: boolean): Promise<CostEstimateActionState> {
   try {
     if (!await requireProjectAccess(projectId)) return { error: "You are not authorized to edit this project." };
     const client = await createClient();
@@ -15,8 +15,9 @@ async function moveGanttHistory(projectId: number, direction: "undo" | "redo"): 
     if (error) return { error: ["40001", "55000", "P0002", "42501"].includes(error.code)
       ? error.message : "Could not restore the schedule. Please try again." };
     const state = data as { canUndo: boolean; canRedo: boolean };
-    revalidateProjectPaths(projectId);
     // Return the restored estimate directly; no second history-state round trip.
+    if (!includeCategories) return { success: true, ...state };
+    revalidateProjectPaths(projectId);
     try {
       const estimate = await getCostEstimate(projectId);
       return { success: true, categories: estimate.categories, ...state };
@@ -28,11 +29,11 @@ async function moveGanttHistory(projectId: number, direction: "undo" | "redo"): 
   }
 }
 
-export async function undoGanttAction(projectId: number): Promise<CostEstimateActionState> {
-  return moveGanttHistory(projectId, "undo");
+export async function undoGanttAction(projectId: number, includeCategories = true): Promise<CostEstimateActionState> {
+  return moveGanttHistory(projectId, "undo", includeCategories);
 }
-export async function redoGanttAction(projectId: number): Promise<CostEstimateActionState> {
-  return moveGanttHistory(projectId, "redo");
+export async function redoGanttAction(projectId: number, includeCategories = true): Promise<CostEstimateActionState> {
+  return moveGanttHistory(projectId, "redo", includeCategories);
 }
 
 /** Begin a new visit with a complete, atomic baseline before any queued edits. */

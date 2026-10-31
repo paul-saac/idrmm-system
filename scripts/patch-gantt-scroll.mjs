@@ -27,6 +27,22 @@ export function patchGanttScroll(source) {
     if (patched.split(barRoot).length !== 2) throw new Error("Gantt row identity patch no longer matches TaskItem.");
     patched = patched.replace(barRoot, identifiedBarRoot);
   }
+  // Expose the library's own connector geometry once so multi-bar drag previews
+  // can redraw either endpoint without layout reads or React renders per frame.
+  const arrowRoot = '    className: "arrow"';
+  const identifiedArrowRoot = `    className: "arrow",
+    "data-gantt-from": taskFrom.id,
+    "data-gantt-to": taskTo.id,
+    "data-gantt-from-x": rtl ? taskFrom.x1 : taskFrom.x2,
+    "data-gantt-to-x": rtl ? taskTo.x2 : taskTo.x1,
+    "data-gantt-from-y": taskFrom.y + taskHeight / 2,
+    "data-gantt-to-y": taskTo.y + taskHeight / 2,
+    "data-gantt-row-offset": (taskFrom.index > taskTo.index ? -1 : 1) * rowHeight / 2,
+    "data-gantt-indent": rtl ? -arrowIndent : arrowIndent`;
+  if (!patched.includes(identifiedArrowRoot)) {
+    if (patched.split(arrowRoot).length !== 2) throw new Error("Gantt connector identity patch no longer matches Arrow.");
+    patched = patched.replace(arrowRoot, identifiedArrowRoot);
+  }
   for (const [axis, offset] of [["X", "scrollLeft"], ["Y", "scrollTop"]]) {
     const pattern = new RegExp(`  var handleScroll${axis} = function handleScroll${axis}\\(event\\) \\{[\\s\\S]*?\\r?\\n  \\};`, "g");
     const handlers = [...patched.matchAll(pattern)];

@@ -8,6 +8,9 @@ import ts from 'typescript';
 // Exercise the actual name-cell JSX and create/rename handlers with delayed
 // server actions. No authentication or live project data is involved.
 const require = createRequire(import.meta.url);
+const { createGanttOperationQueue } = compile(readFileSync(new URL('./gantt-operation-queue.ts', import.meta.url), 'utf8'));
+const { createGanttPreviewHistory } = compile(readFileSync(new URL('./gantt-preview-history.ts', import.meta.url), 'utf8'));
+const { projectScheduleDates } = compile(readFileSync(new URL('../../../lib/cost-estimate/schedule-dates.ts', import.meta.url), 'utf8'));
 const source = readFileSync(new URL('./gantt-chart-view.tsx', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('gantt-chart-view.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 function find(predicate) {
@@ -26,17 +29,21 @@ function nameInput(kind, context) {
   const { render } = compile(`const ProjectWriteInput = 'input';
     export function render({ task, category, inlineNameDrafts, pendingNameOverrides = new Map(), pendingCategoryNameOverrides = new Map(),
       isGroup = false, isMilestoneRow = false, handleTaskRename = () => {}, handleCategoryRename = () => {},
-      setEditingTaskId = () => {}, setEditingCategoryId = () => {} }) { return (${input}); }`);
+      setEditingTaskId = () => {}, setEditingCategoryId = () => {}, clientRowKey = (kind,id) => kind + ":" + id }) { return (${input}); }`);
   return render(context).props;
 }
 function actualHandler(name, context) {
   const fn = find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
+  const settle = ['handleAddPhase','handleAddSubtask'].includes(name)
+    ? find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'settleCreatedRow') : '';
   return compile(`export function bind(context) {
-    const { canEdit, isAddingPhase, activeNewTask, projectId, categories, setScheduleError, setAddingPhaseAt,
-      setEditingCategoryId, setEditingTaskId, setPendingNewPhase, setPendingNewTask, setCollapsedPhaseIds,
+    const { canEdit, projectId, categories, setScheduleError,
+      setEditingCategoryId, setEditingTaskId, setPendingNewPhases, setPendingNewTasks, setCollapsedPhaseIds,
       phaseRowId, ZERO_COSTS, createCategory, createTask, pendingNameCreations, inlineNameDrafts,
       setCategoryNameOverride, setNameOverride, clearCategoryNameOverride, clearNameOverride,
-      updateCategory, renameTask, router } = context;
+      updateCategory, renameTask, queueEdit, previewHistory, creationSequence, clientRowKeys,
+      setHistoryPreview, setUndoRedoOverride, refreshAfterSaves, projectScheduleDates, projectStartDate, projectEndDate } = context;
+    ${settle}
     ${fn}
     return ${name};
   }`).bind(context);
@@ -44,15 +51,25 @@ function actualHandler(name, context) {
 function fixture() {
   let finish;
   const created = new Promise(resolve => finish = resolve);
-  const state = { pendingTask: null, pendingPhase: null, editingTask: null, editingPhase: null, error: null };
+  const state = { pendingTasks: [], pendingPhases: [], editingTask: null, editingPhase: null, error: null };
+  Object.defineProperties(state, {
+    pendingTask: { get: () => state.pendingTasks.at(-1) },
+    pendingPhase: { get: () => state.pendingPhases.at(-1) },
+  });
   const drafts = { current: new Map() }, pendingNameCreations = { current: new Map() };
   const taskOverrides = new Map(), phaseOverrides = new Map(), saves = [], requests = [], refreshes = [];
   const setter = key => value => { state[key] = typeof value === 'function' ? value(state[key]) : value; };
+  const queue = createGanttOperationQueue(), previewHistory = createGanttPreviewHistory([{id:9,name:'Parent',tasks:[]}]);
   const context = {
-    canEdit: true, isAddingPhase: false, activeNewTask: null, projectId: 7, categories: [],
-    setScheduleError: setter('error'), setAddingPhaseAt() {},
+    canEdit: true, projectId: 7, categories: [], previewHistory,
+    creationSequence: {current:0}, clientRowKeys: {current:new Map()},
+    projectScheduleDates, projectStartDate:'2026-10-01', projectEndDate:'2026-12-15',
+    setHistoryPreview:setter('preview'), setUndoRedoOverride:setter('override'),
+    queueEdit: (run,after) => { previewHistory.edit(after); return queue.run(run); },
+    refreshAfterSaves: () => queue.whenIdle(() => refreshes.push(true)),
+    setScheduleError: setter('error'),
     setEditingCategoryId: setter('editingPhase'), setEditingTaskId: setter('editingTask'),
-    setPendingNewPhase: setter('pendingPhase'), setPendingNewTask: setter('pendingTask'),
+    setPendingNewPhases: setter('pendingPhases'), setPendingNewTasks: setter('pendingTasks'),
     setCollapsedPhaseIds: fn => fn(new Set()), phaseRowId: id => `phase-${id}`,
     ZERO_COSTS: { labor: 0, material: 0, equipment: 0, other: 0 },
     createTask: (_project, _state, form) => { requests.push(form); return created; },
@@ -63,9 +80,8 @@ function fixture() {
     clearNameOverride: id => taskOverrides.delete(id), clearCategoryNameOverride: id => phaseOverrides.delete(id),
     renameTask: async (id, project, value) => { saves.push({ id, project, value }); return { success: true }; },
     updateCategory: async (id, project, _state, form) => { saves.push({ id, project, value: form.get('categoryName') }); return { success: true }; },
-    router: { refresh: () => refreshes.push(true) },
   };
-  return { context, state, drafts, taskOverrides, phaseOverrides, finish, saves, requests, refreshes };
+  return { context, state, drafts, taskOverrides, phaseOverrides, finish, saves, requests, refreshes, queue };
 }
 function type(props, value, caret = value.length) {
   props.onChange({ currentTarget: { value, selectionStart: caret, selectionEnd: caret } });
@@ -138,3 +154,42 @@ for (const kind of ['task', 'category']) {
     assert.equal(nameInput(kind, { task: item, category: item, inlineNameDrafts: f.drafts }).defaultValue, 'New Task');
   });
 }
+
+for (const kind of ['task','category']) {
+  test(`50 rapid ${kind} additions render immediately, keep unique keys, and survive individual failures`, async () => {
+    const f=fixture(); let saved=100;
+    f.context[kind==='task'?'createTask':'createCategory']=async()=> {
+      const id=++saved;
+      if(id===110) return {error:'Rejected test save'};
+      return kind==='task'?{taskId:id}:{categoryId:id};
+    };
+    const add=actualHandler(kind==='task'?'handleAddSubtask':'handleAddPhase',f.context);
+    const calls=Array.from({length:50},()=>add(9));
+    const rows=()=>kind==='task'?f.state.pendingTasks.map(e=>e.task):f.state.pendingPhases.map(e=>e.category);
+    const before=rows();
+    assert.equal(before.length,50); assert.equal(new Set(before.map(r=>r.id)).size,50);
+    assert.ok(before.every(r=>r.id<0));
+    assert.ok(before.every(r=>r.plannedStartDate==='2026-10-01'&&r.plannedEndDate==='2026-10-04'));
+    assert.equal(f.state[kind==='task'?'editingTask':'editingPhase'],before.at(-1).id);
+    await Promise.all(calls);
+    assert.equal(rows().length,49);assert.ok(rows().every(r=>r.id>0));
+    for(const row of rows())assert.ok(f.context.clientRowKeys.current.get(`${kind}:${row.id}`).startsWith(`${kind}:-`));
+    assert.equal(f.queue.pending,0); assert.match(f.state.error,/Rejected/);
+  });
+}
+
+test('a subtask can be added and named before its new parent has saved',async()=>{
+  const f=fixture(); let release;
+  const parentGate=new Promise(resolve=>release=resolve);
+  f.context.createCategory=async()=>{await parentGate;return {categoryId:55};};
+  f.context.createTask=async(_project,_state,form)=>{assert.equal(form.get('categoryId'),'55');return {taskId:56};};
+  const parent=actualHandler('handleAddPhase',f.context)();
+  const temporaryParent=f.state.pendingPhase.category.id;
+  const child=actualHandler('handleAddSubtask',f.context)(temporaryParent);
+  assert.equal(f.state.pendingTask.categoryId,temporaryParent);
+  const temporaryTask=f.state.pendingTask.task.id;
+  const rename=actualHandler('handleTaskRename',f.context)(temporaryTask,'Foundation','New Task');
+  release(); await Promise.all([parent,child,rename]);
+  assert.equal(f.state.pendingTask.categoryId,55);
+  assert.deepEqual(f.saves,[{id:56,project:7,value:'Foundation'}]);
+});

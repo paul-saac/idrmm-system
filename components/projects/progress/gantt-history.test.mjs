@@ -12,6 +12,7 @@ function load(path, bindings = {}) {
   return exports;
 }
 const { createGanttOperationQueue } = load('./gantt-operation-queue.ts');
+const { createGanttPreviewHistory } = load('./gantt-preview-history.ts');
 const { createScheduleMoveQueue } = load('./schedule-move-queue.ts');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
@@ -71,16 +72,17 @@ test('the actual Gantt handlers accept repeated Undo/Redo clicks while saves are
   const script=ts.transpileModule(functions.join('\n')+'\nexports.handlers={handleUndo,handleRedo,queueEdit};',
     {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const queue=createGanttOperationQueue(), history=[0];let cursor=0,busy=false,active=0,maxActive=0,error=null;
-  const globals={ exports:{},canEdit:true,savingSharedCost:false,historyReady:true,effectiveCanUndo:true,effectiveCanRedo:true,
+  const previewHistory=createGanttPreviewHistory([]);
+  const globals={ exports:{},previewHistory,historyPreview:null,historyPreviewRef:{current:null},gestureVersion:{current:0},canEdit:true,savingSharedCost:false,historyReady:false,effectiveCanUndo:true,effectiveCanRedo:true,
     operationQueue:queue,historyQueued:{current:0},groupDragCleanup:{current:null},categoriesRef:{current:[]},
-    setIsUndoRedoPending:value=>busy=value,setHistoryError:value=>error=value,markHistoryEdit(){},
+    setHistoryPreview(){},setEditingCategoryId(){},setEditingTaskId(){},refreshAfterSaves(){},setIsUndoRedoPending:value=>busy=value,setHistoryError:value=>error=value,markHistoryEdit(){},
     setHistoryAvailability(){},setRowMoves(){},setModalEdits(){},setOptimisticDeletions(){},setUndoRedoOverride(){},
-    clearHistoryOverrides(){},setPendingNewPhase(){},setPendingNewTask(){},router:{refresh(){}},
+    clearHistoryOverrides(){},setPendingNewPhases(){},setPendingNewTasks(){},router:{refresh(){}},
     undoGanttAction:async()=>{active++;maxActive=Math.max(maxActive,active);await tick();cursor--;active--;return {success:true,categories:[],canUndo:cursor>0,canRedo:true};},
     redoGanttAction:async()=>{await tick();cursor++;return {success:true,categories:[],canUndo:true,canRedo:cursor<history.length-1};},projectId:7,
   };
   vm.runInNewContext(script,globals);const {queueEdit,handleUndo,handleRedo}=globals.exports.handlers;
-  const edits=Array.from({length:100},(_,i)=>queueEdit(async()=>{await tick();history.push(i+1);cursor++;return {success:true};}));
+  const edits=Array.from({length:100},(_,i)=>queueEdit(async()=>{await tick();history.push(i+1);cursor++;return {success:true};}, [i+1]));
   const undos=Array.from({length:100},()=>handleUndo());
   assert.equal(globals.historyQueued.current,100);assert.equal(busy,true);
   await Promise.all([...edits,...undos]);assert.equal(cursor,0);assert.equal(maxActive,1);assert.equal(busy,false);assert.equal(error,null);
@@ -98,7 +100,7 @@ test('renaming a just-created task reserves its gesture order before the server 
     const gate=new Promise(resolve=>finish=resolve);
     const created=queue.run(async()=>{await gate;events.push('create');return 9;});
     const globals={exports:{},FormData,queueEdit:run=>queue.run(run),pendingNameCreations:{current:new Map([[`${kind}:-1`,created]])},inlineNameDrafts:{current:new Map()},
-      setEditingTaskId(){},setEditingCategoryId(){},setScheduleError(){},setNameOverride(){},setCategoryNameOverride(){},clearNameOverride(){},clearCategoryNameOverride(){},router:{refresh(){}},projectId:7,
+      setEditingTaskId(){},setEditingCategoryId(){},setScheduleError(){},setNameOverride(){},setCategoryNameOverride(){},clearNameOverride(){},clearCategoryNameOverride(){},router:{refresh(){}},refreshAfterSaves(){},projectId:7,
       renameTask:async(id,project,value)=>{assert.equal(id,9);assert.equal(value,'Typed immediately');events.push('rename');return {success:true};},
       updateCategory:async(id,project,prev,form)=>{assert.equal(id,9);assert.equal(form.get('categoryName'),'Typed immediately');events.push('rename');return {success:true};},
     };
@@ -122,4 +124,38 @@ test('bar hues remain stable and varied; child progress contrasts, summaries whi
     assert.equal(ganttBarColors(id,'standalone').backgroundColor,'#b8c2cc');
     assert.equal(ganttBarColors(id,'milestone').backgroundColor,'#155dfc');
   }
+});
+
+test('local previews undo and redo each gesture synchronously before server work resolves',()=>{
+  const history=createGanttPreviewHistory([]);
+  for(let i=1;i<=100;i++)history.edit([...history.current,i]);
+  for(let i=99;i>=0;i--)assert.equal(history.move('undo').length,i);
+  assert.equal(history.move('undo'),undefined);
+  for(let i=1;i<=100;i++)assert.equal(history.move('redo').length,i);
+  history.move('undo');history.edit([...history.current,'new edit']);
+  assert.equal(history.canRedo,false);
+});
+
+test('creation ID handoff updates undo and redo previews, including after an immediate Undo',()=>{
+  const history=createGanttPreviewHistory([]);
+  history.edit([{id:-1}]);history.edit([{id:-1},{id:-2}]);
+  history.move('undo');
+  history.reconcile(items=>items.map(row=>({...row,id:row.id===-1?11:row.id===-2?12:row.id})));
+  assert.equal(history.current[0].id,11);
+  assert.deepEqual(history.move('redo').map(row=>row.id),[11,12]);
+});
+
+test('preview capacity matches server history and a failed save invalidates unconfirmed previews',()=>{
+  const history=createGanttPreviewHistory(0);
+  for(let i=1;i<=150;i++)history.edit(i);
+  let undos=0;while(history.move('undo')!==undefined)undos++;
+  assert.equal(undos,100);assert.equal(history.current,50);
+  history.invalidate();assert.equal(history.canUndo,false);assert.equal(history.canRedo,false);assert.equal(history.complete,false);
+});
+
+test('burst refresh requests are coalesced at the FIFO drain without losing commands',async()=>{
+  const queue=createGanttOperationQueue();let refreshes=0,completed=0;
+  const commands=Array.from({length:100},()=>queue.run(async()=>{await tick();completed++;queue.whenIdle(()=>refreshes++);}));
+  await Promise.all(commands);
+  assert.equal(completed,100);assert.equal(refreshes,1);assert.equal(queue.pending,0);
 });

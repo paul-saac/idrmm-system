@@ -1,7 +1,7 @@
 export function projectScheduleDates(start: string | null, end: string | null) {
   const first = start || end || null;
-  const last = end || first;
-  return { start: first, end: first && last && last < first ? first : last };
+  // New rows start with a manageable bar, rather than spanning the project.
+  return { start: first, end: first ? shiftScheduleDate(first, 3) : null };
 }
 
 export function isScheduleDate(value: unknown): value is string {

@@ -311,3 +311,17 @@ test("populated schedules keep their existing filler-date behavior", () => {
   const row = workspaceFillerRows("2026-10-10", "2027-02-27", [{ id: "existing" }])[0];
   assert.equal(row.end.getTime(), row.start.getTime());
 });
+
+test("patched arrows expose their own endpoint IDs and geometry for cached drag previews", () => {
+  const exports={};
+  runInNewContext(patchGanttScroll(installed)+'\nexports.renderArrow = Arrow;', {
+    exports, require:()=>({createElement:(type,props,...children)=>({type,props,children})}),console,
+  });
+  const from={id:'phase-1',x1:40,x2:100,y:10,index:0};
+  const to={id:'2',x1:180,x2:230,y:44,index:1};
+  const arrow=exports.renderArrow({taskFrom:from,taskTo:to,rowHeight:34,taskHeight:20,arrowIndent:12,rtl:false});
+  assert.equal(arrow.props['data-gantt-from'],'phase-1');assert.equal(arrow.props['data-gantt-to'],'2');
+  assert.equal(arrow.props['data-gantt-from-x'],100);assert.equal(arrow.props['data-gantt-to-x'],180);
+  assert.equal(arrow.props['data-gantt-from-y'],20);assert.equal(arrow.props['data-gantt-to-y'],54);
+  assert.equal(arrow.props['data-gantt-row-offset'],17);assert.equal(arrow.props['data-gantt-indent'],12);
+});

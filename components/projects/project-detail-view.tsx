@@ -966,7 +966,7 @@ function ProjectDetailContent({
           title="Import with AI"
           icon={
             importBomStep === "review" ? (
-              <AiSparklesIcon className="size-4 text-zinc-700 shrink-0" />
+              <AiSparklesIcon className="size-6 text-zinc-700 shrink-0" />
             ) : (
               <AiSparklesIcon className="size-7 text-emerald-300 shrink-0" />
             )
@@ -976,7 +976,6 @@ function ProjectDetailContent({
           size={importBomStep === "review" ? "large" : "default"}
           bare={importBomStep === "review"}
           className={importBomStep === "review" ? "!h-[min(840px,94dvh)] !max-h-[94dvh]" : undefined}
-          headerClassName={importBomStep === "review" ? "!px-5 !py-2 [&_h2]:!text-xs [&_h2]:!font-medium [&_button_svg]:!size-3.5" : undefined}
           aiBorder={importBomStep !== "review"}
         >
           <ImportBomModalContent
