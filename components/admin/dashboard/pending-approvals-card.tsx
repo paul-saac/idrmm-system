@@ -1,4 +1,4 @@
-import { EmptyState } from "@/components/ui/empty-state";
+import { ClipboardCheck } from "lucide-react";
 import Link from "next/link";
 import type { PortalBasePath } from "@/components/portal/portal-context";
 import type { PendingRequest } from "@/lib/dashboard/data";
@@ -36,7 +36,13 @@ export function PendingApprovalsCard({
       </div>
 
       {items.length === 0 ? (
-        <EmptyState compact className="px-5 py-6 text-sm text-zinc-500">Nothing waiting on approval.</EmptyState>
+        <div className="flex flex-col items-center px-5 py-6 text-center">
+          <span className="mb-3 flex size-9 items-center justify-center rounded bg-zinc-100 text-zinc-400">
+            <ClipboardCheck className="size-5" strokeWidth={1.5} aria-hidden="true" />
+          </span>
+          <p className="text-xs font-medium text-zinc-800">You&apos;re all caught up</p>
+          <p className="mt-1 text-[11px] text-zinc-400">Nothing waiting on approval.</p>
+        </div>
       ) : (
         <ul className="divide-y divide-zinc-100">
           {items.map((item) => (

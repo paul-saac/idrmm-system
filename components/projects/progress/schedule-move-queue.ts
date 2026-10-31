@@ -8,7 +8,10 @@ type Callbacks = {
 };
 
 /** Keep rapid drags responsive while preserving database write order and rollback. */
-export function createScheduleMoveQueue(save: (changes: ScheduleDateChange[]) => Promise<{ error?: string }>) {
+export function createScheduleMoveQueue(
+  save: (changes: ScheduleDateChange[]) => Promise<{ error?: string }>,
+  schedule?: <T>(operation: () => Promise<T>) => Promise<T>,
+) {
   let tail = Promise.resolve();
   let pending = 0;
   let generation = 0;
@@ -25,7 +28,7 @@ export function createScheduleMoveQueue(save: (changes: ScheduleDateChange[]) =>
         if (!confirmed.has(key)) confirmed.set(key, { kind: change.kind, id: change.id, start: change.previousStart, end: change.previousEnd });
       }
       pending++;
-      const operation = tail.then(async () => {
+      const run = async () => {
         if (batch !== generation) return;
         try {
           const result = await save(changes);
@@ -35,7 +38,8 @@ export function createScheduleMoveQueue(save: (changes: ScheduleDateChange[]) =>
           generation++;
           callbacks.onRollback([...confirmed.values()], error instanceof Error ? error.message : "Could not move the selected schedules.");
         }
-      }).finally(() => {
+      };
+      const operation = (schedule ? schedule(run) : tail.then(run)).finally(() => {
         pending--;
         if (pending === 0) { confirmed.clear(); callbacks.onBusy(false); callbacks.onIdle(); }
       });

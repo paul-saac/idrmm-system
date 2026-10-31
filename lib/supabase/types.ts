@@ -1597,6 +1597,8 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      gantt_snapshot: { Args: { p_project_id: number }; Returns: unknown };
+      gantt_history: { Args: { p_project_id: number; p_action: string }; Returns: { canUndo: boolean; canRedo: boolean } };
       move_selected_schedules: {
         Args: { p_project_id: number; p_changes: unknown };
         Returns: undefined;

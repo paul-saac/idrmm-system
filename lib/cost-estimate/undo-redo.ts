@@ -1,319 +1,34 @@
 import { createClient } from "@/lib/supabase/server";
 
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
-
-/**
- * A raw estimate_categories/estimate_tasks/child-table row, captured via
- * `select("*")` — deliberately NOT typed against this app's own mapped
- * CostCategory/CostTask shapes (lib/cost-estimate/data.ts), which coalesce
- * and transform fields (null->0, invalid priority->"medium", ...) in ways
- * that would lose fidelity on restore. A snapshot has to round-trip back
- * into the DB byte-for-byte, so it stays at the raw-column level, and
- * loosely typed (Supabase's own generated Row types are a hand-maintained
- * subset — see lib/supabase/types.ts's own comment — not a perfect mirror
- * of every column, so trying to force a stricter type here would just be
- * fighting that gap, not adding real safety).
- */
 type RawRow = Record<string, unknown> & { id: number };
-
 export type GanttSnapshot = {
   categories: RawRow[];
   tasks: RawRow[];
   otherCosts: RawRow[];
   materialAssignments: RawRow[];
-  /** A standalone category's own material lines (0058) — missing from
-   * any snapshot recorded before them, which had none. */
   categoryMaterialAssignments?: RawRow[];
 };
 
-/**
- * Every checkpoint recorded for a project beyond this many (oldest first)
- * is trimmed on the next write — keeps gantt_snapshots from growing
- * unbounded. 50 undo/redo steps is already generous for a single Gantt
- * editing session; this app has no "browse full history" UI, just
- * Undo/Redo one step at a time.
- */
-const MAX_GANTT_HISTORY_PER_PROJECT = 50;
-
-/**
- * Captures the full current state of a project's schedule/cost data —
- * every estimate_categories/estimate_tasks row plus their child tables
- * — as one JSON-serializable snapshot. Used both to record a checkpoint
- * after a mutation and, inside restoreGanttSnapshot, to diff against the
- * checkpoint being restored to.
- */
-export async function captureGanttSnapshot(
-  supabase: SupabaseClient,
-  projectId: number
-): Promise<GanttSnapshot> {
-  const [{ data: categories }, { data: tasks }] = await Promise.all([
-    supabase.from("estimate_categories").select("*").eq("project_id", projectId),
-    supabase.from("estimate_tasks").select("*").eq("project_id", projectId),
-  ]);
-
-  const taskIds = (tasks ?? []).map((row) => row.id);
-  const categoryIds = (categories ?? []).map((row) => row.id);
-
-  const [
-    [{ data: otherCosts }, { data: materialAssignments }],
-    { data: categoryMaterialAssignments },
-  ] = await Promise.all([
-    taskIds.length > 0 || categoryIds.length > 0
-      ? Promise.all([
-          supabase.from("estimate_task_other_costs").select("*")
-            .or(`task_id.in.(${taskIds.join(",") || -1}),category_id.in.(${categoryIds.join(",") || -1})`),
-          supabase
-            .from("estimate_task_material_assignments")
-            .select("*")
-            .in("task_id", taskIds),
-        ])
-      : [{ data: [] }, { data: [] }],
-    // Null data (no table yet, before 0058) reads as no lines.
-    categoryIds.length > 0
-      ? supabase
-          .from("estimate_category_material_assignments")
-          .select("*")
-          .in("category_id", categoryIds)
-      : { data: [] },
-  ]);
-
-  return {
-    categories: (categories ?? []) as unknown as RawRow[],
-    tasks: (tasks ?? []) as unknown as RawRow[],
-    otherCosts: (otherCosts ?? []) as unknown as RawRow[],
-    materialAssignments: (materialAssignments ?? []) as unknown as RawRow[],
-    categoryMaterialAssignments: (categoryMaterialAssignments ?? []) as unknown as RawRow[],
-  };
+/** One consistent database snapshot, rather than five independent HTTP reads. */
+export async function captureGanttSnapshot(client: SupabaseClient, projectId: number): Promise<GanttSnapshot> {
+  const { data, error } = await client.rpc("gantt_snapshot", { p_project_id: projectId });
+  if (error || !data) throw new Error("Could not read the schedule history.");
+  return data as unknown as GanttSnapshot;
 }
 
-/**
- * Call this at the end of every mutating action in actions.ts, right
- * before its success `return` (including a "partial failure" path that
- * still left some rows committed — see e.g. createTask, which can fail
- * to save its material assignments after the task row itself
- * already saved; that's a real DB-state change too, and belongs in the
- * history the same as a full success would).
- *
- * Deliberately best-effort: undo/redo history is a safety net on top of
- * the action the user actually asked for, not the thing itself — a
- * failure recording a checkpoint is logged and swallowed here rather
- * than turned into an error the caller has to handle, so it can never
- * make an otherwise-successful edit look like it failed.
- *
- * Records no "baseline" of its own — a checkpoint from *this* function
- * is always a snapshot of the state *after* whatever action just ran,
- * never a before-state, so the very first one ever recorded for a
- * project would otherwise have nothing older to undo back to. In
- * practice that gap is already closed elsewhere: resetGanttHistory
- * (undo-redo-actions.ts), called once every time the Gantt Chart is
- * opened per its own session-scoped history design, seeds exactly that
- * missing baseline before any of these 10 call sites can run. This
- * function staying baseline-agnostic is what keeps each of those call
- * sites a single line with no other change to its own control flow —
- * only a project that somehow reaches a mutating action without ever
- * going through that reset (this app has no such path today) would hit
- * the original "first checkpoint isn't itself undoable" gap.
+/** The edit has already saved. History failures must not masquerade as edit failures.
+ * A later Undo checks the live state against its checkpoint before writing anything.
  */
-export async function recordGanttCheckpoint(
-  supabase: SupabaseClient,
-  projectId: number,
-  userId: string
-): Promise<void> {
+export async function recordGanttCheckpoint(client: SupabaseClient, projectId: number, _userId: string): Promise<void> {
   try {
-    const snapshot = await captureGanttSnapshot(supabase, projectId);
-
-    const { data: project } = await supabase
-      .from("projects")
-      .select("gantt_undo_cursor_id")
-      .eq("id", projectId)
-      .single();
-    const cursorId = project?.gantt_undo_cursor_id ?? null;
-
-    // A fresh edit invalidates any "redo" entries left over from an
-    // earlier undo (the usual "a new action clears the redo stack"
-    // rule). When cursorId is null there's nothing after "nothing" to
-    // keep either way, so clearing everything for this project is still
-    // correct (and cheap insurance against an inconsistent state).
-    if (cursorId === null) {
-      await supabase.from("gantt_snapshots").delete().eq("project_id", projectId);
-    } else {
-      await supabase
-        .from("gantt_snapshots")
-        .delete()
-        .eq("project_id", projectId)
-        .gt("id", cursorId);
-    }
-
-    const { data: inserted, error } = await supabase
-      .from("gantt_snapshots")
-      .insert({
-        project_id: projectId,
-        snapshot: snapshot as never,
-        created_by: userId,
-      })
-      .select("id")
-      .single();
-
-    if (error || !inserted) {
-      console.error("[recordGanttCheckpoint] insert failed", error);
-      return;
-    }
-
-    const { data: excess } = await supabase
-      .from("gantt_snapshots")
-      .select("id")
-      .eq("project_id", projectId)
-      .order("id", { ascending: false })
-      .range(MAX_GANTT_HISTORY_PER_PROJECT, MAX_GANTT_HISTORY_PER_PROJECT + 9999);
-    if (excess && excess.length > 0) {
-      await supabase
-        .from("gantt_snapshots")
-        .delete()
-        .in("id", excess.map((row) => row.id));
-    }
-
-    await supabase
-      .from("projects")
-      .update({ gantt_undo_cursor_id: inserted.id })
-      .eq("id", projectId);
+    const { error } = await client.rpc("gantt_history", { p_project_id: projectId, p_action: "checkpoint" });
+    if (error) console.error("[recordGanttCheckpoint] failed", error.code);
   } catch (error) {
-    console.error("[recordGanttCheckpoint] unexpected error", error);
+    console.error("[recordGanttCheckpoint] failed", error);
   }
 }
 
-function diffRows(current: RawRow[], target: RawRow[]) {
-  const targetIds = new Set(target.map((row) => row.id));
-  const currentIds = new Set(current.map((row) => row.id));
-  return {
-    toDeleteIds: current.filter((row) => !targetIds.has(row.id)).map((row) => row.id),
-    toInsert: target.filter((row) => !currentIds.has(row.id)),
-    toUpdate: target.filter((row) => currentIds.has(row.id)),
-  };
-}
-
-/**
- * Reconciles the live DB to exactly match `snapshot` — the one generic
- * restore function shared by both undo and redo (they only differ in
- * which snapshot they pass in). Correct by construction: whatever isn't
- * in the snapshot gets deleted, whatever's missing gets (re-)inserted
- * with its *original* id (see 0037_gantt_undo_redo.sql's own comment for
- * why that's possible now), whatever's common gets updated to match.
- *
- * Order matters for FK integrity: tasks before categories on delete
- * (leaf-most first); categories before tasks on insert/update (a task's
- * category_id must already exist); tasks themselves in two passes so
- * predecessor_task_id is never set before every task row exists to be
- * pointed at.
- *
- * Each phase below is one batched `.upsert(rows, { onConflict: "id" })`
- * call covering every row that phase touches, not a per-row insert/
- * update in a loop — undo/redo was confirmed directly to feel slow
- * specifically because of this: a rename that only ever touches one
- * row elsewhere in this app was, here, however many individual awaited
- * round trips as there were rows in the whole snapshot (every category
- * + every task + every child-table row), each one a full network
- * round trip to Supabase, all sequential. Batching doesn't change what
- * ends up in the DB (`.upsert` on the primary key inserts a still-
- * missing row or updates an existing one exactly like the old insert/
- * update split did — the "insert vs update" distinction was already
- * meaningless output-wise, it only ever picked which single-row call to
- * make), it just does the same work in the number of round trips FK
- * ordering actually requires (six here, worst case) instead of one per
- * row.
- */
-export async function restoreGanttSnapshot(
-  supabase: SupabaseClient,
-  projectId: number,
-  snapshot: GanttSnapshot
-): Promise<void> {
-  const current = await captureGanttSnapshot(supabase, projectId);
-
-  const tasksDiff = diffRows(current.tasks, snapshot.tasks);
-  if (tasksDiff.toDeleteIds.length > 0) {
-    await supabase.from("estimate_tasks").delete().in("id", tasksDiff.toDeleteIds);
-  }
-
-  // A category is deleted here before any task's own category_id is
-  // updated below (that happens later, in the task upsert passes) —
-  // safe only because deleteCategory (actions.ts) already refuses to
-  // delete a category that still has any task rows, and no single
-  // action ever both deletes a category *and* reassigns a task away
-  // from it (that's two separate actions, hence two separate adjacent
-  // checkpoints, and undo/redo here only ever moves one checkpoint at a
-  // time). If that ever changes — e.g. a bulk "delete phase and move its
-  // tasks elsewhere" action — this ordering would need to move the task
-  // reassignment before this delete, or the FK's ON DELETE CASCADE would
-  // take a still-wanted, merely-reassigned task down with it.
-  const categoriesDiff = diffRows(current.categories, snapshot.categories);
-  if (categoriesDiff.toDeleteIds.length > 0) {
-    await supabase.from("estimate_categories").delete().in("id", categoriesDiff.toDeleteIds);
-  }
-
-  const categoriesToUpsert = [...categoriesDiff.toInsert, ...categoriesDiff.toUpdate];
-  if (categoriesToUpsert.length > 0) {
-    await supabase
-      .from("estimate_categories")
-      .upsert(categoriesToUpsert.map(category => ({ ...category, predecessor_task_id: null, predecessor_category_id: null })) as never[], { onConflict: "id" });
-  }
-
-  // Pass 1: restore task rows without dependencies until both row types exist.
-  const tasksToUpsertPass1 = [...tasksDiff.toInsert, ...tasksDiff.toUpdate].map(
-    (task) => ({ ...task, predecessor_task_id: null, predecessor_category_id: null })
-  );
-  if (tasksToUpsertPass1.length > 0) {
-    await supabase
-      .from("estimate_tasks")
-      .upsert(tasksToUpsertPass1 as never[], { onConflict: "id" });
-  }
-  // Pass 2: both row types now exist. Restore cross-type links only now,
-  // using complete snapshot rows so required columns also satisfy upsert.
-  const categoryLinks = categoriesToUpsert.filter(category => category.predecessor_task_id != null || category.predecessor_category_id != null);
-  if (categoryLinks.length > 0) {
-    await supabase.from("estimate_categories").upsert(categoryLinks as never[], { onConflict: "id" });
-  }
-  const predecessorLinks = snapshot.tasks
-    .filter(
-      (task) =>
-        task.predecessor_task_id != null || task.predecessor_category_id != null
-    );
-  if (predecessorLinks.length > 0) {
-    await supabase
-      .from("estimate_tasks")
-      .upsert(predecessorLinks as never[], { onConflict: "id" });
-  }
-
-  for (const [table, currentRows, targetRows] of [
-    ["estimate_task_other_costs", current.otherCosts, snapshot.otherCosts],
-    [
-      "estimate_task_material_assignments",
-      current.materialAssignments,
-      snapshot.materialAssignments,
-    ],
-    [
-      "estimate_category_material_assignments",
-      current.categoryMaterialAssignments ?? [],
-      snapshot.categoryMaterialAssignments ?? [],
-    ],
-  ] as const) {
-    const diff = diffRows(currentRows, targetRows);
-    if (diff.toDeleteIds.length > 0) {
-      await supabase.from(table).delete().in("id", diff.toDeleteIds);
-    }
-    const toUpsert = [...diff.toInsert, ...diff.toUpdate];
-    if (toUpsert.length > 0) {
-      await supabase.from(table).upsert(toUpsert as never[], { onConflict: "id" });
-    }
-  }
-}
-
-/**
- * Read-only: whether there's a checkpoint before/after the project's
- * current cursor position — drives the Undo/Redo buttons' disabled
- * state. Called alongside this project's other data fetches (see
- * app/admin/projects/[id]/page.tsx), so it refreshes for free through
- * the same revalidatePath/router.refresh() flow every other Gantt
- * mutation already relies on.
- */
 export async function getGanttUndoRedoState(
   projectId: number
 ): Promise<{ canUndo: boolean; canRedo: boolean }> {
