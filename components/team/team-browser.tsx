@@ -34,7 +34,7 @@ import type {
   Worker,
   WorkerAssignment,
 } from "@/lib/workers/data";
-import { MEMBER_CATEGORIES, type EmploymentType, type MemberCategory } from "@/lib/workers/presets";
+import { MEMBER_CATEGORIES, isManagementMember, type EmploymentType, type MemberCategory } from "@/lib/workers/presets";
 
 type AvailabilityFilter = "all" | "available" | "assigned";
 
@@ -279,7 +279,7 @@ export function TeamBrowser({
   const allChecked = total > 0 && selectedMembers.length === total;
   // Anyone with a login account (Management's project managers and
   // foremen) is managed in Accounts — never deleted from here.
-  const deletableSelected = selectedMembers.filter((member) => !member.profileId);
+  const deletableSelected = selectedMembers.filter((member) => !isManagementMember(member));
 
   const accountById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account])),
@@ -334,7 +334,7 @@ export function TeamBrowser({
   // A row's ⋯ menu: its form, and Delete or Manage in Accounts — or, for a
   // project manager, the member's profile.
   function rowMenuItems(member: Worker): ModalMenuItem[] {
-    if (!canManageMembers) {
+    if (!canManageMembers || isManagementMember(member)) {
       return [
         { label: "View profile", onSelect: () => openPanel({ mode: "view", memberId: member.id }) },
       ];
@@ -444,7 +444,7 @@ export function TeamBrowser({
               ]}
               onChange={setAvailabilityFilter}
             />
-          {canManageMembers && (
+          {canManageMembers && activeGroup.key !== "management" && (
             <button
               type="button"
               onClick={() => openPanel({ mode: "add", defaults: activeGroup.defaults })}
@@ -587,7 +587,7 @@ export function TeamBrowser({
                           key={member.id}
                           onClick={() =>
                             openPanel({
-                              mode: canManageMembers ? "edit" : "view",
+                              mode: canManageMembers && !isManagementMember(member) ? "edit" : "view",
                               memberId: member.id,
                             })
                           }
@@ -712,7 +712,7 @@ export function TeamBrowser({
             title={panelMember ? panelMember.fullName : "Add Member"}
             menuItems={
               canManageMembers && panelMember
-                ? panelMember.profileId
+                ? isManagementMember(panelMember)
                   ? [
                       // Someone with a login account (Management's project
                       // managers and foremen) is managed in Accounts.
@@ -744,7 +744,7 @@ export function TeamBrowser({
                 onCancel={closePanel}
               />
             )}
-            {panel?.mode === "view" && panelMember && (
+            {(panel?.mode === "view" || (panel?.mode === "edit" && panelMember && isManagementMember(panelMember))) && panelMember && (
               <MemberProfile
                 member={panelMember}
                 linkedAccount={
@@ -756,13 +756,13 @@ export function TeamBrowser({
                   .map((group) => group.name)}
                 hoursWorked={hoursWorked.filter((entry) => entry.workerId === panelMember.id)}
                 onEdit={
-                  canManageMembers
+                  canManageMembers && !isManagementMember(panelMember)
                     ? () => setPanel({ mode: "edit", memberId: panelMember.id })
                     : undefined
                 }
               />
             )}
-            {panel?.mode === "edit" && panelMember && (
+            {panel?.mode === "edit" && panelMember && !isManagementMember(panelMember) && (
               <MemberForm
                 key={panelMember.id}
                 member={panelMember}

@@ -3,6 +3,7 @@ import { toIsoDate } from "@/lib/task-progress/calculate";
 import {
   categoryForTitle,
   isMemberCategory,
+  memberCategory,
   type EmploymentType,
   type MemberCategory,
 } from "@/lib/workers/presets";
@@ -84,9 +85,9 @@ export async function listWorkers(): Promise<Worker[]> {
     dateHired: row.date_hired ?? null,
     // Before 0063 has run: a category from the title, an employee. A
     // retired one (laborer, until 0064 has run) falls back the same way.
-    category: isMemberCategory(row.category ?? "")
+    category: memberCategory(row.trade, isMemberCategory(row.category ?? "")
       ? row.category
-      : (categoryForTitle(row.trade ?? "") ?? "skilled"),
+      : (categoryForTitle(row.trade ?? "") ?? "skilled"), row.profile_id),
     employmentType: row.employment_type ?? "employee",
     subcontractorCompany: row.subcontractor_company ?? null,
     profileId: row.profile_id ?? null,

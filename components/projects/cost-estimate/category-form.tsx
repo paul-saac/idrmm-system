@@ -4,7 +4,7 @@ import { RequiredMark } from "@/components/ui/required-mark";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useActionState, useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, ChevronDown, Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import { ModalFooter } from "@/components/ui/modal";
 import {
   createCategory,
@@ -13,7 +13,8 @@ import {
   type CostEstimateActionState,
 } from "@/lib/cost-estimate/actions";
 import type { CostCategory, TaskMaterialAssignment } from "@/lib/cost-estimate/data";
-import { currentProjectSuccessor, projectSuccessorOptions, scheduleRowKey } from "@/lib/cost-estimate/successor-options";
+import { TaskDependenciesFields } from "@/components/projects/progress/task-dependencies-fields";
+import { currentProjectSuccessor, projectSuccessorOptions, projectPredecessorOptions, scheduleRowKey } from "@/lib/cost-estimate/successor-options";
 
 const initialState: CostEstimateActionState = {};
 
@@ -32,6 +33,8 @@ export function CategoryForm({
   /** hasTasks false (a task-less, "standalone" category) adds a
    * Milestone checkbox, seeded from isMilestone. */
   category?: Pick<CostCategory, "id" | "name"> & {
+    predecessorTaskId?: number | null;
+    predecessorCategoryId?: number | null;
     hasTasks?: boolean;
     isMilestone?: boolean;
     materialAssignments?: TaskMaterialAssignment[];
@@ -40,6 +43,7 @@ export function CategoryForm({
     id: number;
     name: string;
     predecessorCategoryId: number | null;
+    predecessorTaskId?: number | null;
   }[];
   projectCategories?: CostCategory[];
   onViewMaterials?: () => void;
@@ -59,7 +63,13 @@ export function CategoryForm({
 }) {
   const [milestone, setMilestone] = useState(category?.isMilestone ?? false);
   const [successorSelection, setSuccessorSelection] = useState(() => category && projectCategories
-    ? currentProjectSuccessor(projectCategories, { kind: "category", id: category.id }) : "");
+    ? currentProjectSuccessor(projectCategories, { kind: "category", id: category.id }) : (() => { const next = (siblingCategories ?? []).find(row => row.predecessorCategoryId === category?.id); return next ? `category:${next.id}` : ""; })());
+  const [predecessorSelection, setPredecessorSelection] = useState(() => {
+    const row = projectCategories?.find(row => row.id === category?.id) ?? category;
+    return row?.predecessorTaskId ? `task:${row.predecessorTaskId}` : row?.predecessorCategoryId ? `category:${row.predecessorCategoryId}` : "";
+  });
+  const predecessorOptions = category && projectCategories ? projectPredecessorOptions(projectCategories, { kind: "category", id: category.id })
+    : (siblingCategories ?? []).filter(row => row.id !== category?.id).map(row => ({ kind: "category" as const, id: row.id, name: row.name }));
   const projectOptions = category && projectCategories ? projectSuccessorOptions(projectCategories, { kind: "category", id: category.id }, milestone) : [];
   const boundAction = category
     ? updateCategory.bind(null, category.id, projectId)
@@ -98,14 +108,6 @@ export function CategoryForm({
   }, [deleteState]);
 
   const showDelete = showDeleteButton && category !== undefined;
-  const currentSuccessor = category
-    ? (siblingCategories ?? []).find(
-        (c) => c.predecessorCategoryId === category.id
-      )
-    : undefined;
-  const relationshipOptions = (siblingCategories ?? []).filter(
-    (c) => c.id !== category?.id
-  );
   const materialAssignments = category?.materialAssignments ?? [];
 
   return (
@@ -175,36 +177,13 @@ export function CategoryForm({
               </label>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor={`${formId}-relationship`}
-                className="text-sm font-medium text-zinc-900"
-              >
-                Successor
-              </label>
-              <div className="relative">
-                <select
-                  id={`${formId}-relationship`}
-                  name={projectCategories ? "successorRowKey" : "successorCategoryId"}
-                  value={projectCategories ? successorSelection : undefined}
-                  defaultValue={projectCategories ? undefined : currentSuccessor?.id ?? ""}
-                  onChange={projectCategories ? event => setSuccessorSelection(event.target.value) : undefined}
-                  className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-                >
-                  <option value="">Select a successor task</option>
-                  {projectCategories ? projectOptions.map(option => (
-                    <option key={scheduleRowKey(option)} value={scheduleRowKey(option)}>{option.name}</option>
-                  )) : relationshipOptions.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
-              </div>
-            </div>
+            {/* Dependency fields are below the milestone control for every main task. */}
           </>
         )}
+
+        {category && <TaskDependenciesFields id={formId} predecessor={predecessorSelection} successor={successorSelection}
+          predecessorOptions={predecessorOptions} successorOptions={projectCategories ? [ ...projectOptions, ...predecessorOptions.filter(option => scheduleRowKey(option) === successorSelection && !projectOptions.some(existing => scheduleRowKey(existing) === successorSelection)) ] : (siblingCategories ?? []).filter(row => row.id !== category?.id).map(row => ({ kind: "category" as const, id: row.id, name: row.name }))}
+          onPredecessor={setPredecessorSelection} onSuccessor={setSuccessorSelection} />}
 
         {category && (
           <div

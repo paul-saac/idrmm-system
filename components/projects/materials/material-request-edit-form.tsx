@@ -380,7 +380,7 @@ export function MaterialRequestEditForm({
                         }
                       }}
                     >
-                      <option value="">Select unit</option>
+                      <option value="" hidden>Select unit</option>
                       {UNIT_OPTIONS.map((unit) => (
                         <option key={unit} value={unit}>
                           {unit}

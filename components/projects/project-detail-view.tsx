@@ -688,6 +688,8 @@ function ProjectDetailContent({
         <ProjectHeader
           project={project}
           categories={costEstimate.categories}
+          taskRecords={taskProgressToday}
+          categoryRecords={categoryProgressToday}
           workers={workers}
           workerAssignments={workerAssignments}
           onEdit={isAdmin && canEditProject && !project.archivedAt ? () => setEditOpen(true) : undefined}

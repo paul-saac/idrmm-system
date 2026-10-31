@@ -27,3 +27,16 @@ export function currentProjectSuccessor(categories: CostCategory[], source: Sche
   }
   return "";
 }
+
+/** Incoming dependencies may reference any project activity outside its own
+ * container. The database checks indirect cycles when both links are saved. */
+export function projectPredecessorOptions(categories: CostCategory[], source: ScheduleRow): SuccessorOption[] {
+  const parent = source.kind === "task" ? categories.find(category => category.tasks.some(task => task.id === source.id)) : undefined;
+  return categories.flatMap<SuccessorOption>(category => [
+    ...(!(source.kind === "category" && category.id === source.id) && category.id !== parent?.id
+      ? [{ kind: "category" as const, id: category.id, name: category.name }] : []),
+    ...(source.kind === "category" && category.id === source.id ? [] : category.tasks
+      .filter(task => !(source.kind === "task" && task.id === source.id))
+      .map(task => ({ kind: "task" as const, id: task.id, name: `${category.name} / ${task.name}` }))),
+  ]).filter(row => row.id > 0);
+}

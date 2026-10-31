@@ -1,5 +1,7 @@
 "use client";
 
+import { SuggestionInput } from "@/components/ui/suggestion-input";
+
 import { EmptyState } from "@/components/ui/empty-state";
 import Image from "next/image";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -2450,10 +2452,10 @@ export function ProgressTrackingModalContent({
                   <ul className="divide-y divide-zinc-100">
                     {unplannedEquipmentRows.map((row) => (
                       <li key={row.id} className={`${UNPLANNED_OTHER_COLUMNS} py-2.5 text-sm`}>
-                        <input
+                        <SuggestionInput
+                          suggestions={equipmentSuggestions.map(item => item.name)}
                           value={row.name}
-                          onChange={(e) => renameUnplannedEquipment(row, e.target.value)}
-                          list="progress-equipment-cost-suggestions"
+                          onValueChange={value => renameUnplannedEquipment(row, value)}
                           autoComplete="off"
                           placeholder="e.g., Rental, Maintenance, Repair"
                           aria-label="Equipment cost description"
@@ -2487,13 +2489,7 @@ export function ProgressTrackingModalContent({
             </div>
           ) : null}
 
-          <datalist id="progress-equipment-cost-suggestions">
-            {equipmentSuggestions.map((item) => (
-              <option key={otherCostKey(item.name)} value={item.name}>
-                {item.amount > 0 ? formatPeso(item.amount) : undefined}
-              </option>
-            ))}
-          </datalist>
+
 
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <button
@@ -2761,10 +2757,10 @@ export function ProgressTrackingModalContent({
                   <ul className="divide-y divide-zinc-100">
                     {unplannedOtherRows.map((row) => (
                       <li key={row.id} className={`${UNPLANNED_OTHER_COLUMNS} py-2.5 text-sm`}>
-                        <input
+                        <SuggestionInput
+                          suggestions={otherSuggestions.map(item => item.name)}
                           value={row.name}
-                          onChange={(e) => renameUnplannedOther(row, e.target.value)}
-                          list="progress-other-cost-suggestions"
+                          onValueChange={value => renameUnplannedOther(row, value)}
                           autoComplete="off"
                           placeholder="e.g., Plan revision"
                           aria-label="Other cost name"
@@ -2798,13 +2794,7 @@ export function ProgressTrackingModalContent({
             </div>
           ) : null}
 
-          <datalist id="progress-other-cost-suggestions">
-            {otherSuggestions.map((item) => (
-              <option key={otherCostKey(item.name)} value={item.name}>
-                {formatPeso(item.amount)}
-              </option>
-            ))}
-          </datalist>
+
 
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
             <button

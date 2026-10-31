@@ -1,20 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { Archive, Building2, Diamond, MapPin } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Archive, Building2, Info, MapPin } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { InitialsAvatar } from "@/components/ui/list-table";
 import type { CostCategory } from "@/lib/cost-estimate/data";
 import type { ProjectRow } from "@/lib/projects/data";
 import { projectStatusBadgeClasses, projectStatusLabel } from "@/lib/projects/status";
 import type { Worker, WorkerAssignment } from "@/lib/workers/data";
+import type { TaskProgressToday } from "@/lib/task-progress/data";
+import { assessProjectSchedule } from "@/lib/projects/schedule-assessment";
+import { manilaToday } from "@/components/admin/dashboard/calendar-model";
+import { Modal } from "@/components/ui/modal";
 
 // How many crew avatars show before "+N".
 const TEAM_PREVIEW = 4;
-
-function localIso(date: Date) {
-  return date.toLocaleDateString("en-CA");
-}
 
 function toDate(iso: string) {
   return new Date(`${iso}T00:00:00`);
@@ -26,13 +26,14 @@ function shortDate(iso: string) {
 }
 
 /** One figure in the stats strip — a small caps label, then the figure. */
-function Stat({ label, value }: { label: string; value: ReactNode }) {
+function Stat({ label, value, description }: { label: string; value: ReactNode; description?: ReactNode }) {
   return (
     <div className="min-w-0 px-8 py-4">
       <p className="text-xs font-medium tracking-wider text-zinc-500 uppercase">{label}</p>
       <div className="mt-1.5 flex min-w-0 items-center gap-2 text-lg font-semibold text-zinc-900">
         {value}
       </div>
+      {description && <div className="mt-1 text-xs leading-relaxed text-zinc-500">{description}</div>}
     </div>
   );
 }
@@ -49,13 +50,15 @@ function Person({ role, name }: { role: string; name: string | null }) {
 /**
  * The project's own header, over its tabs: what it is and where, who runs
  * it and who's on its crew, then a strip of four figures — overall
- * progress, the schedule, the next milestone, and the number of tasks.
+ * progress, the official schedule, delay risk, and forecast completion.
  */
 export function ProjectHeader({
   project,
   categories,
   workers,
   workerAssignments,
+  taskRecords,
+  categoryRecords,
   onEdit,
   onArchive,
 }: {
@@ -63,53 +66,30 @@ export function ProjectHeader({
   categories: CostCategory[];
   workers: Worker[];
   workerAssignments: WorkerAssignment[];
+  taskRecords: Record<number, TaskProgressToday>;
+  categoryRecords: Record<number, TaskProgressToday>;
   /** Admins' Edit project — left out where the project's read-only. */
   onEdit?: () => void;
   /** Admins' Archive/Unarchive project — available for completed or archived projects. */
   onArchive?: () => void;
 }) {
-  const today = localIso(new Date());
+  const today = manilaToday();
+  const [assessmentOpen, setAssessmentOpen] = useState(false);
+  const assessment = useMemo(() => assessProjectSchedule({ project, categories, taskRecords, categoryRecords, today }),
+    [project, categories, taskRecords, categoryRecords, today]);
+  const riskLabels = { low: "Low", medium: "Medium", high: "High", unassessed: "Not assessed", completed: "Completed" };
+  const riskStyles = { low: "text-emerald-700", medium: "text-amber-700", high: "text-red-600", unassessed: "text-zinc-500", completed: "text-emerald-700" };
+  const delta = assessment.differenceDays;
+  const forecastNote = delta === null ? assessment.reason : delta > 0 ? `${delta} calendar days beyond target`
+    : delta < 0 ? `${-delta} calendar days before target` : "Within the official target date";
 
   // Every task's weight × its percent complete (a task-less phase counts
   // as its own task) — the same rollup as the Gantt chart's toolbar.
   let progress = 0;
-  // Each schedulable item: a task, or a phase without tasks.
-  const items: { name: string; start: string | null; end: string | null; percent: number; milestone: boolean }[] = [];
   for (const category of categories) {
-    if (category.tasks.length === 0) {
-      progress += (category.weight * category.percentComplete) / 100;
-      items.push({
-        name: category.name,
-        start: category.plannedStartDate,
-        end: category.plannedEndDate,
-        percent: category.percentComplete,
-        milestone: category.isMilestone,
-      });
-      continue;
-    }
-    for (const task of category.tasks) {
-      progress += (task.weight * task.percentComplete) / 100;
-      items.push({
-        name: task.name,
-        start: task.plannedStartDate,
-        end: task.plannedEndDate,
-        percent: task.percentComplete,
-        milestone: task.isMilestone,
-      });
-    }
+    for (const row of category.tasks.length ? category.tasks : [category]) progress += row.weight * row.percentComplete / 100;
   }
   progress = Math.min(100, progress);
-
-  // The next milestone on or after today.
-  const nextMilestone = items
-    .filter((item) => item.milestone)
-    .map((item) => ({ name: item.name, date: item.end ?? item.start }))
-    .filter((item): item is { name: string; date: string } => !!item.date && item.date >= today)
-    .sort((a, b) => a.date.localeCompare(b.date))[0];
-
-  // Match the Gantt header's count: normal tasks and task-less phases count;
-  // milestones are reported separately and are not included here.
-  const taskCount = items.filter((item) => !item.milestone).length;
 
   // The crew: everyone on one of its tasks or phases.
   const crewIds = new Set(
@@ -204,6 +184,7 @@ export function ProjectHeader({
         />
         <Stat
           label="Project schedule"
+          description={project.targetEndDate ? `Official target: ${toDate(project.targetEndDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : undefined}
           value={
             scheduled ? (
               <span className="truncate">
@@ -214,24 +195,38 @@ export function ProjectHeader({
             )
           }
         />
-        <Stat
-          label="Next milestone"
-          value={
-            nextMilestone ? (
-              <>
-                <span className="truncate">{nextMilestone.name}</span>
-                <Diamond aria-hidden className="size-4 shrink-0 text-zinc-500" />
-              </>
-            ) : (
-              <span className="text-zinc-500">None</span>
-            )
-          }
+        <Stat label="Delay risk"
+          value={<button type="button" onClick={() => setAssessmentOpen(true)} className={`flex cursor-pointer items-center gap-2 text-left ${riskStyles[assessment.risk]}`}>
+            {riskLabels[assessment.risk]}<Info aria-hidden className="size-3.5 text-zinc-400" />
+          </button>}
+          description={<>{assessment.risk !== "unassessed" && assessment.risk !== "completed" && <><span>{assessment.delayedTasks} {assessment.delayedTasks === 1 ? "task" : "tasks"} behind recorded plan</span><br /></>}{assessment.reason}</>}
         />
-        <Stat
-          label="Project tasks"
-          value={`${taskCount} ${taskCount === 1 ? "task" : "tasks"}`}
+        <Stat label="Forecast completion"
+          value={<button type="button" onClick={() => setAssessmentOpen(true)} className="flex cursor-pointer items-center gap-2 text-left">
+            {assessment.forecastDate ? toDate(assessment.forecastDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : <span className="text-zinc-500">Insufficient data</span>}
+            <Info aria-hidden className="size-3.5 text-zinc-400" />
+          </button>}
+          description={<span className={delta !== null && delta > 0 ? "text-red-600" : undefined}>{assessment.forecastDate ? forecastNote : assessment.lastRecordedDate ? `Latest log: ${assessment.lastRecordedDate}` : "Uses saved progress and task dependencies"}</span>}
         />
       </div>
+      <Modal open={assessmentOpen} onClose={() => setAssessmentOpen(false)} title="Project schedule assessment">
+        <div className="space-y-5 text-sm text-zinc-700">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-3">
+            <dt className="text-zinc-500">Official target</dt><dd>{project.targetEndDate ?? "Not scheduled"}</dd>
+            <dt className="text-zinc-500">Forecast completion</dt><dd>{assessment.forecastDate ?? "Insufficient data"}</dd>
+            <dt className="text-zinc-500">Delay risk</dt><dd className={riskStyles[assessment.risk]}>{riskLabels[assessment.risk]}</dd>
+            <dt className="text-zinc-500">Latest progress record</dt><dd>{assessment.lastRecordedDate ?? "No saved progress"}</dd>
+          </dl>
+          <p>{assessment.reason}</p>
+          <section className="space-y-2"><h3 className="font-semibold text-zinc-900">How the forecast is calculated</h3><p>{assessment.method}</p>
+            <p>Actual completion comes from saved progress entries. For started tasks, the remaining work is divided by the recorded average progress per working day since the planned start. Tasks with no recorded completion retain their planned duration. Successors wait for predecessor completion; parallel activities keep their own planned start constraints.</p>
+          </section>
+          <section className="space-y-2"><h3 className="font-semibold text-zinc-900">Risk rules</h3>
+            <p><strong>High:</strong> the projected completion exceeds the target. <strong>Medium:</strong> some tasks are behind by more than five percentage points, while the forecast still fits the target. <strong>Low:</strong> no such recorded lag and the forecast fits the target.</p>
+            <p>The rating is a schedule warning, not a statistical probability. Missing schedules, circular dependencies, missing logs, or records more than two working days old prevent assessment. A forecast does not move the official deadline or reschedule task bars.</p>
+          </section>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -813,6 +813,7 @@ select[data-calendar-dropdown]::-webkit-scrollbar {
     margin-block-start: 4px;
     max-height: min(20rem, 50dvh);
     overflow-y: auto;
+    scrollbar-width: none;
     border: 1px solid var(--color-zinc-200);
     border-radius: var(--radius-md, 2px);
     background: white;
@@ -853,6 +854,7 @@ select[data-calendar-dropdown]::-webkit-scrollbar {
   select:not([multiple]) option:focus-visible {
     background: var(--color-zinc-100);
     color: var(--color-zinc-900);
+    outline: none;
   }
 
   select:not([multiple]) option:checked {
@@ -866,6 +868,15 @@ select[data-calendar-dropdown]::-webkit-scrollbar {
   }
 
   select:not([multiple]) option::checkmark {
+    display: none;
+  }
+
+  select:not([multiple])::picker-icon {
+    color: var(--color-zinc-400);
+    font-size: 12px;
+  }
+
+  select:not([multiple]) option[hidden] {
     display: none;
   }
 

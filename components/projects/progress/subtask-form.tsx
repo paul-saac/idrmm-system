@@ -13,7 +13,8 @@ import {
   type CostEstimateActionState,
 } from "@/lib/cost-estimate/actions";
 import type { CostCategory, TaskMaterialAssignment } from "@/lib/cost-estimate/data";
-import { currentProjectSuccessor, projectSuccessorOptions, scheduleRowKey } from "@/lib/cost-estimate/successor-options";
+import { TaskDependenciesFields } from "@/components/projects/progress/task-dependencies-fields";
+import { currentProjectSuccessor, projectSuccessorOptions, projectPredecessorOptions, scheduleRowKey } from "@/lib/cost-estimate/successor-options";
 
 const initialState: CostEstimateActionState = {};
 
@@ -80,6 +81,8 @@ export function SubtaskForm({
   projectId: number;
   categoryId: number;
   task?: {
+    predecessorTaskId?: number | null;
+    predecessorCategoryId?: number | null;
     id: number;
     name: string;
     isMilestone: boolean;
@@ -103,7 +106,13 @@ export function SubtaskForm({
   const projectLinkMode = isEdit && projectCategories !== undefined;
   const [milestone, setMilestone] = useState(task?.isMilestone ?? false);
   const [successorSelection, setSuccessorSelection] = useState(() => task && projectCategories
-    ? currentProjectSuccessor(projectCategories, { kind: "task", id: task.id }) : "");
+    ? currentProjectSuccessor(projectCategories, { kind: "task", id: task.id }) : (() => { const next = (siblingTasks ?? []).find(row => row.predecessorTaskId === task?.id); return next ? `task:${next.id}` : ""; })());
+  const [predecessorSelection, setPredecessorSelection] = useState(() => {
+    const row = projectCategories?.flatMap(category => category.tasks).find(row => row.id === task?.id) ?? task;
+    return row?.predecessorTaskId ? `task:${row.predecessorTaskId}` : row?.predecessorCategoryId ? `category:${row.predecessorCategoryId}` : "";
+  });
+  const predecessorOptions = task && projectCategories ? projectPredecessorOptions(projectCategories, { kind: "task", id: task.id })
+    : (siblingTasks ?? []).filter(row => row.id !== task?.id).map(row => ({ kind: "task" as const, id: row.id, name: row.name }));
   const projectOptions = task && projectCategories ? projectSuccessorOptions(projectCategories, { kind: "task", id: task.id }, milestone) : [];
   const boundAction = isEdit
     ? updateSubtask.bind(null, task.id, projectId)
@@ -199,12 +208,14 @@ export function SubtaskForm({
           </label>
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        {isEdit ? <TaskDependenciesFields id={formId} predecessor={predecessorSelection} successor={successorSelection}
+          predecessorOptions={predecessorOptions} successorOptions={projectCategories ? [ ...projectOptions, ...predecessorOptions.filter(option => scheduleRowKey(option) === successorSelection && !projectOptions.some(existing => scheduleRowKey(existing) === successorSelection)) ] : predecessorOptions}
+          onPredecessor={setPredecessorSelection} onSuccessor={setSuccessorSelection} /> : <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-relationship`}
             className="text-sm font-medium text-zinc-900"
           >
-            Successor
+            Predecessor
           </label>
           <div className="relative">
             <select
@@ -215,7 +226,7 @@ export function SubtaskForm({
               onChange={projectLinkMode ? event => setSuccessorSelection(event.target.value) : undefined}
               className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             >
-              <option value="">
+              <option value="" hidden>
                 {isEdit ? "Select a successor task" : "None — starts independently"}
               </option>
               {projectLinkMode ? projectOptions.map(option => (
@@ -228,7 +239,7 @@ export function SubtaskForm({
             </select>
             <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-4 -translate-y-1/2 text-zinc-400" />
           </div>
-        </div>
+        </div>}
 
         {isEdit && (
           <div className="-mx-6 flex flex-col gap-2 border-t border-zinc-200 px-6 pt-4">

@@ -6,7 +6,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { getSessionProfile } from "@/lib/auth/session";
-import { isMemberCategory } from "@/lib/workers/presets";
+import { isMemberCategory, categoryForTitle } from "@/lib/workers/presets";
 import { isAdminRole } from "@/lib/auth/roles";
 import { listProjectManagementWorkerIds } from "@/lib/workers/data";
 
@@ -55,8 +55,9 @@ function readMemberFields(formData: FormData) {
   if (dateHired && !/^\d{4}-\d{2}-\d{2}$/.test(dateHired)) {
     return { error: "Enter a valid date hired." };
   }
-  const category = text("category");
+  const category = categoryForTitle(text("title")) ?? text("category");
   if (!isMemberCategory(category)) return { error: "Pick a category." };
+  if (category === "management" || text("profileId")) return { error: "Management accounts are managed through Accounts." };
   const subcontractor = text("employmentType") === "subcontractor";
   const company = text("subcontractorCompany");
   if (subcontractor && !company) return { error: "Enter the subcontractor's company." };
@@ -312,12 +313,15 @@ export async function updateWorker(
       return { error: "You are not authorized to manage the team." };
     }
 
+    const supabase = await createClient();
+    const { data: existing, error: lookupError } = await supabase.from("workers").select("category,profile_id").eq("id", workerId).maybeSingle();
+    if (lookupError || !existing) return { error: "Member not found. Please refresh and retry." };
+    if (existing.profile_id || existing.category === "management") return { error: "Management accounts are read-only on Team. Use Accounts to manage them." };
     const member = readMemberFields(formData);
     if (!member.fields) {
       return { error: member.error };
     }
 
-    const supabase = await createClient();
     const { error } = await supabase
       .from("workers")
       .update(member.fields)
@@ -356,8 +360,9 @@ export async function deleteWorkers(workerIds: number[]): Promise<WorkerActionSt
     // Someone with a login account (a project manager or foreman) is
     // managed in Accounts, never removed from the Team here. "*" so this
     // still reads before 0063 has added profile_id.
-    const { data: rows } = await supabase.from("workers").select("*").in("id", ids);
-    if ((rows ?? []).some((row) => row.profile_id)) {
+    const { data: rows, error: readError } = await supabase.from("workers").select("*").in("id", ids);
+    if (readError || !rows?.length) return { error: "Could not verify the selected members. Refresh and try again." };
+    if ((rows ?? []).some((row) => row.profile_id || row.category === "management")) {
       return {
         error: "Project managers and foremen are managed in Accounts — they can't be removed here.",
       };

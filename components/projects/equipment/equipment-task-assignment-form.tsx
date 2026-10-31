@@ -53,7 +53,7 @@ export function EquipmentTaskAssignmentForm({
           defaultValue=""
           className="rounded border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         >
-          <option value="" disabled>Select a task</option>
+          <option value="" disabled hidden>Select a task</option>
           {tasks.filter((task) => task.id !== assignment.currentTaskId).map((task) => (
             <option key={task.id} value={task.id}>{task.phaseName} — {task.name}</option>
           ))}

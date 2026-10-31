@@ -222,6 +222,27 @@ async function saveProjectSuccessor(
   return { success: true };
 }
 
+async function saveProjectLinks(supabase: Awaited<ReturnType<typeof createClient>>, projectId: number,
+  kind: "category" | "task", id: number, form: FormData): Promise<CostEstimateActionState> {
+  const parse = (field: string) => {
+    const value = String(form.get(field) ?? "").trim();
+    const match = /^(category|task):([1-9][0-9]*)$/.exec(value);
+    if (value && (!match || !Number.isSafeInteger(Number(match[2])))) throw new Error("Choose valid task dependencies.");
+    return { kind: match?.[1] ?? null, id: match ? Number(match[2]) : null };
+  };
+  const predecessor = parse("predecessorRowKey"), successor = parse("successorRowKey"), previous = parse("previousSuccessorRowKey");
+  const { error } = await supabase.rpc("save_estimate_links", {
+    p_project_id: projectId, p_source_kind: kind, p_source_id: id,
+    p_predecessor_kind: predecessor.kind, p_predecessor_id: predecessor.id,
+    p_successor_kind: successor.kind, p_successor_id: successor.id,
+    p_previous_successor_kind: previous.kind, p_previous_successor_id: previous.id,
+    p_milestone: kind === "task" || form.has("milestoneField") ? form.get("isMilestone") === "on" : null,
+    p_name: kind === "category" ? String(form.get("categoryName") ?? "").trim() : null,
+  });
+  if (error) return { error: ["22023", "42501", "55000", "40001"].includes(error.code) ? error.message : "Could not save task dependencies. Please retry." };
+  return { success: true };
+}
+
 export async function updateCategory(
   categoryId: number,
   projectId: number,
@@ -250,6 +271,13 @@ export async function updateCategory(
     }
 
     const supabase = await createClient();
+    if (formData.has("predecessorRowKey")) {
+      const result = await saveProjectLinks(supabase, projectId, "category", categoryId, formData);
+      if (result.error) return result;
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
+      revalidateProjectPaths(projectId);
+      return result;
+    }
     if (formData.has("successorRowKey")) {
       const result = await saveProjectSuccessor(supabase, projectId, "category", categoryId, formData);
       if (result.error) return result;
@@ -1206,6 +1234,13 @@ export async function updateSubtask(
     const successorTaskId = parseOptionalId(formData.get("successorTaskId"));
 
     const supabase = await createClient();
+    if (formData.has("predecessorRowKey")) {
+      const result = await saveProjectLinks(supabase, projectId, "task", taskId, formData);
+      if (result.error) return result;
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
+      revalidateProjectPaths(projectId);
+      return result;
+    }
     if (formData.has("successorRowKey")) {
       const result = await saveProjectSuccessor(supabase, projectId, "task", taskId, formData);
       if (result.error) return result;

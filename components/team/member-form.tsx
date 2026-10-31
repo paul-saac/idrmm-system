@@ -9,10 +9,12 @@ import {
 } from "@/lib/workers/actions";
 import type { Worker } from "@/lib/workers/data";
 import { ModalFooter } from "@/components/ui/modal";
+import { SuggestionInput } from "@/components/ui/suggestion-input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { DEFAULT_WORK_HOURS, WEEKDAY_LABELS } from "@/lib/workers/schedule";
 import {
   TITLE_SUGGESTIONS,
+  categoryForTitle,
   type EmploymentType,
   type MemberCategory,
 } from "@/lib/workers/presets";
@@ -115,18 +117,14 @@ export function MemberForm({
         <label htmlFor={`${formId}-title`} className={LABEL}>
           Role
         </label>
-        <input
+        <SuggestionInput
+          suggestions={TITLE_SUGGESTIONS.filter(title => categoryForTitle(title) !== "management")}
           id={`${formId}-title`}
           name="title"
-          list={`${formId}-titles`}
           defaultValue={member?.title ?? ""}
           className={FIELD}
         />
-        <datalist id={`${formId}-titles`}>
-          {TITLE_SUGGESTIONS.map((title) => (
-            <option key={title} value={title} />
-          ))}
-        </datalist>
+
       </div>
       {subcontractor && (
         <div className="flex flex-col gap-1.5">

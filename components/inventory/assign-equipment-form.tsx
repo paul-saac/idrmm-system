@@ -56,7 +56,7 @@ export function AssignEquipmentForm({
               defaultValue=""
               className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             >
-              <option value="" disabled>
+              <option value="" disabled hidden>
                 Select a project
               </option>
               {projects.map((project) => (

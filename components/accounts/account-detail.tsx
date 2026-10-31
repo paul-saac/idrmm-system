@@ -629,7 +629,7 @@ export function AccountDetail({
                         }
                         className={`${INPUT} cursor-pointer appearance-none bg-white pr-9`}
                       >
-                        <option value="" disabled>
+                        <option value="" disabled hidden>
                           {candidates.length === 0
                             ? `No free ${roleLabel(needed)} right now`
                             : `Select a ${roleLabel(needed)}`}

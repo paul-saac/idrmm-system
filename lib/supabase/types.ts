@@ -1597,6 +1597,13 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      save_estimate_links: {
+        Args: { p_project_id: number; p_source_kind: string; p_source_id: number;
+          p_predecessor_kind: string | null; p_predecessor_id: number | null; p_successor_kind: string | null;
+          p_successor_id: number | null; p_milestone?: boolean | null; p_name?: string | null;
+          p_previous_successor_kind?: string | null; p_previous_successor_id?: number | null };
+        Returns: undefined;
+      };
       gantt_snapshot: { Args: { p_project_id: number }; Returns: unknown };
       gantt_history: { Args: { p_project_id: number; p_action: string }; Returns: { canUndo: boolean; canRedo: boolean } };
       move_selected_schedules: {

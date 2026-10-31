@@ -50,3 +50,11 @@ export function categoryForTitle(title: string): MemberCategory | null {
   const key = title.trim().toLowerCase();
   return TITLES.find((t) => t.title.toLowerCase() === key)?.category ?? null;
 }
+
+export function memberCategory(title: string | null, stored: MemberCategory, profileId?: string | null): MemberCategory {
+  return profileId ? "management" : categoryForTitle(title ?? "") ?? stored;
+}
+
+export function isManagementMember(member: { category: MemberCategory; profileId: string | null }) {
+  return member.category === "management" || !!member.profileId;
+}
