@@ -5,6 +5,7 @@ import { requireProjectAccess } from "@/lib/auth/project-access";
 import { loadInsightContext } from "./data";
 import { requestInsightAnalysis } from "./provider";
 import type { ProjectInsights, ProjectInsightsResult } from "./types";
+import { getAIProvider } from "@/lib/ai/provider";
 
 const TTL_MS = 5 * 60 * 1000;
 const cache = new Map<string,{signature:string;expires:number;data:ProjectInsights}>();
@@ -15,12 +16,11 @@ export async function generateProjectInsights(projectId: number): Promise<Projec
   if (!Number.isSafeInteger(projectId) || projectId <= 0) return {error:"Choose a valid project."};
   const profile = await requireProjectAccess(projectId,"view");
   if (!profile) return {error:"You do not have access to this project's insights."};
-  const apiKey = process.env.GROQ_API_KEY?.trim();
-  if (!apiKey) return {error:"AI insights are not available yet. Please contact your system administrator."};
   try {
+    const provider = getAIProvider();
     const context = await loadInsightContext(projectId);
     if (!context.summary.workItemCount) return {empty:true};
-    const signature = createHash("sha256").update(JSON.stringify(context)).digest("hex");
+    const signature = createHash("sha256").update(JSON.stringify({provider:provider.id,endpoint:provider.endpoint,model:provider.textModel,format:provider.responseMode,context})).digest("hex");
     const actorKey = `${profile.id}:${projectId}`;
     const requestKey = `${actorKey}:${signature}`;
     const previous = cache.get(actorKey);
@@ -30,7 +30,7 @@ export async function generateProjectInsights(projectId: number): Promise<Projec
     // Bound process-local work as well as response size on the free provider.
     if (pending.size >= 8) return {error:"AI insights are busy. Please try again shortly."};
     const request = (async () => {
-      const analysis = await requestInsightAnalysis(context,apiKey);
+      const analysis = await requestInsightAnalysis(context,provider);
       const data: ProjectInsights = {...analysis,projectId,asOfDate:context.asOfDate,generatedAt:new Date().toISOString()};
       // Permissions are checked before every lookup and again after the
       // external request, including projects that are view-only or archived.

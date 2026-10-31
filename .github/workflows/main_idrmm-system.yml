@@ -59,6 +59,9 @@ jobs:
       - name: Build production app
         run: npm run build
 
+      - name: Check AI provider and deployment settings
+        run: node --test lib/ai/provider.test.mjs lib/project-insights/insights.test.mjs scripts/configure-azure-ai.test.mjs
+
       - name: Check backup WebJob package
         shell: bash
         run: |
@@ -125,3 +128,19 @@ jobs:
           slot-name: Production
           package: app
           startup-command: npm start
+
+      - name: Configure Azure AI connection
+        if: vars.AI_PROVIDER == 'azure-foundry'
+        env:
+          AZURE_WEBAPP_NAME: idrmm-system
+          AZURE_RESOURCE_GROUP: idrmm-system_group
+          AI_PROVIDER: ${{ vars.AI_PROVIDER }}
+          AZURE_AI_ENDPOINT: ${{ vars.AZURE_AI_ENDPOINT }}
+          AZURE_AI_API_KEY: ${{ secrets.AZURE_AI_API_KEY }}
+          AZURE_AI_MODEL: ${{ vars.AZURE_AI_MODEL }}
+          AZURE_AI_API_STYLE: ${{ vars.AZURE_AI_API_STYLE }}
+          AZURE_AI_VISION_MODEL: ${{ vars.AZURE_AI_VISION_MODEL }}
+          AZURE_AI_RESPONSE_FORMAT: ${{ vars.AZURE_AI_RESPONSE_FORMAT }}
+          AZURE_AI_MAX_OUTPUT_TOKENS: ${{ vars.AZURE_AI_MAX_OUTPUT_TOKENS }}
+          AZURE_AI_API_VERSION: ${{ vars.AZURE_AI_API_VERSION }}
+        run: node app/scripts/configure-azure-ai.mjs

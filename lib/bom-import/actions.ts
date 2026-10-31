@@ -1,6 +1,7 @@
 "use server";
 
 import { requireAdminOrForeman } from "@/lib/auth/project-access";
+import { getAIProvider, aiModel, aiChatRequest, aiResponseFormat, nextAIResponseMode, isAIJsonFormatError, type AIProvider, type AIResponseMode } from "@/lib/ai/provider";
 
 export type ExtractedMaterialLine = {
   name: string;
@@ -36,13 +37,9 @@ export type BomExtractionState = {
   categories?: ExtractedCategory[];
 };
 
-const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_TEXT_MODEL = "openai/gpt-oss-20b";
-const GROQ_VISION_MODEL = "qwen/qwen3.8-27b";
-
-// Images are sent to Groq Vision as base64 data URLs. Base64 inflates the
-// raw file by roughly 4/3, so this remains below Groq's 20MB image-request
-// limit. PDFs are converted to text locally and never sent as raw files.
+// Images are sent to an explicitly configured vision model as data URLs.
+// Base64 inflates the raw file by roughly 4/3. Keep the existing upload
+// bound; PDFs are converted to text locally and never sent as raw files.
 // Doesn't apply to a CSV/Excel upload — see MAX_SPREADSHEET_BYTES/
 // isCsvFile/isExcelFile below, a wholly separate, non-multimodal path.
 const MAX_FILE_BYTES = 15 * 1024 * 1024;
@@ -154,9 +151,9 @@ async function excelToText(file: File): Promise<string> {
   return sheetTexts.join("\n\n");
 }
 
-/** Extracts the text layer from a PDF before sending it to Groq. This keeps
+/** Extracts the text layer from a PDF before sending it to the AI service. This keeps
  * the API key and document processing on the server and avoids pretending
- * Groq's image endpoint accepts a raw PDF. */
+ * a chat-completions image endpoint accepts a raw PDF. */
 async function pdfToText(file: File): Promise<string> {
   const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const loadingTask = getDocument({
@@ -205,7 +202,7 @@ const REQUEST_TIMEOUT_MS = 90_000;
 const TOTAL_BUDGET_MS = 180_000;
 
 const BUSY_MESSAGE =
-  "Groq is busy right now — nothing's wrong with your file. Please try again in a few minutes.";
+  "The AI service is busy right now. Please try again in a few minutes.";
 
 /** Whether a failed fetch was a timeout — ours (AbortSignal.timeout) or
  * Node's own header/body wait. */
@@ -388,7 +385,7 @@ function categoriesFromJsonText(text: string): ExtractedCategory[] | null {
   return null;
 }
 
-/** Reads a cost estimate document and asks Groq for phases, tasks, and
+/** Reads a cost estimate document and asks the configured AI provider for phases, tasks, and
  * materials as strict JSON. This action never writes to the project; the
  * user reviews the returned draft before applyBomImport creates anything. */
 export async function extractBomFromFile(
@@ -397,13 +394,9 @@ export async function extractBomFromFile(
   const profile = await requireAdminOrForeman();
   if (!profile) return { error: "You are not authorized to use this feature." };
 
-  const apiKey = process.env.GROQ_API_KEY?.trim();
-  if (!apiKey) {
-    return {
-      error:
-        "The Groq API key isn't configured yet. Add GROQ_API_KEY to your .env file and restart the dev server.",
-    };
-  }
+  let provider: AIProvider;
+  try { provider=getAIProvider(); }
+  catch (error) { return {error:error instanceof Error ? error.message : "AI import is not configured yet."}; }
 
   const file = formData.get("file");
   if (!(file instanceof File)) return { error: "No file was uploaded." };
@@ -426,14 +419,15 @@ export async function extractBomFromFile(
     return { error: "That file is too large — try a smaller PDF or image." };
   }
 
-  let model = GROQ_TEXT_MODEL;
+  let model: string;
+  try { model=aiModel(provider,isImage); }
+  catch (error) { return {error:error instanceof Error ? error.message : "This AI deployment cannot process images."}; }
   let userContent: string | Array<
     | { type: "text"; text: string }
     | { type: "image_url"; image_url: { url: string } }
   >;
 
   if (isImage) {
-    model = GROQ_VISION_MODEL;
     const base64Data = Buffer.from(await file.arrayBuffer()).toString("base64");
     userContent = [
       { type: "text", text: "Extract the construction estimate from this image." },
@@ -481,52 +475,28 @@ export async function extractBomFromFile(
       { role: "system", content: EXTRACTION_PROMPT },
       { role: "user", content: userContent },
     ],
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "construction_cost_estimate",
-        strict: true,
-        schema: RESPONSE_SCHEMA,
-      },
-    },
     temperature: 0.1,
     max_completion_tokens: 8_192,
   };
 
   const startedAt = Date.now();
   let response: Response | undefined;
-  let responseMode: "strict" | "best_effort" | "json_object" = "strict";
+  let responseMode: AIResponseMode = provider.responseMode;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
     if (remaining < 5_000) break;
     try {
-      response = await fetch(GROQ_ENDPOINT, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...requestBody,
-          response_format:
-            responseMode === "json_object"
-              ? { type: "json_object" }
-              : {
-                  ...requestBody.response_format,
-                  json_schema: {
-                    ...requestBody.response_format.json_schema,
-                    strict: responseMode === "strict",
-                  },
-                },
-        }),
+      const request=aiChatRequest(provider,{...requestBody,
+        response_format:aiResponseFormat(responseMode,"construction_cost_estimate",RESPONSE_SCHEMA)});
+      response = await fetch(request.url, {
+        ...request.options,
         signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, remaining)),
       });
     } catch (error) {
-      console.error("[extractBomFromFile] Groq request failed:", error);
       return {
         error: isTimeout(error)
           ? BUSY_MESSAGE
-          : "Could not reach Groq. Check your connection and try again.",
+          : "Could not reach the AI service. Please try again shortly.",
       };
     }
 
@@ -540,11 +510,7 @@ export async function extractBomFromFile(
         typeof errorBody?.error?.message === "string" ? errorBody.error.message : "";
       const errorCode =
         typeof errorBody?.error?.code === "string" ? errorBody.error.code : "";
-      const normalizedMessage = message.toLowerCase();
-      const jsonGenerationFailed =
-        errorCode === "json_validate_failed" ||
-        normalizedMessage.includes("failed to generate json") ||
-        normalizedMessage.includes("does not match the expected schema");
+      const jsonGenerationFailed = isAIJsonFormatError({error:{code:errorCode,message,param:errorBody?.error?.param}});
       if (jsonGenerationFailed) {
         const failedGeneration = errorBody?.error?.failed_generation;
         if (failedGeneration !== undefined && failedGeneration !== null) {
@@ -556,12 +522,7 @@ export async function extractBomFromFile(
           if (recovered && recovered.length > 0) return { categories: recovered };
         }
 
-        const nextMode: "best_effort" | "json_object" | null =
-          responseMode === "strict"
-            ? "best_effort"
-            : responseMode === "best_effort"
-              ? "json_object"
-              : null;
+        const nextMode = nextAIResponseMode(responseMode);
         if (!nextMode) break;
         console.warn(
           `[extractBomFromFile] ${responseMode} JSON generation failed; retrying with ${nextMode}`
@@ -578,48 +539,38 @@ export async function extractBomFromFile(
 
   if (!response) return { error: BUSY_MESSAGE };
   if (!response.ok) {
-    const bodyText = await response.text().catch(() => "");
-    let groqMessage: string | null = null;
-    try {
-      const parsedBody = JSON.parse(bodyText);
-      groqMessage =
-        typeof parsedBody?.error?.message === "string" ? parsedBody.error.message : null;
-    } catch {
-      // Groq returned a non-JSON error body; use the status-specific message below.
-    }
-    console.error("[extractBomFromFile] Groq API error", response.status, groqMessage);
-
     if (response.status === 429) {
-      return { error: "Groq's free-tier rate limit was reached — wait a moment and try again." };
+      return { error: "The AI service's usage limit was reached. Please wait and try again." };
     }
+    if (response.status === 401 || response.status === 403) return {error:"AI import is unavailable. Please contact your system administrator."};
+    if (response.status === 404) return {error:"The configured AI deployment was not found. Ask your system administrator to check its endpoint and deployment name."};
     if (response.status === 503) return { error: BUSY_MESSAGE };
     return {
-      error: groqMessage
-        ? `Groq error (${response.status}): ${groqMessage}`
-        : `Groq couldn't process this document (HTTP ${response.status}).`,
+      error: `The AI service couldn't process this document (HTTP ${response.status}). Please try again.`,
     };
   }
 
   let payload: unknown;
   try {
     payload = await response.json();
-  } catch (error) {
-    console.error("[extractBomFromFile] Could not read Groq response:", error);
-    return { error: "Groq returned an unreadable response. Please try again." };
+  } catch {
+    return { error: "The AI service returned an unreadable response. Please try again." };
   }
+
+  const finishReason=(payload as {choices?:{finish_reason?:string}[]})?.choices?.[0]?.finish_reason;
+  if (finishReason === "length") return {error:"The AI import exceeded the response limit. Upload a smaller document or split it into sections."};
+  if (finishReason === "content_filter") return {error:"The AI service could not process this document under its content policy."};
 
   const content = (payload as {
     choices?: { message?: { content?: unknown; refusal?: unknown } }[];
   })?.choices?.[0]?.message?.content;
   if (typeof content !== "string") {
-    console.error("[extractBomFromFile] Unexpected Groq response shape");
-    return { error: "Groq returned an unexpected response. Please try again." };
+    return { error: "The AI service returned an unexpected response. Please try again." };
   }
 
   const categories = categoriesFromJsonText(content);
   if (!categories) {
-    console.error("[extractBomFromFile] Groq response did not match the expected shape");
-    return { error: "Groq's response didn't match the expected format. Please try again." };
+    return { error: "The AI response didn't match the expected format. Please try again." };
   }
   if (categories.length === 0) {
     return { error: "No phases, tasks, or materials were found in that document." };
