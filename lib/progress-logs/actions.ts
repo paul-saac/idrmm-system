@@ -141,7 +141,6 @@ export async function listOverrideLogs(
     .from("progress_override_logs")
     .select("*")
     .eq(item.kind === "task" ? "task_id" : "category_id", item.id)
-    .order("entry_date", { ascending: false })
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
 
@@ -171,7 +170,6 @@ export async function listProjectOverrideHistory(
     .from("progress_override_logs")
     .select("*")
     .eq("project_id", projectId)
-    .order("entry_date", { ascending: false })
     .order("created_at", { ascending: false })
     .order("id", { ascending: false });
 
