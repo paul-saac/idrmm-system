@@ -59,6 +59,15 @@ jobs:
       - name: Build production app
         run: npm run build
 
+      - name: Check backup WebJob package
+        shell: bash
+        run: |
+          bash -n App_Data/jobs/continuous/idrmm-backup/run.sh
+          bash -n App_Data/jobs/continuous/idrmm-backup/install-tools.sh
+          chmod +x App_Data/jobs/continuous/idrmm-backup/*.sh
+          openssl x509 -in App_Data/jobs/continuous/idrmm-backup/supabase-ca.crt -noout -checkend 0
+          node --test scripts/azure-backup-webjob.test.mjs
+
       - name: Package production files
         # A tar archive preserves .next, node_modules/.bin, permissions and symlinks.
         # Only the listed runtime paths are included; .env and .git are not uploaded.
@@ -70,7 +79,7 @@ jobs:
           tar --exclude='.next/cache' --exclude='.next/dev' --exclude='.env*' --exclude='*.idrmm' \
             -czf release.tar.gz \
             .next node_modules public package.json package-lock.json \
-            next.config.ts tsconfig.json scripts lib/backups supabase/migrations
+            next.config.ts tsconfig.json scripts lib/backups supabase/migrations App_Data
 
       - name: Upload deployment artifact
         uses: actions/upload-artifact@v4

@@ -48,6 +48,81 @@ certificate chain. Do not disable certificate verification.
 `SELF_SIGNED_CERT_IN_CHAIN` means that the worker needs the Supabase root CA in
 `BACKUP_SSL_CA_FILE`. Keep the file in a permanent location and restart the worker.
 
+## Azure App Service deployment
+
+The GitHub deployment includes `App_Data/jobs/continuous/idrmm-backup`. Azure
+discovers the continuous WebJob from its executable `run.sh`; there is no separate
+ZIP upload or change to the website's `npm start` command. The workflow checks
+the launcher and certificate and runs isolated Linux preflight tests before
+including the job in the release. Always On must remain enabled.
+
+In Azure App Service > Settings > Environment variables, keep the existing
+Supabase settings and add these **server-only** values (without surrounding quotes):
+
+| Name | Value |
+| --- | --- |
+| `BACKUP_DATABASE_URL` | Existing Supabase Session pooler URI, port 5432 |
+| `BACKUP_ENCRYPTION_KEY` | Existing 64-character hexadecimal backup key; retain it securely |
+| `BACKUP_DIRECTORY` | `/home/idrmm-backups` |
+| `BACKUP_TIMEZONE` | `Asia/Manila` |
+| `BACKUP_HOUR` | `2` |
+| `BACKUP_SCHEDULE_DISABLED` | `false` |
+
+The public Supabase root CA is included in the job folder. The launcher defaults
+to it and to `/usr/lib/postgresql/18/bin/pg_dump` and `psql`. Remove any old
+Windows `BACKUP_SSL_CA_FILE`, `BACKUP_PG_DUMP_PATH`, or `BACKUP_PSQL_PATH` settings
+from Azure; they cannot refer to laptop files. Custom Linux paths are supported
+only if those files actually exist on Azure.
+
+On a supported Debian/Ubuntu runtime, the launcher installs missing PostgreSQL
+18 **client tools only** from PostgreSQL's signed HTTPS repository. It verifies
+the repository signing-key fingerprint. Installation needs root and apt-get and
+is repeated if an Azure container recycle removes the clients. An unsupported
+or restricted runtime stops with a setup error instead of weakening TLS; such
+a runtime needs an image with compatible clients preinstalled. Native tool and
+server version compatibility is also enforced by the existing worker.
+
+Deployment procedure:
+
+1. Stop any laptop worker with Ctrl+C after its active operation completes.
+   Only one worker may own this Supabase project's backup lock.
+2. Commit and push the WebJob folder, `.gitattributes`, workflow change and
+   `scripts/azure-backup-webjob.test.mjs` to `main`. Do not include `.env`, backup
+   packages, or unrelated working changes.
+3. Wait for GitHub Actions Build and deploy to succeed. In Azure > WebJobs,
+   look for `idrmm-backup`, type Continuous. View its logs if startup fails.
+4. Refresh Settings > Backup & restore. Request a new backup and wait for it
+   to complete; the scheduler may first catch up today's automatic backup.
+5. Download that new package, then confirm it is still downloadable after an
+   app restart. Avoid restarting or deploying while a backup/restore is active.
+
+The `/home` location must be backed by persistent App Service storage, shared
+by the web app and job. Do not use `/tmp` or the deployment folder. Old snapshot
+rows in Supabase do **not** transfer the laptop's `.idrmm` packages to Azure.
+Preserve those files and their key separately; older schema versions may require
+developer-led recovery. Keep a copy of new downloaded packages outside Azure too.
+
+To check the deployed configuration without connecting to the database or
+starting any operation, use Azure's Linux SSH console:
+
+```bash
+cd /home/site/wwwroot
+bash App_Data/jobs/continuous/idrmm-backup/run.sh --check
+```
+
+This diagnostic may provision missing client tools, but does not claim a job,
+create a backup, or restore anything. The launcher passes Azure's environment
+to the existing worker without logging credentials. Database maintenance,
+Super Admin authorization, safety snapshots and restore confirmations are
+unchanged. The configured shutdown grace period helps graceful stops, but does
+not guarantee protection from forced host termination; existing recovery locks
+remain responsible for interrupted restores.
+
+References:
+- https://learn.microsoft.com/en-us/azure/app-service/webjobs-create
+- https://learn.microsoft.com/en-us/azure/app-service/webjobs-execution
+- https://www.postgresql.org/download/linux/debian/
+
 ## Daily operation
 
 The worker runs once per local calendar day from the configured hour onward.

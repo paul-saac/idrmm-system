@@ -1,0 +1,2 @@
+# Azure executes these scripts on Linux, including after Windows checkouts.
+App_Data/jobs/**/*.sh text eol=lf
