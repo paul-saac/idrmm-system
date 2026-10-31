@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>Your invitation to IDR M&amp;M</title>
+  </head>
+  <body style="margin:0; padding:0; background-color:#f5f6f7; color:#3b3939; font-family:Arial,Helvetica,sans-serif; -webkit-text-size-adjust:100%;">
+    <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent; mso-hide:all;">You have been invited to IDR M&amp;M. Set up your account to get started.</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%; background-color:#f5f6f7;">
+      <tr>
+        <td align="center" style="padding:32px 16px;">
+          <!--[if mso]><table role="presentation" width="560" cellspacing="0" cellpadding="0" border="0"><tr><td><![endif]-->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%; max-width:560px; table-layout:fixed; border:1px solid #e4e4e7; border-radius:4px; background-color:#ffffff;">
+            <tr>
+              <td align="center" style="padding:32px 28px 24px;">
+                <img src="https://idrmm.online/logo.png" width="132" height="38" alt="IDR M&amp;M" style="display:block; width:132px; height:38px; border:0; color:#3b3939; font-family:Georgia,'Times New Roman',serif; font-size:22px;" />
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 28px 28px;">
+                <h1 style="margin:0 0 22px; font-size:22px; line-height:30px; font-weight:700; color:#3b3939;">You&rsquo;re invited to IDR M&amp;M</h1>
+                <p style="margin:0 0 16px; font-size:14px; line-height:22px; color:#3b3939;">{{ if .Data.first_name }}Hi {{ .Data.first_name }},{{ else }}Hi there,{{ end }}</p>
+                <p style="margin:0 0 16px; font-size:14px; line-height:23px; color:#5f5e63;">Your administrator has invited you to join the <strong style="color:#3b3939;">IDR M&amp;M construction project management system</strong>.</p>
+                <p style="margin:0; font-size:14px; line-height:23px; color:#5f5e63;">Set up your account and choose your password to access your workspace.</p>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                  <tr>
+                    <td align="center" style="padding:28px 0;">
+                      <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                        <tr>
+                          <td align="center" bgcolor="#3b3939" style="border:1px solid #3b3939; border-radius:3px; mso-padding-alt:14px 28px;">
+                            <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&amp;type=invite&amp;next=/accept-invite" style="display:inline-block; padding:14px 28px; border-radius:3px; color:#ffffff; font-size:14px; line-height:20px; font-weight:700; text-align:center; text-decoration:none; mso-padding-alt:0;">Set up account</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:0 0 16px; font-size:13px; line-height:21px; color:#5f5e63;">This invitation was sent to <strong style="font-weight:600; overflow-wrap:anywhere; word-break:break-all;">{{ .Email }}</strong>. If you need help, contact the administrator who invited you.</p>
+                <p style="margin:0 0 20px; font-size:13px; line-height:21px; color:#5f5e63;">Welcome aboard,<br /><strong style="font-weight:600; color:#3b3939;">IDR M&amp;M Construction</strong></p>
+                <p style="margin:0 0 24px; font-size:12px; line-height:19px; color:#71717a;">If you weren&rsquo;t expecting this invitation, you can ignore this email.</p>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%; table-layout:fixed; border-top:1px solid #e4e4e7;">
+                  <tr>
+                    <td style="padding-top:20px;">
+                      <p style="margin:0 0 10px; font-size:11px; line-height:18px; color:#71717a;">If the button doesn&rsquo;t work, copy and paste this link into your browser:</p>
+                      <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&amp;type=invite&amp;next=/accept-invite" style="display:block; font-size:11px; line-height:18px; color:#5f5e63; overflow-wrap:anywhere; word-wrap:break-word; word-break:break-all; text-decoration:underline;">{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&amp;type=invite&amp;next=/accept-invite</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+          <!--[if mso]></td></tr></table><![endif]-->
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%; max-width:560px;">
+            <tr>
+              <td align="center" style="padding:22px 12px 0; font-size:11px; line-height:18px; color:#85858f;">
+                <strong style="font-weight:600;">IDR M&amp;M Construction</strong><br />
+                D. Mariano St., Concepcion Uno, Marikina City<br />
+                <a href="https://idrmm.online" style="color:#71717a; text-decoration:none;">idrmm.online</a>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

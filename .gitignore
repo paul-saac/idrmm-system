@@ -40,3 +40,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local assistant settings and generated previews/exports
+/.claude/
+/tmp/
+/outputs/
+/deliverables/**/*.docx
+/deliverables/**/*.xlsx
+/deliverables/**/*.pdf
+/deliverables/**/*.png
+/deliverables/**/*.svg
+/deliverables/**/*.zip

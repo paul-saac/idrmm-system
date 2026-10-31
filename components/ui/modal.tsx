@@ -89,6 +89,8 @@ export function Modal({
   menuItems,
   bare = false,
   aiBorder = false,
+  className = "",
+  headerClassName = "",
   children,
 }: {
   open: boolean;
@@ -119,6 +121,9 @@ export function Modal({
   bare?: boolean;
   /** When true, renders an animated rainbow border around the modal indicating AI workflows */
   aiBorder?: boolean;
+  /** Scoped layout overrides for workspaces with their own fixed-size body. */
+  className?: string;
+  headerClassName?: string;
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -232,7 +237,7 @@ export function Modal({
           : aiBorder
             ? "ai-rainbow-modal"
             : "bg-white"
-      }`}
+      } ${className}`}
     >
       <div
         className={`flex h-full w-full min-h-0 flex-1 flex-col overflow-hidden ${
@@ -246,7 +251,7 @@ export function Modal({
             aiBorder
               ? "border-b border-white/10 bg-zinc-900"
               : "border-b border-zinc-200"
-          }`}
+          } ${headerClassName}`}
         >
           <div className="flex items-center gap-1">
             {onBack && (
