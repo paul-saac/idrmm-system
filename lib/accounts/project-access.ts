@@ -14,7 +14,7 @@ export type ProjectAccessSettings = { eligible: boolean; projects: ProjectAccess
 
 async function managerClient() {
   const profile = await getSessionProfile();
-  if (!profile || (!isAdminRole(profile.role) && profile.role !== "project_manager")) return null;
+  if (!profile || !isAdminRole(profile.role)) return null;
   return { profile, client: await createClient() };
 }
 
@@ -45,7 +45,7 @@ export async function saveProjectAccess(accountId: string, changes: { id: number
   return { success: "Project access saved." };
 }
 
-/** PMs see an access editor, never credentials or account-management actions. */
+/** Account/project-access management is reserved for administrators. */
 export async function listProjectAccessAccounts(): Promise<AccountRow[]> {
   const manager = await managerClient();
   if (!manager) return [];

@@ -50,11 +50,11 @@ export async function DashboardView({ basePath }: { basePath: PortalBasePath }) 
             <RecentActivityCard basePath={basePath} items={data.recentActivity} />
           </div>
           <div className="flex min-w-0 flex-col gap-5">
-            <PendingApprovalsCard
+            {isAdmin && <PendingApprovalsCard
               basePath={basePath}
               items={data.pendingRequests}
               total={data.stats.pendingMaterialRequests + data.stats.pendingEquipmentRequests}
-            />
+            />}
             <DashboardCalendar initialToday={manilaToday()} />
             <ResourcesCard
               basePath={basePath}

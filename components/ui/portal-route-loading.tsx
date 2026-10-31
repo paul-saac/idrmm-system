@@ -85,7 +85,7 @@ function StatsSkeleton() {
   );
 }
 
-function DashboardSkeleton() {
+function DashboardSkeleton({ showApprovals }: { showApprovals: boolean }) {
   return (
     <>
       <StatsSkeleton />
@@ -99,10 +99,10 @@ function DashboardSkeleton() {
           ))}
         </div>
         <div className="flex flex-col gap-5">
-          <section className="rounded border border-zinc-200 bg-white p-5">
+          {showApprovals && <section className="rounded border border-zinc-200 bg-white p-5">
             <SkeletonLine className="mb-4 w-32" />
             <LoadingRow /><LoadingRow /><LoadingRow />
-          </section>
+          </section>}
           <section className="rounded border border-zinc-200 bg-white p-5">
             <SkeletonLine className="mb-4 w-24" />
             <div className="grid grid-cols-7 gap-2">{Array.from({ length: 42 }, (_, index) => <span key={index} className="mx-auto size-6 rounded-full bg-zinc-100" />)}</div>
@@ -180,20 +180,22 @@ function ReportsSkeleton() {
   );
 }
 
-function RouteSkeleton({ section }: { section: string }) {
+function RouteSkeleton({ section, isAdmin }: { section: string; isAdmin: boolean }) {
   if (section === "projects") return <ProjectsSkeleton />;
   if (section === "team") return <TeamSkeleton />;
   if (section === "accounts") return <AccountsSkeleton />;
   if (section === "inventory") return <InventorySkeleton />;
   if (section === "reports") return <ReportsSkeleton />;
-  return <DashboardSkeleton />;
+  return <DashboardSkeleton showApprovals={isAdmin} />;
 }
 
 /** Keeps the real header usable while only the destination content is
  * represented by a lightweight loading skeleton. */
 export function PortalRouteLoading() {
   const pathname = usePathname();
-  const section = pathname.split("/").filter(Boolean)[1] ?? "";
+  const [portal, targetSection = ""] = pathname.split("/").filter(Boolean);
+  const isAdmin = portal === "admin";
+  const section = targetSection === "accounts" && !isAdmin ? "" : targetSection;
   const title = PAGE_TITLES[section] ?? "Dashboard";
 
   return (
@@ -210,7 +212,7 @@ export function PortalRouteLoading() {
         </div>
 
         <div className="animate-pulse" aria-hidden>
-          <RouteSkeleton section={section} />
+          <RouteSkeleton section={section} isAdmin={isAdmin} />
         </div>
         <span className="sr-only">Loading {title}…</span>
       </main>

@@ -19,7 +19,7 @@ const NAV_ITEMS: {
   { path: "", label: "Dashboard", icon: LayoutGrid, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/projects", label: "Projects", icon: Folder, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/team", label: "Team", icon: HardHat, portals: ["/admin", "/project-manager"] },
-  { path: "/accounts", label: "Accounts", icon: UserRound, portals: ["/admin", "/project-manager"] },
+  { path: "/accounts", label: "Accounts", icon: UserRound, portals: ["/admin"] },
   { path: "/inventory", label: "Inventory", icon: Wrench, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/reports", label: "Reports", icon: FileText, portals: ["/admin", "/foreman", "/project-manager"] },
 ];
