@@ -809,8 +809,8 @@ function OverrideHistory({
               <div className="min-w-0 flex-1">
                 <div className="flex min-h-6 flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-sm font-semibold text-zinc-900">Saved</span>
-                  <span className="text-xs text-zinc-500 tabular-nums">
-                    {formatDateTime(log.createdAt)}
+                  <span className="text-xs text-zinc-500 tabular-nums" title={`Saved to the system ${formatDateTime(log.createdAt)}`}>
+                    for {formatDay(log.entryDate)}
                   </span>
                   {current && onDelete && (
                     <button
