@@ -66,6 +66,9 @@ function fixture() {
 
 test('the outline shows exactly the selected standalone item or main task and its descendants', () => {
   const f = fixture();
+  assert.deepEqual(f.selected(), ['a', 'b', 'c']);
+  assert.equal(descendants(f.render(), node => node.type === 'button' && node.props['aria-current'] === 'location').length, 0);
+  f.select('Mobilization');
   assert.deepEqual(f.selected(), ['a']);
   assert.equal(descendants(f.render(), node => node.props.label === 'Task name').length, 0);
   f.select('Earthworks');
@@ -99,10 +102,18 @@ test('task quantity editing is separate from material quantities and preserves h
   assert.equal(f.confirmations, 1);
 });
 
-test('deleting the selected draft item safely selects the next remaining item', () => {
+test('deleting the selected outline item returns to all remaining items without selecting another', () => {
+  const f = fixture(); f.select('Earthworks');
+  f.find(node => node.type?.name === 'RowMenu' && node.props.name === 'Earthworks').props.actions.find(action => action.label === 'Delete category').run();
+  f.render(); assert.deepEqual(f.selected(), ['a', 'c']); assert.equal(f.data.length, 2);
+  assert.equal(descendants(f.render(), node => node.type === 'button' && node.props['aria-current'] === 'location').length, 0);
+});
+
+test('clicking a table row does not activate the outline filter', () => {
   const f = fixture();
-  f.find(node => node.type?.name === 'RowMenu' && node.props.name === 'Mobilization').props.actions.find(action => action.label === 'Delete category').run();
-  f.render(); assert.deepEqual(f.selected(), ['b']); assert.equal(f.data.length, 2);
+  f.find(node => node.type === 'tr' && node.props['data-draft-category'] === 'a').props.onClick();
+  f.render(); assert.deepEqual(f.selected(), ['a', 'b', 'c']);
+  assert.equal(descendants(f.render(), node => node.type === 'button' && node.props['aria-current'] === 'location').length, 0);
 });
 
 test('the rendered table keeps the material headers, tree columns, and right-hand row menus', () => {

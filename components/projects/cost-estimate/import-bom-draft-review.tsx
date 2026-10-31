@@ -96,6 +96,7 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [collapsedTasks, setCollapsedTasks] = useState<Set<string>>(new Set());
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [outlineCategoryId, setOutlineCategoryId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [focusName, setFocusName] = useState<string | null>(null);
   const tableScroll = useRef<HTMLDivElement>(null);
@@ -108,9 +109,10 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
   const matchingCategories = categories.filter(category =>
     (filter === "all" || categoryMissing(category)) && (matches(category.name) || category.tasks.some(task => matches(task.name) || task.materials.some(material => matches(material.name)))));
   const categoryId = matchingCategories.some(category => category.id === selectedCategoryId) ? selectedCategoryId : matchingCategories[0]?.id;
+  const outlineId = matchingCategories.some(category => category.id === outlineCategoryId) ? outlineCategoryId : null;
   const selectedCategory = categories.find(category => category.id === categoryId);
   const selectedTask = selectedCategory?.tasks.find(task => task.id === selectedTaskId) ?? selectedCategory?.tasks[0];
-  const visibleCategories = matchingCategories.filter(category => category.id === categoryId);
+  const visibleCategories = outlineId ? matchingCategories.filter(category => category.id === outlineId) : matchingCategories;
   const allCollapsed = visibleCategories.length > 0 && visibleCategories.every(category => collapsedCategories.has(category.id));
 
   useEffect(() => {
@@ -140,7 +142,7 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
   function addCategory() {
     const id = crypto.randomUUID();
     onChange(previous => [...previous, { id, name: "New category", amount: "", tasks: [] }]);
-    setQuery(""); setFilter("all"); setSelectedCategoryId(id); setFocusName(id);
+    setQuery(""); setFilter("all"); setSelectedCategoryId(id); setOutlineCategoryId(null); setFocusName(id);
   }
   function addTask(id: string) {
     const taskId = crypto.randomUUID();
@@ -155,6 +157,7 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
     setSelectedCategoryId(id); setSelectedTaskId(taskId); setFocusName(materialId);
   }
   function jumpToCategory(id: string) {
+    setOutlineCategoryId(id);
     setQuery(""); setFilter("all"); expandCategory(id); setSelectedCategoryId(id); setSelectedTaskId(null); setQuantityTaskId(null); setCollapsedTasks(new Set());
     requestAnimationFrame(() => tableScroll.current?.querySelector(`[data-draft-category="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "start" }));
   }
@@ -196,9 +199,9 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
         <h4 className="mb-4 px-2 text-[10px] font-semibold tracking-widest text-zinc-500">DRAFT OUTLINE</h4>
         <nav className="min-h-0 flex-1 overflow-y-auto">
           {matchingCategories.map(category => <Fragment key={category.id}>
-            <button type="button" onClick={() => jumpToCategory(category.id)} aria-current={category.id === categoryId ? "location" : undefined} title={category.name}
-              className={`mb-1 flex min-h-8 w-full cursor-pointer items-center gap-2 rounded px-2.5 py-2 text-left text-[11px] leading-relaxed hover:bg-zinc-100 ${category.id === categoryId ? "bg-zinc-100 font-semibold text-zinc-900" : "text-zinc-600"}`}>
-              {category.id === categoryId ? <ChevronDown aria-hidden className="size-3 shrink-0 text-zinc-400" /> : <ChevronRight aria-hidden className="size-3 shrink-0 text-zinc-400" />}<span className="truncate">{category.name || "Untitled category"}</span>
+            <button type="button" onClick={() => jumpToCategory(category.id)} aria-current={category.id === outlineId ? "location" : undefined} title={category.name}
+              className={`mb-1 flex min-h-8 w-full cursor-pointer items-center gap-2 rounded px-2.5 py-2 text-left text-[11px] leading-relaxed hover:bg-zinc-100 ${category.id === outlineId ? "bg-zinc-100 font-semibold text-zinc-900" : "text-zinc-600"}`}>
+              {category.id === outlineId ? <ChevronDown aria-hidden className="size-3 shrink-0 text-zinc-400" /> : <ChevronRight aria-hidden className="size-3 shrink-0 text-zinc-400" />}<span className="truncate">{category.name || "Untitled category"}</span>
             </button>
           </Fragment>)}
         </nav>

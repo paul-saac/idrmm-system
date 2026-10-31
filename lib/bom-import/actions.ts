@@ -1,6 +1,7 @@
 "use server";
 
 import { requireAdminOrForeman } from "@/lib/auth/project-access";
+import { pdfToText } from "./pdf-text";
 import { getAIProvider, aiModel, aiChatRequest, aiResponseFormat, nextAIResponseMode, isAIJsonFormatError, type AIProvider, type AIResponseMode } from "@/lib/ai/provider";
 
 export type ExtractedMaterialLine = {
@@ -149,36 +150,6 @@ async function excelToText(file: File): Promise<string> {
     sheetTexts.push(`Sheet: ${worksheet.name}\n${rowLines.join("\n")}`);
   });
   return sheetTexts.join("\n\n");
-}
-
-/** Extracts the text layer from a PDF before sending it to the AI service. This keeps
- * the API key and document processing on the server and avoids pretending
- * a chat-completions image endpoint accepts a raw PDF. */
-async function pdfToText(file: File): Promise<string> {
-  const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const loadingTask = getDocument({
-    data: new Uint8Array(await file.arrayBuffer()),
-    useSystemFonts: true,
-  });
-  const pdf = await loadingTask.promise;
-  const pages: string[] = [];
-
-  try {
-    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-      const page = await pdf.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const text = content.items
-        .map((item) => ("str" in item ? item.str : ""))
-        .join(" ")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (text) pages.push(`Page ${pageNumber}:\n${text}`);
-    }
-  } finally {
-    await loadingTask.destroy();
-  }
-
-  return pages.join("\n\n");
 }
 
 // A 503 from Groq means its own servers are temporarily unavailable, not that

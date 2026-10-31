@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // PDF.js loads its server worker relative to its own module. Bundling it
+  // relocates that module into .next/chunks, where pdf.worker.mjs is absent.
+  // Keep native Node resolution on the server; browser previews still bundle.
+  serverExternalPackages: ["pdfjs-dist"],
   outputFileTracingIncludes: {
     "/api/pdf-assets/*": ["./node_modules/pdfjs-dist/standard_fonts/**/*", "./node_modules/pdfjs-dist/cmaps/**/*", "./node_modules/pdfjs-dist/wasm/**/*"],
   },
