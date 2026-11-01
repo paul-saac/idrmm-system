@@ -26,6 +26,7 @@ export type CalendarItem = {
   start: string;
   end: string;
   percentComplete: number;
+  colors?: { backgroundColor: string; progressColor: string };
 };
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -333,12 +334,12 @@ export function ProjectCalendarView({
                           type="button"
                           onClick={() => onEventClick(event)}
                           disabled={!canEditEvents}
-                          title={`${projectEventTypeLabel(event.type)}: ${event.name}${
+                          title={`${projectEventTypeLabel(event.type)}: ${event.name}${event.type === "holiday" ? event.isWorkingDay ? " (included in working days)" : " (non-working day)" : ""}${
                             event.startTime && event.endTime
                               ? `, ${formatTime(event.startTime)} – ${formatTime(event.endTime)}`
                               : ""
                           }`}
-                          className={`flex h-5 w-full items-center gap-1 rounded px-2 text-left text-[11px] font-medium enabled:cursor-pointer enabled:hover:brightness-95 ${EVENT_STYLE[event.type]}`}
+                          className={`flex h-5 w-full items-center gap-1 rounded px-2 text-left text-[11px] font-medium enabled:cursor-pointer enabled:hover:brightness-95 ${event.type === "holiday" && event.isWorkingDay ? "bg-zinc-100 text-zinc-600" : EVENT_STYLE[event.type]}`}
                         >
                           {/* Marks it as an event, not a task bar. */}
                           <CalendarDays className="size-3 shrink-0" />
@@ -378,13 +379,13 @@ export function ProjectCalendarView({
                     className={`relative flex h-5 w-full cursor-pointer items-center overflow-hidden text-left transition hover:brightness-95 ${
                       segment.continuesBefore ? "" : "rounded-l"
                     } ${segment.continuesAfter ? "" : "rounded-r"}`}
-                    style={{ backgroundColor: BAR_COLOR }}
+                    style={{ backgroundColor: item.colors?.backgroundColor ?? BAR_COLOR }}
                   >
                     <span
                       className="absolute inset-y-0 left-0"
                       style={{
                         width: `${Math.min(100, item.percentComplete)}%`,
-                        backgroundColor: BAR_PROGRESS_COLOR,
+                        backgroundColor: item.colors?.progressColor ?? BAR_PROGRESS_COLOR,
                       }}
                     />
                     <span className="relative truncate px-2 text-[11px] font-medium text-zinc-900">

@@ -20,6 +20,8 @@ export function projectEventTypeLabel(type: ProjectEventType): string {
 
 export type ProjectEvent = {
   id: number;
+  isWorkingDay?: boolean;
+  nationalHoliday?: boolean;
   type: ProjectEventType;
   name: string;
   /** YYYY-MM-DD */

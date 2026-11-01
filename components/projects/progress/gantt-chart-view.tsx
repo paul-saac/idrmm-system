@@ -722,8 +722,8 @@ export function GanttChartView({
   projectStartDate,
   projectEndDate,
   workingDays,
-  holidays,
-  events,
+  holidays: serverHolidays,
+  events: serverEvents,
   canUndo,
   canRedo,
   workers,
@@ -823,6 +823,17 @@ export function GanttChartView({
   materialStocks?: MaterialStockItem[];
 }) {
   const router = useRouter();
+  const [calendarUpdate, setCalendarUpdate] = useState<{
+    sourceEvents: ProjectEvent[]; sourceHolidays: string[];
+    events: ProjectEvent[]; holidays: string[];
+  } | null>(null);
+  const currentCalendar = calendarUpdate?.sourceEvents === serverEvents && calendarUpdate.sourceHolidays === serverHolidays ? calendarUpdate : null;
+  const events = currentCalendar?.events ?? serverEvents;
+  const holidays = currentCalendar?.holidays ?? serverHolidays;
+  function applyCalendarResult(result: { events?: ProjectEvent[]; holidays?: string[] }) {
+    setCalendarUpdate({ sourceEvents: serverEvents, sourceHolidays: serverHolidays,
+      events: result.events ?? events, holidays: result.holidays ?? holidays });
+  }
   const [operationQueue] = useState(createGanttOperationQueue);
   const [previewHistory] = useState(() => createGanttPreviewHistory(categories));
   const [historyPreview, setHistoryPreview] = useState<CostCategory[] | null>(null);
@@ -1645,12 +1656,14 @@ export function GanttChartView({
     const items: CalendarItem[] = [];
     const add = (
       kind: CalendarItem["kind"],
+      colorId: number,
       row: {
         id: number;
         name: string;
         plannedStartDate: string | null;
         plannedEndDate: string | null;
         percentComplete: number;
+        isMilestone: boolean;
       }
     ) => {
       if (row.id <= 0 || !row.plannedStartDate || !row.plannedEndDate) return;
@@ -1662,11 +1675,12 @@ export function GanttChartView({
         start: row.plannedStartDate,
         end: row.plannedEndDate,
         percentComplete: row.percentComplete,
+        colors: ganttBarColors(colorId, row.isMilestone ? "milestone" : kind === "category" ? "standalone" : "subtask"),
       });
     };
     for (const category of categoriesForDisplay) {
-      if (category.tasks.length === 0) add("category", category);
-      for (const task of category.tasks) add("task", task);
+      if (category.tasks.length === 0) add("category", category.id, category);
+      for (const task of category.tasks) add("task", category.id, task);
     }
     return items;
   }, [categoriesForDisplay]);
@@ -4720,31 +4734,23 @@ export function GanttChartView({
         open={eventModal !== null}
         onClose={() => setEventModal(null)}
         title={eventModal?.event ? "Edit Event" : "Add Event"}
-        menuItems={
-          eventModal?.event
-            ? [
-                {
-                  label: "Delete",
-                  destructive: true,
-                  onSelect: () => {
-                    const event = eventModal.event!;
-                    confirmAndDelete(
-                      "event",
-                      event.name,
-                      () => deleteProjectEvent(event.id, projectId),
-                      () => setEventModal(null)
-                    );
-                  },
-                },
-              ]
-            : undefined
-        }
       >
         {eventModal && (
           <ProjectEventModalContent
             projectId={projectId}
             date={eventModal.date}
             event={eventModal.event}
+            onSaved={applyCalendarResult}
+            onDelete={eventModal.event && !eventModal.event.nationalHoliday ? () => {
+              const event = eventModal.event!;
+              confirmAndDelete("event", event.name, async () => {
+                const result = await deleteProjectEvent(event.id, projectId);
+                if (result.success) {
+                  applyCalendarResult(result);
+                }
+                return result;
+              }, () => setEventModal(null));
+            } : undefined}
             onClose={() => setEventModal(null)}
           />
         )}

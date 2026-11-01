@@ -189,19 +189,16 @@ export function InventoryBrowser({
         />
       )}
 
-      {isAdmin && (
-        <>
+      <>
           <Modal
             open={formModal !== null}
             onClose={() => setFormModal(null)}
-            title={formModal?.mode === "edit" ? "Edit Equipment" : "Add Equipment"}
+            title={formModal?.mode === "edit" ? formModal.equipment.name : "Add Equipment"}
           >
-            <EquipmentForm
-              // See components/projects/materials/materials-monitoring-view.tsx
-              // for why this needs a key — Modal keeps its children mounted
-              // even while closed, so without one the form's Status field
-              // would get stuck reflecting whichever item (or none) was
-              // selected when it first mounted.
+            {formModal && <EquipmentForm
+              readOnly={!isAdmin}
+              basePath={basePath}
+              // Reset local editing state when opening a different record.
               key={formModal?.mode === "edit" ? formModal.equipment.id : "add"}
               equipment={formModal?.mode === "edit" ? formModal.equipment : undefined}
               onRequestDelete={
@@ -210,10 +207,10 @@ export function InventoryBrowser({
                   : undefined
               }
               onSuccess={() => setFormModal(null)}
-            />
+            />}
           </Modal>
 
-          <Modal
+          {isAdmin && <Modal
             open={assignTarget !== null}
             onClose={() => setAssignTarget(null)}
             title="Assign Equipment"
@@ -226,9 +223,9 @@ export function InventoryBrowser({
                 onSuccess={() => setAssignTarget(null)}
               />
             )}
-          </Modal>
+          </Modal>}
 
-          <ConfirmDialog
+          {isAdmin && <ConfirmDialog
             open={deleteTarget !== null}
             title={
               deleteTarget?.kind === "single"
@@ -244,9 +241,8 @@ export function InventoryBrowser({
               setDeleteTarget(null);
               setDeleteError(null);
             }}
-          />
-        </>
-      )}
+          />}
+      </>
     </div>
   );
 }

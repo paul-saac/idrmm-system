@@ -12,7 +12,7 @@ export async function listProjectEvents(projectId: number): Promise<ProjectEvent
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("project_events")
-    .select("id, event_type, name, event_date, start_time, end_time")
+    .select("id, event_type, name, event_date, start_time, end_time, is_working_day, national_holiday")
     .eq("project_id", projectId)
     .order("event_date", { ascending: true })
     .order("start_time", { ascending: true, nullsFirst: true });
@@ -26,6 +26,8 @@ export async function listProjectEvents(projectId: number): Promise<ProjectEvent
     .filter((row) => isProjectEventType(row.event_type))
     .map((row) => ({
       id: row.id,
+      isWorkingDay: row.is_working_day,
+      nationalHoliday: row.national_holiday,
       type: row.event_type as ProjectEvent["type"],
       name: row.name,
       date: row.event_date,

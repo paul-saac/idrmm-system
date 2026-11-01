@@ -138,14 +138,8 @@ export async function updateEquipment(
 
   const supabase = await createClient();
 
-  // The Edit form only offers a Status field (Available/Maintenance/
-  // Retired — never "Assigned") when the equipment isn't currently
-  // assigned to a project, so formData won't carry one in that case —
-  // nothing here touches status/current_project_id then. When it does,
-  // and the equipment *was* assigned (only reachable by a crafted
-  // request, since the form hides the field while assigned), close out
-  // the active assignment the same way returnEquipment does so
-  // current_project_id never goes stale.
+  // The details editor omits status, preserving the current assignment.
+  // Explicit status changes still close active assignments consistently.
   const nextStatus = readNonAssignedStatus(formData);
   let statusUpdate: {
     status?: Exclude<EquipmentStatus, "assigned">;
@@ -193,7 +187,7 @@ export async function updateEquipment(
       name: fields.name,
       category: fields.category || null,
       description: fields.description || null,
-      serial_number: fields.serialNumber || null,
+      ...(formData.has("serialNumber") ? { serial_number: fields.serialNumber || null } : {}),
       ...statusUpdate,
     })
     .eq("id", equipmentId);

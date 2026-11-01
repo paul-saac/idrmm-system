@@ -17,6 +17,8 @@ export type EquipmentRow = {
   lastAssignedAt: string | null;
   lastReturnedAt: string | null;
   createdAt: string;
+  taskAssignments?: { projectId: number; projectName: string; itemKey: string; taskName: string; kind: "planned" | "in_use" }[];
+  assignmentLoadError?: boolean;
 };
 
 const EQUIPMENT_COLUMNS =
@@ -72,26 +74,55 @@ export async function listEquipment(): Promise<EquipmentRow[]> {
 
   if (error || !data) return [];
 
-  const projectIds = Array.from(
-    new Set(
-      data
-        .map((row) => row.current_project_id)
-        .filter((id): id is number => id != null)
-    )
-  );
-  const { data: projects } =
-    projectIds.length > 0
-      ? await supabase
-          .from("projects")
-          .select("id, project_name")
-          .in("id", projectIds)
-      : { data: [] as { id: number; project_name: string }[] };
-
-  const projectNameById = new Map(
-    (projects ?? []).map((p) => [p.id, p.project_name])
-  );
-
-  return data.map((row) => toEquipmentRow(row, projectNameById));
+  const equipmentIds = data.map(row => row.id);
+  if (!equipmentIds.length) return [];
+  const [plans, assignments] = await Promise.all([
+    supabase.from("equipment_task_plans").select("project_id,item_key,equipment_id").in("equipment_id", equipmentIds),
+    supabase.from("equipment_assignments").select("id,equipment_id,project_id").in("equipment_id", equipmentIds).is("returned_at", null),
+  ]);
+  const projectIds = [...new Set([
+    ...data.flatMap(row => row.current_project_id == null ? [] : [row.current_project_id]),
+    ...(plans.data ?? []).map(row => row.project_id),
+    ...(assignments.data ?? []).map(row => row.project_id),
+  ])];
+  const taskIds = (plans.data ?? []).flatMap(row => /^task-([1-9]\d*)$/.test(row.item_key) ? [Number(row.item_key.slice(5))] : []);
+  const categoryIds = (plans.data ?? []).flatMap(row => /^category-([1-9]\d*)$/.test(row.item_key) ? [Number(row.item_key.slice(9))] : []);
+  const assignmentIds = (assignments.data ?? []).map(row => row.id);
+  const [projects, tasks, categories, placements] = await Promise.all([
+    projectIds.length ? supabase.from("projects").select("id,project_name").in("id", projectIds) : Promise.resolve({data: [], error: null}),
+    taskIds.length ? supabase.from("estimate_tasks").select("id,project_id,task_name").in("id", taskIds) : Promise.resolve({data: [], error: null}),
+    categoryIds.length ? supabase.from("estimate_categories").select("id,project_id,category_name").in("id", categoryIds) : Promise.resolve({data: [], error: null}),
+    assignmentIds.length ? supabase.from("equipment_task_assignments").select("equipment_assignment_id,project_id,task_id,task_name").in("equipment_assignment_id", assignmentIds).is("released_at", null) : Promise.resolve({data: [], error: null}),
+  ]);
+  const projectNameById = new Map((projects.data ?? []).map(row => [row.id, row.project_name]));
+  const nameByKey = new Map<string, string>([
+    ...(tasks.data ?? []).map(row => [`${row.project_id}:task-${row.id}`, row.task_name] as const),
+    ...(categories.data ?? []).map(row => [`${row.project_id}:category-${row.id}`, row.category_name] as const),
+  ]);
+  const workByEquipment = new Map<number, NonNullable<EquipmentRow["taskAssignments"]>>();
+  for (const plan of plans.data ?? []) {
+    const taskName = nameByKey.get(`${plan.project_id}:${plan.item_key}`);
+    const projectName = projectNameById.get(plan.project_id);
+    if (!taskName || !projectName) continue;
+    const list = workByEquipment.get(plan.equipment_id) ?? [];
+    list.push({projectId: plan.project_id, projectName, itemKey: plan.item_key, taskName, kind: "planned"});
+    workByEquipment.set(plan.equipment_id, list);
+  }
+  const assignmentById = new Map((assignments.data ?? []).map(row => [row.id, row]));
+  for (const placement of placements.data ?? []) {
+    const assignment = assignmentById.get(placement.equipment_assignment_id);
+    const projectName = projectNameById.get(placement.project_id);
+    if (!assignment || assignment.project_id !== placement.project_id || !projectName) continue;
+    const list = workByEquipment.get(assignment.equipment_id) ?? [];
+    const itemKey = placement.task_id ? `task-${placement.task_id}` : `assignment-${assignment.id}`;
+    const planned = list.find(row => row.projectId === placement.project_id && (row.itemKey === itemKey || row.taskName === placement.task_name));
+    if (planned) planned.kind = "in_use";
+    else list.push({projectId: placement.project_id, projectName, itemKey, taskName: placement.task_name, kind: "in_use"});
+    workByEquipment.set(assignment.equipment_id, list);
+  }
+  const assignmentLoadError = Boolean(plans.error || assignments.error || projects.error || tasks.error || categories.error || placements.error);
+  return data.map(row => ({...toEquipmentRow(row, projectNameById),
+    taskAssignments: workByEquipment.get(row.id) ?? [], assignmentLoadError}));
 }
 
 export type EquipmentAssignmentRow = {

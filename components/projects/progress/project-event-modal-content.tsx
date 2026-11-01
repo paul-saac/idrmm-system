@@ -7,6 +7,7 @@ import { ChevronDown } from "lucide-react";
 import {
   createProjectEvent,
   updateProjectEvent,
+  type ProjectEventActionState,
 } from "@/lib/project-events/actions";
 import {
   EVENT_NAME_MAX_LENGTH,
@@ -81,6 +82,8 @@ export function ProjectEventModalContent({
   date,
   event,
   onClose,
+  onSaved,
+  onDelete,
 }: {
   projectId: number;
   /** YYYY-MM-DD */
@@ -88,12 +91,15 @@ export function ProjectEventModalContent({
   /** Set when editing an existing event. */
   event?: ProjectEvent;
   onClose: () => void;
+  onSaved: (result: ProjectEventActionState) => void;
+  onDelete?: () => void;
 }) {
   const router = useRouter();
   const [type, setType] = useState<ProjectEventType>(event?.type ?? "holiday");
   const [name, setName] = useState(event?.name ?? "");
   const [startTime, setStartTime] = useState(event?.startTime ?? DEFAULT_START);
   const [endTime, setEndTime] = useState(event?.endTime ?? DEFAULT_END);
+  const [isWorkingDay, setIsWorkingDay] = useState(event?.isWorkingDay ?? false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -112,22 +118,23 @@ export function ProjectEventModalContent({
     setEndTime(minutesToTime(nextEnd));
   }
 
-  async function run(action: () => Promise<{ error?: string }>) {
+  async function run(action: () => Promise<ProjectEventActionState>) {
     setError(null);
     setPending(true);
-    const result = await action();
-    setPending(false);
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-    router.refresh();
-    onClose();
+    try {
+      const result = await action();
+      if (result.error) { setError(result.error); return; }
+      onSaved(result);
+      onClose();
+      router.refresh();
+    } catch { setError("Could not save the event. Please try again."); }
+    finally { setPending(false); }
   }
 
   function handleSave() {
     const input = {
       type,
+      isWorkingDay,
       name,
       date,
       startTime: isMeeting ? startTime : null,
@@ -142,7 +149,7 @@ export function ProjectEventModalContent({
 
   return (
     <div className="flex h-full min-h-full flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
+      {!event?.nationalHoliday && <div className="flex flex-col gap-1.5">
         <label htmlFor="event-type" className="text-sm font-medium text-zinc-900">
           Type<RequiredMark /></label>
         <Select id="event-type" value={type} onChange={(value) => setType(value as ProjectEventType)}>
@@ -152,7 +159,7 @@ export function ProjectEventModalContent({
             </option>
           ))}
         </Select>
-      </div>
+      </div>}
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="event-name" className="text-sm font-medium text-zinc-900">
@@ -160,6 +167,7 @@ export function ProjectEventModalContent({
         <input
           id="event-name"
           value={name}
+          readOnly={event?.nationalHoliday}
           onChange={(e) => setName(e.target.value)}
           maxLength={EVENT_NAME_MAX_LENGTH}
           autoComplete="off"
@@ -200,23 +208,31 @@ export function ProjectEventModalContent({
         )}
       </div>
 
+      {type === "holiday" && (
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700">
+          <input type="checkbox" checked={isWorkingDay} onChange={e => setIsWorkingDay(e.target.checked)} disabled={pending} className="accent-zinc-700" />
+          Include in working days
+        </label>
+      )}
+      {type === "holiday" && <p className="text-xs text-zinc-500">When included, this date follows the project&apos;s weekly working-day schedule.</p>}
+
       {error && (
         <p role="alert" className="text-sm text-red-600">
           {error}
         </p>
       )}
 
-      {/* Deleting an event is in the modal's own ⋮ menu (see
-          gantt-chart-view.tsx), not here. */}
       <div className="mt-auto flex items-center justify-end gap-3">
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={onClose}
+            disabled={pending}
             className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
           >
             Cancel
           </button>
+          {onDelete && <button type="button" onClick={onDelete} disabled={pending} className="cursor-pointer rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60">Delete</button>}
           <button
             type="button"
             onClick={handleSave}

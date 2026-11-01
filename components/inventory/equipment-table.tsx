@@ -3,7 +3,6 @@
 import { useActionState } from "react";
 import Link from "next/link";
 import { Folder, Send, Trash2, Undo2 } from "lucide-react";
-import { EditIcon } from "@/components/icons/edit-icon";
 import { SelectAllCell, SelectCell, BLANK } from "@/components/ui/list-table";
 import {
   deleteEquipment,
@@ -193,7 +192,14 @@ export function EquipmentTable({
               return (
                 <tr
                   key={item.id}
-                  className={`transition-colors ${
+                  tabIndex={0}
+                  aria-label={`View ${item.name}`}
+                  onClick={() => onEdit(item)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onEdit(item); }
+                  }}
+                  className={`cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 transition-colors ${
                     checked ? "bg-zinc-100" : "hover:bg-zinc-50"
                   }`}
                 >
@@ -231,6 +237,7 @@ export function EquipmentTable({
                         />
                         <Link
                           href={`${basePath}/projects/${item.currentProjectId}`}
+                          onClick={(e) => e.stopPropagation()}
                           className="truncate font-medium text-zinc-900 hover:underline"
                         >
                           {item.currentProjectName}
@@ -244,7 +251,7 @@ export function EquipmentTable({
                     {lastActivity ? formatDateTime(lastActivity) : BLANK}
                   </td>
                   {!readOnly && (
-                    <td className={`${TD} text-right whitespace-nowrap`}>
+                    <td className={`${TD} text-right whitespace-nowrap`} onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         {item.status === "assigned" ? (
                           item.currentProjectId != null && (
@@ -264,15 +271,6 @@ export function EquipmentTable({
                             <Send className="size-3.5" />
                           </button>
                         ) : null}
-                        <button
-                          type="button"
-                          onClick={() => onEdit(item)}
-                          title="Edit equipment"
-                          aria-label={`Edit ${item.name}`}
-                          className={ICON_BTN}
-                        >
-                          <EditIcon className="size-3.5" />
-                        </button>
                         {onDelete ? (
                           <button
                             type="button"

@@ -8,14 +8,19 @@ import {
   isProjectEventType,
   timeToMinutes,
 } from "@/lib/project-events/types";
+import { listProjectEvents } from "./data";
+import type { ProjectEvent } from "./types";
 import { isAdminRole } from "@/lib/auth/roles";
 
 export type ProjectEventActionState = {
   error?: string;
   success?: boolean;
+  events?: ProjectEvent[];
+  holidays?: string[];
 };
 
 export type ProjectEventInput = {
+  isWorkingDay?: boolean;
   type: string;
   name: string;
   /** YYYY-MM-DD */
@@ -44,6 +49,7 @@ function normalizeEvent(input: ProjectEventInput) {
   if (input.type !== "meeting") {
     return {
       fields: {
+        is_working_day: input.isWorkingDay === true,
         event_type: input.type,
         name,
         event_date: input.date,
@@ -104,7 +110,11 @@ export async function createProjectEvent(
     }
 
     revalidateProjectPaths(projectId);
-    return { success: true };
+    const [events, { data: calendar }] = await Promise.all([
+      listProjectEvents(projectId),
+      supabase.from("projects").select("holidays").eq("id", projectId).single(),
+    ]);
+    return { success: true, events, holidays: calendar?.holidays ?? [] };
   } catch (error) {
     console.error("[createProjectEvent] Unexpected error:", error);
     return { error: "Something went wrong. Please try again." };
@@ -134,7 +144,11 @@ export async function updateProjectEvent(
     }
 
     revalidateProjectPaths(projectId);
-    return { success: true };
+    const [events, { data: calendar }] = await Promise.all([
+      listProjectEvents(projectId),
+      supabase.from("projects").select("holidays").eq("id", projectId).single(),
+    ]);
+    return { success: true, events, holidays: calendar?.holidays ?? [] };
   } catch (error) {
     console.error("[updateProjectEvent] Unexpected error:", error);
     return { error: "Something went wrong. Please try again." };
@@ -161,7 +175,11 @@ export async function deleteProjectEvent(
     }
 
     revalidateProjectPaths(projectId);
-    return { success: true };
+    const [events, { data: calendar }] = await Promise.all([
+      listProjectEvents(projectId),
+      supabase.from("projects").select("holidays").eq("id", projectId).single(),
+    ]);
+    return { success: true, events, holidays: calendar?.holidays ?? [] };
   } catch (error) {
     console.error("[deleteProjectEvent] Unexpected error:", error);
     return { error: "Something went wrong. Please try again." };

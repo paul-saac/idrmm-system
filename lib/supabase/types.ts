@@ -188,6 +188,8 @@ export interface Database {
       project_events: {
         Row: {
           id: number;
+          is_working_day: boolean;
+          national_holiday: boolean;
           project_id: number;
           event_type: string;
           name: string;
@@ -199,6 +201,8 @@ export interface Database {
           created_at: string;
         };
         Insert: {
+          is_working_day?: boolean;
+          national_holiday?: boolean;
           project_id: number;
           event_type: string;
           name: string;
@@ -208,6 +212,7 @@ export interface Database {
           created_by?: string | null;
         };
         Update: {
+          is_working_day?: boolean;
           event_type?: string;
           name?: string;
           event_date?: string;
