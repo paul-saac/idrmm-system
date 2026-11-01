@@ -334,7 +334,14 @@ export function computeExpectedProgress({
 } {
   const none = { elapsedWorkingDays: null, totalWorkingDays: null, timePercent: null };
   const total = totalScheduledDays({ plannedStartDate, plannedEndDate, workingDays, holidays });
-  if (total === null) return none;
+  if (total === null) {
+    // A dated task entirely on days off has zero scheduled work, not a
+    // missing schedule. Never count those days or infer actual work.
+    if (plannedStartDate && plannedEndDate && toLocalDate(plannedEndDate) >= toLocalDate(plannedStartDate)) {
+      return { elapsedWorkingDays: 0, totalWorkingDays: 0, timePercent: 0 };
+    }
+    return none;
+  }
 
   const start = toLocalDate(plannedStartDate!);
   const end = toLocalDate(plannedEndDate!);

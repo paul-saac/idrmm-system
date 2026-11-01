@@ -1600,15 +1600,17 @@ export function GanttChartView({
       }
       let weightedSum = 0;
       let totalDuration = 0;
+      let hasDatedTask = false;
       for (const task of category.tasks) {
         const expected = expectedByTaskId.get(task.id);
         if (expected == null) continue;
+        hasDatedTask = true;
         const { start, end } = resolvedDates(task);
         const duration = workingDaysBetween(start, end);
         weightedSum += duration * expected;
         totalDuration += duration;
       }
-      map.set(category.id, totalDuration > 0 ? weightedSum / totalDuration : null);
+      map.set(category.id, totalDuration > 0 ? weightedSum / totalDuration : hasDatedTask ? 0 : null);
     }
     return map;
     // resolvedDates' own fallbacks deliberately omitted, same as

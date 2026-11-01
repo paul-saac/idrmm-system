@@ -36,15 +36,17 @@ export function EditProjectForm({
   projectManagers,
   foremen,
   onSuccess,
+  onSave,
 }: {
   project: ProjectRow;
   projectManagers: AccountRow[];
   foremen: AccountRow[];
   onSuccess?: () => void;
+  onSave?: (data: FormData) => Promise<ProjectActionState>;
 }) {
   const boundAction = updateProject.bind(null, project.id);
   const [state, formAction, pending] = useActionState(
-    boundAction,
+    onSave ? async (_previous: ProjectActionState, data: FormData) => onSave(data) : boundAction,
     initialState
   );
   const formId = useId();

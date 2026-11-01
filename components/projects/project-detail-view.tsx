@@ -13,6 +13,8 @@ import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import { HeaderActions } from "@/components/auth/header-actions";
 import { usePortal } from "@/components/portal/portal-context";
 import { useProjectCanEdit } from "@/components/projects/project-access-context";
+import { updateProject } from "@/lib/projects/actions";
+import { projectEditPreview } from "@/lib/projects/edit-preview";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
 import { ProjectHeader } from "@/components/projects/project-header";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
@@ -197,16 +199,50 @@ function ArchiveProjectModalContent({
 }
 
 export function ProjectDetailView(props: Parameters<typeof ProjectDetailContent>[0]) {
+  const [localProject, setLocalProject] = useState<{ source: ProjectRow; value: ProjectRow } | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const saveLock = useRef(false);
+  const project = localProject?.source === props.project ? localProject.value : props.project;
+  async function saveProject(data: FormData): Promise<ProjectActionState> {
+    if (saveLock.current) return { error: "Project changes are still saving. Please try again shortly." };
+    const next = projectEditPreview(project, data, [...props.projectManagers, ...props.foremen]);
+    if (!next.name || !next.projectManagerId || !next.foremanId) return { error: "Project name, Project Manager and Foreman are required." };
+    saveLock.current = true;
+    setSaving(true);
+    setSaveError(null);
+    setLocalProject({ source: props.project, value: next });
+    try {
+      const result = await updateProject(project.id, {}, data);
+      if (!result.success) {
+        setLocalProject(null);
+        setSaveError(result.error || "Could not save project changes. Previous values have been restored.");
+      }
+      return result;
+    } catch {
+      setLocalProject(null);
+      const error = "Could not save project changes. Previous values have been restored. Please try again.";
+      setSaveError(error);
+      return { error };
+    } finally {
+      saveLock.current = false;
+      setSaving(false);
+    }
+  }
   const progress = useMemo(() => ({ task: props.taskProgressToday, category: props.categoryProgressToday,
-    workingDays: props.project.workingDays, holidays: props.project.holidays }),
-  [props.taskProgressToday, props.categoryProgressToday, props.project.workingDays, props.project.holidays]);
-  return <EstimateSyncProvider key={props.project.id} estimate={props.costEstimate} progress={progress}>
-    <ProjectDetailContent {...props} />
+    workingDays: project.workingDays, holidays: project.holidays }),
+  [props.taskProgressToday, props.categoryProgressToday, project.workingDays, project.holidays]);
+  return <EstimateSyncProvider key={project.id} estimate={props.costEstimate} progress={progress}>
+    {saveError && <p role="alert" className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">{saveError}</p>}
+    {saving && <p role="status" className="px-6 py-1 text-xs text-zinc-500">Saving project changes...</p>}
+    <ProjectDetailContent {...props} project={project} savingProject={saving} onSaveProject={saveProject} />
   </EstimateSyncProvider>;
 }
 
 function ProjectDetailContent({
   project,
+  savingProject = false,
+  onSaveProject,
   projectManagers,
   foremen,
   costEstimate: serverCostEstimate,
@@ -238,6 +274,8 @@ function ProjectDetailContent({
   equipmentTracking = null,
 }: {
   project: ProjectRow;
+  savingProject?: boolean;
+  onSaveProject?: (data: FormData) => Promise<ProjectActionState>;
   projectManagers: AccountRow[];
   foremen: AccountRow[];
   costEstimate: CostEstimate;
@@ -692,7 +730,7 @@ function ProjectDetailContent({
           categoryRecords={categoryProgressToday}
           workers={workers}
           workerAssignments={workerAssignments}
-          onEdit={isAdmin && canEditProject && !project.archivedAt ? () => setEditOpen(true) : undefined}
+          onEdit={isAdmin && canEditProject && !project.archivedAt && !savingProject ? () => setEditOpen(true) : undefined}
           onArchive={isAdmin && (project.archivedAt || project.status === "completed") ? () => setArchiveProjectConfirmOpen(true) : undefined}
         />
 
@@ -1010,12 +1048,18 @@ function ProjectDetailContent({
             onClose={() => setEditOpen(false)}
             title="Edit Project"
           >
-            <EditProjectForm
+            {editOpen && <EditProjectForm
+              key={project.id}
+              onSave={onSaveProject ? (data) => {
+                const result = onSaveProject(data);
+                if (String(data.get("projectName") ?? "").trim() && data.get("projectManagerId") && data.get("foremanId")) setEditOpen(false);
+                return result;
+              } : undefined}
               project={project}
               projectManagers={projectManagers}
               foremen={foremen}
               onSuccess={() => setEditOpen(false)}
-            />
+            />}
           </Modal>
 
           <Modal
