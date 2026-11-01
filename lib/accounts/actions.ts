@@ -516,17 +516,22 @@ export async function resendInvitation(targetId: string): Promise<AccountActionS
     const lastSent = Math.max(
       Date.parse(user.invited_at ?? "") || 0,
       Date.parse(user.recovery_sent_at ?? "") || 0,
+      Date.parse(user.confirmation_sent_at ?? "") || 0,
     );
     if (Date.now() - lastSent < 60_000) {
       return { error: "Please wait one minute before sending another setup email." };
     }
 
-    // Supabase rejects invitations for confirmed emails. Recovery lets someone
-    // who verified their email but abandoned setup finish with their same ID.
+    // Confirmed email does not mean application setup was completed. Supabase
+    // rejects inviteUserByEmail for confirmed addresses; send an existing-user
+    // setup link through the dedicated invitation-worded Magic Link template.
+    // Never issue a password-reset email for an unfinished invitation.
     const confirmed = Boolean(user.email_confirmed_at);
     const { error } = confirmed
-      ? await admin.auth.resetPasswordForEmail(target.email, {
-          redirectTo: `${siteURL()}/accept-invite`,
+      ? await admin.auth.signInWithOtp({ email: target.email, options: {
+          shouldCreateUser: false,
+          emailRedirectTo: `${siteURL()}/accept-invite`,
+        },
         })
       : await admin.auth.admin.inviteUserByEmail(target.email, {
           redirectTo: `${siteURL()}/accept-invite`,
@@ -537,7 +542,7 @@ export async function resendInvitation(targetId: string): Promise<AccountActionS
         : "Could not send the setup email. Check SMTP settings and try again." };
     }
     await logEvent(await createClient(), manager, target, "password_reset_sent",
-      confirmed ? "Invitation setup recovery email sent" : "Invitation resent");
+      "Invitation resent");
     return { success: `Setup email sent to ${target.email}. Ask them to open the newest email.` };
   } catch (e) {
     return failure(e);

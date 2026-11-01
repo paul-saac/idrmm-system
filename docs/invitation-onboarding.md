@@ -34,10 +34,23 @@ Run `supabase/migrations/0081_invitation_onboarding.sql` after 0080 before deplo
 - The email link establishes the invited user's session and opens `/accept-invite`.
 - Until email confirmation and password setup, the profile is marked `invitation_pending`; project/company data is blocked even if someone manually navigates away from setup.
 - Setting a password completes the profile in the database and opens the role's portal. A deactivated account is not reactivated by setup.
-- Open an invited account's row and use **Resend invitation**. Unconfirmed emails receive another invitation; already-confirmed emails receive a password-setup recovery email. Both preserve the account ID, role and pending status until password setup completes. Inactive or completed accounts cannot use this action. The button is disabled while sending; the server also checks the last send time and handles provider rate limits.
+- Open an invited account's row and use **Resend invitation**. Unconfirmed emails receive another invitation; already-confirmed emails receive a setup magic link using the invitation-worded Magic Link template (never a reset-password email). Both preserve the account ID, role and pending status until password setup completes. Inactive or completed accounts cannot use this action. The button is disabled while sending; the server also checks the last send time and handles provider rate limits.
 
 ## Verification before launch
 
 Use a dedicated test recipient, not an existing employee: send an invite, open it in a private browser, set a password, sign out and sign back in. Verify the assigned role, replay/expired links, pending-user access denial, deactivation during setup and admin-vs-super-admin invitation restrictions. Verify the password-reset email template still points to the existing recovery flow. Never log invitation tokens or passwords.
 
 MFA, session-management changes and the other security stages are not included here.
+
+## Resent invitations after email verification
+
+Supabase rejects admin invites for already-confirmed email addresses even when application setup remains pending. For these accounts the resend action uses `signInWithOtp` with `shouldCreateUser: false`, preserving their ID, role and pending state.
+
+In Supabase Dashboard > Authentication > Email Templates > Magic Link:
+- Subject: `You have been invited to IDR M&M`
+- Body: copy `supabase/templates/invitation-resend.html`.
+- Keep Site URL set to `https://idrmm.online`, with `/accept-invite` allowed as a redirect.
+
+This template change is separate from deploying code. Leave the Invite user template for original/unconfirmed invitations and Reset password template for actual password resets. No email is sent merely by updating these files.
+
+Pending invitations display no Last sign-in value: Supabase may record a link exchange before the user completes account setup. The app does not delete or rewrite that authentication audit timestamp.

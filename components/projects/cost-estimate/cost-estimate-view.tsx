@@ -477,21 +477,11 @@ export function CostEstimateView({
               <tbody>
                 {categories.map((category, categoryIndex) => {
                   const itemCode = categoryItemCode(categoryIndex);
-                  // Milestones are point-in-time schedule markers (the
-                  // Gantt Chart's own diamond rows) created from its own
-                  // lightweight Add Task form, which never asks for
-                  // quantity/cost — so in practice one always lands here
-                  // at ₱0, a dead row. But isMilestone doesn't actually
-                  // lock a task out of having real cost fields (this
-                  // page's own Edit form doesn't special-case it either;
-                  // see CostTask's own doc comment) — an admin could
-                  // still deliberately cost one out (e.g. a permit fee
-                  // tied to a "Permit Approved" milestone), so only a
-                  // milestone that's *actually* still ₱0 gets hidden,
-                  // never one that's had a real cost entered against it.
+                  // Hide schedule-only milestones without changing estimate data or item codes.
+                  if (category.tasks.length === 0 && category.isMilestone) return null;
                   const tasks = category.tasks
                     .map((task, index) => ({ task, itemCode: `${itemCode}.${index + 1}` }))
-                    .filter(({ task }) => !task.isMilestone || task.totalEstimateCost > 0);
+                    .filter(({ task }) => !task.isMilestone);
                   const isOpen = !collapsedCategoryIds.has(category.id);
                   // Each column is the category's own direct line (its
                   // labor/material/equipment/other — see 0047, 0042 and

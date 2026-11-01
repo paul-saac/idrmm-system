@@ -318,7 +318,8 @@ export async function listAccountsByRole(
       invitationPending: row.invitation_pending,
       createdAt: row.created_at,
       assignedProjects: assignedByAccount.get(row.id) ?? [],
-      lastSignInAt: signIns.get(row.id) ?? null,
+      // An Auth email-link exchange is not a completed application login.
+      lastSignInAt: row.invitation_pending ? null : signIns.get(row.id) ?? null,
       detailPreview: preview
         ? { projects: preview.projects, activity: preview.activity }
         : { projects: [], activity: [] },
