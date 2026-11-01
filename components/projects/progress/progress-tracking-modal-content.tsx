@@ -242,8 +242,14 @@ function LaborToday({
   const listed = new Set(rows.map((row) => row.worker.id));
   const addable = team.filter((worker) => !listed.has(worker.id));
   const missingRate = rows.some(
-    (row) => (parseHours(hours[row.worker.id] ?? "") ?? 0) > 0 && row.worker.hourlyRate === null
+    (row) =>
+      row.worker.employmentType !== "subcontractor" &&
+      (parseHours(hours[row.worker.id] ?? "") ?? 0) > 0 &&
+      row.worker.hourlyRate === null
   );
+  const hasSubcontractors =
+    subcontractorsAssigned ||
+    rows.some((row) => row.worker.employmentType === "subcontractor");
 
   return (
     <section className="flex flex-col gap-4">
@@ -275,7 +281,6 @@ function LaborToday({
                     <div className="min-w-0">
                       <p className="truncate text-zinc-900" title={worker.fullName}>
                         {worker.fullName}
-                        {helper && <span className="ml-1.5 text-xs text-zinc-400">Helper</span>}
                         {dayOff && <span className="ml-1.5 text-xs text-zinc-400">Day off</span>}
                       </p>
                       {worker.title && (
@@ -295,10 +300,12 @@ function LaborToday({
                     )}
                   </div>
                   <span className="truncate text-xs text-zinc-500 tabular-nums">
-                    {worker.hourlyRate === null ? (
-                      <span className="text-amber-600">No rate</span>
-                    ) : (
+                    {worker.hourlyRate !== null ? (
                       `${formatPeso(worker.hourlyRate)}/hr`
+                    ) : worker.employmentType === "subcontractor" ? (
+                      <span className="text-zinc-400">—</span>
+                    ) : (
+                      <span className="text-amber-600">No rate</span>
                     )}
                   </span>
                   <div
@@ -366,7 +373,7 @@ function LaborToday({
           Someone here has no hourly rate yet, so they count as ₱0 — set it on the Team page.
         </p>
       )}
-      {subcontractorsAssigned && (
+      {hasSubcontractors && (
         <p className="text-xs text-zinc-500">
           Subcontractors aren&apos;t counted by the hour — add their billing under Other cost.
         </p>
@@ -2167,14 +2174,14 @@ export function ProgressTrackingModalContent({
         ? "lg:grid-cols-1"
         : "lg:grid-cols-[minmax(0,1fr)_28rem]"),
     ].filter(Boolean).join(" ")}>
-      {/* Live — follows what's typed below, beside the modal's own title. */}
-      {breakdown.scheduleStatus && (
+      {/* Reflects saved progress — updates after the log is saved, not live while typing. */}
+      {savedStanding.scheduleStatus && (
         <ModalHeaderAddon>
           {!incidentOpen && (
           <span
-            className={`rounded px-2 py-0.5 text-xs font-semibold ${SCHEDULE_STATUS_STYLE[breakdown.scheduleStatus]}`}
+            className={`rounded px-2 py-0.5 text-xs font-semibold ${SCHEDULE_STATUS_STYLE[savedStanding.scheduleStatus]}`}
           >
-            {SCHEDULE_STATUS_LABEL[breakdown.scheduleStatus]}
+            {SCHEDULE_STATUS_LABEL[savedStanding.scheduleStatus]}
           </span>
           )}
         </ModalHeaderAddon>

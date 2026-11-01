@@ -187,6 +187,8 @@ export function WorkerPickerModal({
                       <td className="px-4 py-3 text-xs tabular-nums text-zinc-700">
                         {worker.hourlyRate !== null ? (
                           `${formatPeso(worker.hourlyRate)}/hr`
+                        ) : worker.employmentType === "subcontractor" ? (
+                          <span className="text-zinc-400">—</span>
                         ) : (
                           <span className="text-amber-600">No rate</span>
                         )}
