@@ -829,7 +829,7 @@ export function CostEstimateView({
         title="Labor Breakdown"
         size="medium"
       >
-        <LaborBreakdownModalContent
+        {laborBreakdownOpen && <LaborBreakdownModalContent
           projectId={projectId}
           categories={categories}
           defaultLaborCostPercent={defaultLaborCostPercent}
@@ -838,7 +838,7 @@ export function CostEstimateView({
             setLaborBreakdownOpen(false);
           }}
           highlightTarget={laborBreakdownHighlight}
-        />
+        />}
       </Modal>
 
       <Modal

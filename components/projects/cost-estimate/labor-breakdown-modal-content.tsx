@@ -4,12 +4,7 @@ import { ProjectWriteInput, ProjectWriteButton } from "@/components/projects/pro
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Calculator } from "lucide-react";
-import { updateProjectDefaultLaborCostPercent } from "@/lib/projects/actions";
-import {
-  applyLaborRateProjectWide,
-  updateCategoryLaborEstimate,
-  updateTaskLaborEstimate,
-} from "@/lib/cost-estimate/actions";
+import { saveLaborBreakdown } from "@/lib/cost-estimate/actions";
 import type { CostCategory, CostTask } from "@/lib/cost-estimate/data";
 import { useEstimateSync } from "./estimate-sync-context";
 import type { EstimateRowPatch } from "@/lib/cost-estimate/live-estimate";
@@ -234,7 +229,7 @@ export function LaborBreakdownModalContent({
   function liveTaskAmount(task: CostTask) {
     const draft = taskPercentDraft[task.id];
     const percent =
-      draft !== undefined ? parsePercent(draft) : taskLaborPercent(task, projectBase);
+      draft !== undefined ? parsePercent(draft) : rateDirty && ratePercentInput.trim() !== "" ? parsePercent(ratePercentInput) : taskLaborPercent(task, projectBase);
     return (percent / 100) * projectBase;
   }
 
@@ -243,7 +238,7 @@ export function LaborBreakdownModalContent({
     const percent =
       draft !== undefined
         ? parsePercent(draft)
-        : categoryLaborPercent(category, projectBase);
+        : rateDirty && ratePercentInput.trim() !== "" ? parsePercent(ratePercentInput) : categoryLaborPercent(category, projectBase);
     return (percent / 100) * projectBase;
   }
 
@@ -267,56 +262,40 @@ export function LaborBreakdownModalContent({
   // confirmed directly as the cause of a project's own rate appearing
   // to do nothing despite its Material cost already being real.
   async function handleSave() {
+    if (pending) return;
     setError(null);
     const parsed = ratePercentInput.trim() === "" ? null : Number(ratePercentInput.trim());
-    if (rateDirty && parsed != null && !Number.isFinite(parsed)) {
-      setError("Enter a valid percentage.");
-      return;
+    const tasks = Array.from(dirtyTaskIds, id => ({ id, percent: Number(taskPercentDraft[id]) }));
+    const categoryEdits = Array.from(dirtyCategoryIds, id => ({ id, percent: Number(categoryPercentDraft[id]) }));
+    const values = [...tasks, ...categoryEdits].map(row => row.percent);
+    if (rateDirty && parsed != null) values.push(parsed);
+    if (values.some(value => !Number.isFinite(value) || value < 0 || value > 100)) {
+      setError("Enter percentages between 0 and 100."); return;
     }
+    if (projectBase <= 0 && values.some(value => value > 0)) {
+      setError("Add planned material, equipment or other costs first. Labor percentages are calculated from those costs."); return;
+    }
+    const patches: EstimateRowPatch[] = categories.flatMap<EstimateRowPatch>(category => [
+      ...(!category.isMilestone && !category.tasks.length && (dirtyCategoryIds.has(category.id) || rateDirty && parsed != null)
+        ? [{ kind: "category" as const, id: category.id, values: { categoryLaborEstimate: liveCategoryAmount(category) } }] : []),
+      ...category.tasks.filter(task => !task.isMilestone && (dirtyTaskIds.has(task.id) || rateDirty && parsed != null))
+        .map(task => ({ kind: "task" as const, id: task.id, values: { laborEstimate: liveTaskAmount(task) } })),
+    ]);
+    const token = patches.length ? estimateSync?.begin(patches) : undefined;
     setPending(true);
-    const ratePatches: EstimateRowPatch[] = rateDirty && parsed != null ? categories.flatMap<EstimateRowPatch>(category => [
-      ...(!category.tasks.length ? [{ kind: "category" as const, id: category.id, values: { categoryLaborEstimate: parsed / 100 * projectBase } }] : []),
-      ...category.tasks.map(task => ({ kind: "task" as const, id: task.id, values: { laborEstimate: parsed / 100 * projectBase } })),
-    ]) : [];
-    const rateToken = ratePatches.length ? estimateSync?.begin(ratePatches) : undefined;
-    let rateCompleted = false;
-    const edits = [
-      ...Array.from(dirtyTaskIds, id => ({ kind: "task" as const, id, amount: parsePercent(taskPercentDraft[id] ?? "0") / 100 * projectBase })),
-      ...Array.from(dirtyCategoryIds, id => ({ kind: "category" as const, id, amount: parsePercent(categoryPercentDraft[id] ?? "0") / 100 * projectBase })),
-    ].map(edit => ({ ...edit, token: estimateSync?.begin([edit.kind === "task"
-      ? { kind: "task", id: edit.id, values: { laborEstimate: edit.amount } }
-      : { kind: "category", id: edit.id, values: { categoryLaborEstimate: edit.amount } }]) }));
     try {
-      if (rateDirty) {
-        const rateResult = await updateProjectDefaultLaborCostPercent(projectId, parsed);
-        if (rateResult.error) throw new Error(rateResult.error);
-        if (parsed != null) {
-          const result = await applyLaborRateProjectWide(projectId, parsed);
-          if (result.error) throw new Error(result.error);
-        }
+      const result = await saveLaborBreakdown(projectId, {
+        ...(rateDirty ? { rate: parsed } : {}), tasks, categories: categoryEdits,
+      });
+      if (result.error) {
+        if (token !== undefined) estimateSync?.rollback(token);
+        setError(result.error); return;
       }
-      if (rateToken !== undefined) estimateSync?.complete(rateToken);
-      rateCompleted = true;
-      const results = await Promise.all(edits.map(async edit => {
-        try {
-          const result = edit.kind === "task" ? await updateTaskLaborEstimate(edit.id, projectId, edit.amount)
-            : await updateCategoryLaborEstimate(edit.id, projectId, edit.amount);
-          if (edit.token !== undefined) {
-            if (result.error) estimateSync?.rollback(edit.token); else estimateSync?.complete(edit.token);
-          }
-          return result;
-        } catch {
-          if (edit.token !== undefined) estimateSync?.rollback(edit.token);
-          return { error: "Could not save labor costs. Please try again." };
-        }
-      }));
-      const failed = results.find(result => result.error);
-      if (failed?.error) { setError(failed.error); return; }
+      if (token !== undefined) estimateSync?.complete(token);
       onClose();
-    } catch (error) {
-      if (!rateCompleted && rateToken !== undefined) estimateSync?.rollback(rateToken);
-      for (const edit of edits) if (edit.token !== undefined) estimateSync?.rollback(edit.token);
-      setError(error instanceof Error ? error.message : "Could not save labor costs. Please try again.");
+    } catch {
+      if (token !== undefined) estimateSync?.rollback(token);
+      setError("Could not save labor costs. Please try again.");
     } finally {
       setPending(false);
       router.refresh();
@@ -414,7 +393,7 @@ export function LaborBreakdownModalContent({
                         <PercentCell
                           value={
                             categoryPercentDraft[category.id] ??
-                            formatPercent(categoryLaborPercent(category, projectBase))
+                            formatPercent(rateDirty && ratePercentInput.trim() !== "" ? parsePercent(ratePercentInput) : categoryLaborPercent(category, projectBase))
                           }
                           onChange={(value) => updateCategoryDraft(category.id, value)}
                           label={`${category.name} labor percentage`}
@@ -446,7 +425,7 @@ export function LaborBreakdownModalContent({
                         <PercentCell
                           value={
                             taskPercentDraft[task.id] ??
-                            formatPercent(taskLaborPercent(task, projectBase))
+                            formatPercent(rateDirty && ratePercentInput.trim() !== "" ? parsePercent(ratePercentInput) : taskLaborPercent(task, projectBase))
                           }
                           onChange={(value) => updateTaskDraft(task.id, value)}
                           label={`${task.name} labor percentage`}
@@ -482,6 +461,7 @@ export function LaborBreakdownModalContent({
             <button
               type="button"
               onClick={onClose}
+              disabled={pending}
               className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
             >
               Cancel

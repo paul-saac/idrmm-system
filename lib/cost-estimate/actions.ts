@@ -2277,3 +2277,71 @@ export async function saveOtherCostBreakdown(
   });
 }
 
+
+
+/** Save Labor Breakdown in one request, using a fresh non-labor cost base.
+ * Individual percentages override the project rate in the same save. */
+export async function saveLaborBreakdown(projectId: number, input: {
+  rate?: number | null;
+  tasks: { id: number; percent: number }[];
+  categories: { id: number; percent: number }[];
+}): Promise<CostEstimateActionState> {
+  return safely(async () => {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) return { error: "You are not authorized to manage cost estimates." };
+    const percentages = [...input.tasks, ...input.categories].map(row => row.percent);
+    if (input.rate != null) percentages.push(input.rate);
+    if (percentages.some(value => !Number.isFinite(value) || value < 0 || value > 100))
+      return { error: "Enter percentages between 0 and 100." };
+    const supabase = await createClient();
+    const [categories, tasks] = await Promise.all([
+      supabase.from("estimate_categories").select("id,category_material_estimate,category_equipment_estimate,category_other_estimate,is_milestone").eq("project_id", projectId),
+      supabase.from("estimate_tasks").select("id,category_id,material_estimate,equipment_estimate,other_cost_estimate,is_milestone").eq("project_id", projectId),
+    ]);
+    if (categories.error || tasks.error || !categories.data || !tasks.data)
+      return { error: "Could not load the latest planned costs. Please try again." };
+    const parentIds = new Set(tasks.data.map(row => row.category_id));
+    const editableCategories = categories.data.filter(row => !row.is_milestone && !parentIds.has(row.id));
+    const editableTasks = tasks.data.filter(row => !row.is_milestone);
+    if (input.tasks.some(edit => !editableTasks.some(row => row.id === edit.id)) ||
+        input.categories.some(edit => !editableCategories.some(row => row.id === edit.id)))
+      return { error: "The task list changed. Reopen Labor Breakdown and try again." };
+    const base = categories.data.reduce((sum, row) => sum + Number(row.category_material_estimate ?? 0) + Number(row.category_equipment_estimate ?? 0) + Number(row.category_other_estimate ?? 0), 0)
+      + tasks.data.reduce((sum, row) => sum + Number(row.material_estimate ?? 0) + Number(row.equipment_estimate ?? 0) + Number(row.other_cost_estimate ?? 0), 0);
+    if (base <= 0 && percentages.some(value => value > 0))
+      return { error: "Add planned material, equipment or other costs first. Labor percentages are calculated from those costs." };
+    const taskRates = new Map(input.tasks.map(edit => [edit.id, edit.percent]));
+    const categoryRates = new Map(input.categories.map(edit => [edit.id, edit.percent]));
+    const writes = [
+      ...editableTasks.flatMap(row => {
+        const rate = taskRates.get(row.id) ?? input.rate;
+        if (rate == null) return [];
+        const labor = rate / 100 * base;
+        return [supabase.from("estimate_tasks").update({ labor_estimate: labor,
+          total_estimate_cost: labor + Number(row.material_estimate ?? 0) + Number(row.equipment_estimate ?? 0) + Number(row.other_cost_estimate ?? 0) })
+          .eq("project_id", projectId).eq("id", row.id).select("id").single()];
+      }),
+      ...editableCategories.flatMap(row => {
+        const rate = categoryRates.get(row.id) ?? input.rate;
+        if (rate == null) return [];
+        return [supabase.from("estimate_categories").update({ category_labor_estimate: rate / 100 * base })
+          .eq("project_id", projectId).eq("id", row.id).select("id").single()];
+      }),
+    ];
+    const results = await Promise.all(writes);
+    if (results.some(result => result.error || !result.data)) {
+      revalidateProjectPaths(projectId);
+      return { error: "Could not save all labor costs. Reopen the breakdown to review saved values and retry." };
+    }
+    if (input.rate !== undefined) {
+      const { error } = await supabase.rpc("set_project_default_labor_cost_percent", { p_project_id: projectId, p_percent: input.rate });
+      if (error) {
+        revalidateProjectPaths(projectId);
+        return { error: "Labor amounts were saved, but the project rate could not be saved. Please retry." };
+      }
+    }
+    await recordGanttCheckpoint(supabase, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { success: true };
+  });
+}
