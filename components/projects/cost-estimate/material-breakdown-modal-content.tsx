@@ -1,9 +1,10 @@
 "use client";
 
-import { ProjectWriteInput, ProjectWriteButton } from "@/components/projects/project-access-context";
+import { ProjectWriteInput, ProjectWriteButton, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
+import { RowMenu } from "./estimate-row-menu";
 import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import {
   updateTaskMaterialAssignments,
@@ -230,12 +231,10 @@ const ITEM_ROW =
 // The Gantt chart's own today color (its todayColor prop, 0.15) at about
 // half strength — the full color is its hover (ITEM_ROW).
 const MATERIAL_ROW_BG = "bg-[rgba(252,211,77,0.08)]";
-// Hidden until its own row is hovered (or it's reached by keyboard).
-const HOVER_ONLY = "opacity-0 group-hover:opacity-100 focus-visible:opacity-100";
 const CELL_INPUT =
-  "h-9 w-full bg-transparent px-4 text-right text-xs font-medium text-zinc-700 outline-none transition placeholder:text-zinc-300 hover:bg-zinc-900 hover:text-white focus:bg-transparent focus:text-zinc-700";
+  "h-9 w-full bg-transparent px-4 text-right text-xs font-medium text-zinc-700 outline-none transition placeholder:text-zinc-300 focus:bg-transparent focus:text-zinc-700";
 const GROUP_BUTTON =
-  "inline-flex shrink-0 cursor-pointer items-center rounded-sm border border-zinc-200 bg-white h-6 px-2.5 text-xs font-medium text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900";
+  "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded text-zinc-400 transition hover:bg-zinc-200/70 hover:text-zinc-700";
 
 // A standalone top-level component, not nested inside
 // MaterialBreakdownModalContent — a component defined inside another
@@ -314,6 +313,7 @@ export function MaterialBreakdownModalContent({
   /** Optional target row/material to highlight inside the breakdown modal */
   highlightTarget?: MaterialBreakdownHighlightTarget;
 }) {
+  const canEdit = useProjectCanEdit();
   const router = useRouter();
   const estimateSync = useEstimateSync();
   // One ref per task row, keyed by task id — set via each row's own
@@ -678,14 +678,6 @@ export function MaterialBreakdownModalContent({
               placeholder="Material"
               className="h-9 min-w-0 flex-1 bg-transparent text-xs font-medium text-zinc-700 outline-none placeholder:font-normal placeholder:text-zinc-300"
             />
-            <ProjectWriteButton
-              type="button"
-              onClick={() => removeLine(owner, line.key)}
-              aria-label="Remove material"
-              className={`shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 ${HOVER_ONLY}`}
-            >
-              <Trash2 className="size-3.5" />
-            </ProjectWriteButton>
           </div>
         </td>
         <td className={DIVIDER}>
@@ -730,7 +722,7 @@ export function MaterialBreakdownModalContent({
             className={CELL_INPUT}
           />
         </td>
-        <td>
+        <td className={DIVIDER}>
           <AmountCell
             focusKey={`material-${line.key}`}
             computedAmount={lineAmount(line)}
@@ -743,6 +735,10 @@ export function MaterialBreakdownModalContent({
             setFocusedAmountKey={setFocusedAmountKey}
             className={CELL_INPUT}
           />
+        </td>
+        <td className="px-1">
+          <RowMenu name={line.materialName || "material"} disabled={!canEdit || pending}
+            actions={[{ label: "Delete material", destructive: true, run: () => removeLine(owner, line.key) }]} />
         </td>
       </tr>
     );
@@ -767,6 +763,7 @@ export function MaterialBreakdownModalContent({
             <col className="w-24" />
             <col className="w-28" />
             <col className="w-32" />
+            <col className="w-9" />
           </colgroup>
           <thead className="bg-zinc-50 text-xs font-medium text-zinc-500">
             <tr>
@@ -782,15 +779,17 @@ export function MaterialBreakdownModalContent({
               <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">
                 Unit Cost
               </th>
-              <th className="border-b border-zinc-200 px-4 py-2.5 text-right">Amount</th>
+              <th className="border-r border-b border-zinc-200 px-4 py-2.5 text-right">Amount</th>
+              <th className="border-b border-zinc-200"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>
-            {categories.map((category) => {
+            {categories.filter(category => category.tasks.length > 0 || !category.isMilestone).map((category) => {
               // Every task shows here regardless of whether it has its own
               // material lines (or, at this level, whether the category
               // has any tasks at all yet) — never a hidden row.
               const tasks = category.tasks;
+              const visibleTasks = tasks.filter(task => !task.isMilestone);
               const categoryDirect = directByCategory[category.id] ?? EMPTY_DIRECT;
               return (
                 <Fragment key={category.id}>
@@ -805,10 +804,9 @@ export function MaterialBreakdownModalContent({
                         : ""
                     }`}
                   >
-                    {/* With subtasks, its name spans Quantity/Unit/Unit
-                        Cost too — its Amount is just their subtotal. */}
+                    {/* Task rows span the material fields; only material rows expose them. */}
                     <td
-                      colSpan={tasks.length > 0 ? 5 : 2}
+                      colSpan={5}
                       className={`${DIVIDER} px-4`}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -816,63 +814,18 @@ export function MaterialBreakdownModalContent({
                         {tasks.length === 0 && (
                           <ProjectWriteButton
                             type="button"
+                            aria-label={`Add material to ${category.name}`}
+                            title="Add material"
+                            disabled={pending}
                             onClick={() => addLine({ kind: "category", id: category.id })}
-                            className={`${GROUP_BUTTON} ${HOVER_ONLY}`}
+                            className={GROUP_BUTTON}
                           >
-                            Add Material
+                            <Plus aria-hidden className="size-3.5" />
                           </ProjectWriteButton>
                         )}
                       </div>
                     </td>
-                    {tasks.length === 0 && (
-                      <>
-                        <td className={DIVIDER}>
-                          <ProjectWriteInput
-                            type="number"
-                            min={0}
-                            autoComplete="off"
-                            value={categoryDirect.quantity}
-                            onChange={(e) =>
-                              updateCategoryDirect(category.id, {
-                                quantity: e.target.value,
-                              })
-                            }
-                            placeholder="—"
-                            className={CELL_INPUT}
-                          />
-                        </td>
-                        <td className={DIVIDER}>
-                          <ProjectWriteInput
-                            type="text"
-                            autoComplete="off"
-                            value={categoryDirect.unit}
-                            onChange={(e) =>
-                              updateCategoryDirect(category.id, {
-                                unit: e.target.value,
-                              })
-                            }
-                            placeholder="—"
-                            className={CELL_INPUT}
-                          />
-                        </td>
-                        <td className={DIVIDER}>
-                          <ProjectWriteInput
-                            type="number"
-                            min={0}
-                            autoComplete="off"
-                            value={categoryDirect.unitCost}
-                            onChange={(e) =>
-                              updateCategoryDirect(category.id, {
-                                unitCost: e.target.value,
-                              })
-                            }
-                            placeholder="—"
-                            className={CELL_INPUT}
-                          />
-                        </td>
-                      </>
-                    )}
-                    <td>
+                    <td className={DIVIDER}>
                       {tasks.length > 0 ? (
                         // A category with tasks shows their rolled-up
                         // total — a useful section subtotal, read-only
@@ -900,6 +853,7 @@ export function MaterialBreakdownModalContent({
                         />
                       )}
                     </td>
+                    <td />
                   </tr>
                   {(draftByCategory[category.id] ?? []).map((line) =>
                     renderMaterialRow({ kind: "category", id: category.id }, line, {
@@ -907,11 +861,11 @@ export function MaterialBreakdownModalContent({
                       flashing: false,
                     })
                   )}
-                  {tasks.map((task, taskIndex) => {
+                  {visibleTasks.map((task, taskIndex) => {
                     const lines = draftByTask[task.id] ?? [];
                     const direct = directByTask[task.id] ?? EMPTY_DIRECT;
                     const flashing = flashTaskId === task.id;
-                    const lastTask = taskIndex === tasks.length - 1;
+                    const lastTask = taskIndex === visibleTasks.length - 1;
                     return (
                       <Fragment key={task.id}>
                         <tr
@@ -933,57 +887,22 @@ export function MaterialBreakdownModalContent({
                           <td className={TREE_CELL}>
                             <TreeLine branch end={lastTask} />
                           </td>
-                          <td className={SUBTASK_NAME_CELL}>
+                          <td colSpan={4} className={SUBTASK_NAME_CELL}>
                             <div className="flex items-center justify-between gap-2">
                               <GroupLabel label={task.name} />
                               <ProjectWriteButton
                                 type="button"
+                                aria-label={`Add material to ${task.name}`}
+                                title="Add material"
+                                disabled={pending}
                                 onClick={() => addLine({ kind: "task", id: task.id })}
-                                className={`${GROUP_BUTTON} ${HOVER_ONLY}`}
+                                className={GROUP_BUTTON}
                               >
-                                Add Material
+                                <Plus aria-hidden className="size-3.5" />
                               </ProjectWriteButton>
                             </div>
                           </td>
                           <td className={DIVIDER}>
-                            <ProjectWriteInput
-                              type="number"
-                              min={0}
-                              autoComplete="off"
-                              value={direct.quantity}
-                              onChange={(e) =>
-                                updateDirect(task.id, { quantity: e.target.value })
-                              }
-                              placeholder="—"
-                              className={CELL_INPUT}
-                            />
-                          </td>
-                          <td className={DIVIDER}>
-                            <ProjectWriteInput
-                              type="text"
-                              autoComplete="off"
-                              value={direct.unit}
-                              onChange={(e) =>
-                                updateDirect(task.id, { unit: e.target.value })
-                              }
-                              placeholder="—"
-                              className={CELL_INPUT}
-                            />
-                          </td>
-                          <td className={DIVIDER}>
-                            <ProjectWriteInput
-                              type="number"
-                              min={0}
-                              autoComplete="off"
-                              value={direct.unitCost}
-                              onChange={(e) =>
-                                updateDirect(task.id, { unitCost: e.target.value })
-                              }
-                              placeholder="—"
-                              className={CELL_INPUT}
-                            />
-                          </td>
-                          <td>
                             <AmountCell
                               focusKey={`task-${task.id}`}
                               computedAmount={directAmount(task.id)}
@@ -995,6 +914,7 @@ export function MaterialBreakdownModalContent({
                               className={CELL_INPUT}
                             />
                           </td>
+                          <td />
                         </tr>
                         {lines.map((line) =>
                           renderMaterialRow({ kind: "task", id: task.id }, line, {

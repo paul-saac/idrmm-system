@@ -10,6 +10,7 @@ import {
   Upload,
 } from "lucide-react";
 import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
+import { AiGenerationStatus } from "@/components/ui/ai-generation-status";
 import {
   extractBomFromFile,
   type ExtractedCategory,
@@ -23,19 +24,22 @@ import { ImportBomDraftReview } from "./import-bom-draft-review";
 
 type DraftMaterialLine = {
   id: string;
+  itemNo?: string;
   name: string;
   quantity: string;
   unit: string;
   unitCost: string;
+  amount?: string;
 };
 
 export type DraftResources = {
+  itemNo?: string;
   amount?: string;
   amountType?: "material" | "labor" | "equipment" | "other";
   laborEstimate?: string;
   materials?: DraftMaterialLine[];
-  equipment?: { id: string; name: string; amount: string }[];
-  otherCosts?: { id: string; name: string; amount: string }[];
+  equipment?: { id: string; itemNo?: string; name: string; amount: string }[];
+  otherCosts?: { id: string; itemNo?: string; name: string; amount: string }[];
 };
 
 type DraftTask = DraftResources & {
@@ -81,12 +85,13 @@ function draftStorageKey(projectId: number) {
 
 function isResourceDraft(value: Record<string, unknown>): boolean {
   if (!value || typeof value !== "object") return false;
-  return ["amount", "laborEstimate"].every(key => value[key] === undefined || typeof value[key] === "string") &&
+  return ["itemNo", "amount", "laborEstimate"].every(key => value[key] === undefined || typeof value[key] === "string") &&
     (value.amountType === undefined || ["material", "labor", "equipment", "other"].includes(String(value.amountType))) &&
     ["equipment", "otherCosts"].every(key => value[key] === undefined || (Array.isArray(value[key]) && value[key].every(line =>
-      line && typeof line.id === "string" && typeof line.name === "string" && typeof line.amount === "string"))) &&
+      line && typeof line.id === "string" && typeof line.name === "string" && typeof line.amount === "string" && (line.itemNo === undefined || typeof line.itemNo === "string")))) &&
     (value.materials === undefined || (Array.isArray(value.materials) && value.materials.every(line => line &&
-      ["id", "name", "quantity", "unit", "unitCost"].every(key => typeof line[key] === "string"))));
+      ["id", "name", "quantity", "unit", "unitCost"].every(key => typeof line[key] === "string") &&
+      ["itemNo", "amount"].every(key => line[key] === undefined || typeof line[key] === "string"))));
 }
 
 function isDraftCategories(value: unknown): value is DraftCategory[] {
@@ -159,7 +164,7 @@ function nextId() {
 // line, same as addCategory/addTask/addMaterial below already do for a
 // row created straight in the browser.
 function draftResources(owner: import("@/lib/bom-import/estimate-resources").ImportResources): DraftResources {
-  return { amount: owner.amount, amountType: owner.amountType, laborEstimate: owner.laborEstimate,
+  return { itemNo: owner.itemNo, amount: owner.amount, amountType: owner.amountType, laborEstimate: owner.laborEstimate,
     materials: owner.materials?.map(line => ({ ...line, id: nextId() })),
     equipment: owner.equipment?.map(line => ({ ...line, id: nextId() })),
     otherCosts: owner.otherCosts?.map(line => ({ ...line, id: nextId() })),
@@ -179,6 +184,7 @@ function toDraftCategories(extracted: ExtractedCategory[]): DraftCategory[] {
       quantity: task.quantity,
       unit: task.unit,
       materials: task.materials.map((material) => ({
+        ...material,
         id: nextId(),
         name: material.name,
         quantity: material.quantity,
@@ -489,9 +495,8 @@ export function ImportBomModalContent({
   if (step === "processing") {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20 text-center">
-        <Loader2 className="size-6 animate-spin text-emerald-400" />
-        <p className="text-sm font-medium text-white">Reading your document…</p>
-        <p className="text-xs text-zinc-400">
+        <AiGenerationStatus label="AI is preparing your draft" />
+        <p className="max-w-full break-words px-4 text-xs text-zinc-400">
           Extracting tasks and planned costs from {file?.name}
         </p>
       </div>

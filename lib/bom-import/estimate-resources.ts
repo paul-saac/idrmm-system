@@ -1,7 +1,8 @@
 export type ImportCostType = "material" | "labor" | "equipment" | "other";
-export type ImportCostLine = { name: string; amount: string };
-export type ImportMaterial = { name: string; quantity: string; unit: string; unitCost: string };
+export type ImportCostLine = { itemNo?: string; name: string; amount: string };
+export type ImportMaterial = { itemNo?: string; name: string; quantity: string; unit: string; unitCost: string; amount?: string };
 export type ImportResources = {
+  itemNo?: string;
   amount?: string;
   amountType?: ImportCostType;
   laborEstimate?: string;
@@ -18,7 +19,7 @@ export function importNumber(value: string | undefined): number | null {
 
 /** Missing values stay unknown in the draft. Only known values contribute. */
 export function importResourceTotals(owner: ImportResources) {
-  const material = (owner.materials ?? []).reduce((sum, line) => sum + (importNumber(line.quantity) ?? 0) * (importNumber(line.unitCost) ?? 0), 0);
+  const material = (owner.materials ?? []).reduce((sum, line) => sum + (importNumber(line.amount) ?? (importNumber(line.quantity) ?? 0) * (importNumber(line.unitCost) ?? 0)), 0);
   const totals = {
     material, labor: importNumber(owner.laborEstimate) ?? 0,
     equipment: (owner.equipment ?? []).reduce((sum, line) => sum + (importNumber(line.amount) ?? 0), 0),
@@ -32,7 +33,7 @@ export function validImportResources(owner: ImportResources) {
   const valid = (value: string | undefined) => value === undefined || value.trim() === "" || importNumber(value) !== null;
   return (!owner.amountType || ["material", "labor", "equipment", "other"].includes(owner.amountType)) &&
     valid(owner.amount) && valid(owner.laborEstimate) &&
-    (owner.materials ?? []).every(line => line.name.trim().length > 0 && valid(line.quantity) && valid(line.unitCost)) &&
+    (owner.materials ?? []).every(line => line.name.trim().length > 0 && valid(line.quantity) && valid(line.unitCost) && valid(line.amount)) &&
     [...(owner.equipment ?? []), ...(owner.otherCosts ?? [])].every(line => line.name.trim().length > 0 && line.name.length <= 200 && valid(line.amount)) &&
     Object.values(importResourceTotals(owner)).every(total => Number.isFinite(total) && total < 1e15);
 }

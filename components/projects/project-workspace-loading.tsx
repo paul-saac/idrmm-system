@@ -93,7 +93,7 @@ export function ProjectWorkspaceLoading({ project }: { project?: ProjectRow }) {
           <div className="mt-3.5 grid grid-cols-2 border-y border-zinc-300 bg-zinc-200 lg:grid-cols-4 lg:divide-x lg:divide-zinc-300">
             {["Overall progress", "Project schedule", "Delay risk", "Forecast completion"].map(
               (label) => (
-                <div key={label} className="min-w-0 px-8 py-4">
+                <div key={label} className="min-w-0 px-4 py-4 sm:px-6 xl:px-8">
                   <p className="text-xs font-medium tracking-wider text-zinc-500 uppercase">{label}</p>
                   <div className="mt-2 h-6 w-28 animate-pulse rounded bg-zinc-100" />
                 </div>

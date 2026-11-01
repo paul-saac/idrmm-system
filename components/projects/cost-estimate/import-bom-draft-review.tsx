@@ -1,8 +1,9 @@
 "use client";
 
-import { Fragment, useEffect, useId, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { RowMenu } from "./estimate-row-menu";
+import { Fragment, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { flushSync } from "react-dom";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Plus, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Plus, Search } from "lucide-react";
 import { ViewMenu } from "@/components/ui/view-menu";
 import { DIVIDER, GROUP_ROW, MAIN_TASK_ROW, SUBTASK_NAME_CELL, TREE_CELL, TreeLine } from "./breakdown-table-shared";
 import { importResourceTotals } from "@/lib/bom-import/estimate-resources";
@@ -19,6 +20,8 @@ function numberValue(value: string): number | null {
 }
 
 function materialAmount(material: DraftMaterial): number | null {
+  const printed = numberValue(material.amount ?? "");
+  if (printed !== null) return printed;
   const quantity = numberValue(material.quantity);
   const cost = numberValue(material.unitCost);
   return quantity === null || cost === null ? null : quantity * cost;
@@ -61,30 +64,9 @@ function categoryMissing(category: DraftCategory): boolean {
     category.tasks.some(task => taskMissing(task) || resourcesMissing(task));
 }
 
-function RowMenu({ name, actions }: { name: string; actions: { label: string; run: () => void; destructive?: boolean }[] }) {
-  const id = useId();
-  const menu = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ left: 0, top: 0 });
-  return <>
-    <button type="button" popoverTarget={id} aria-label={`Manage ${name || "row"}`} title="Manage row"
-      onClick={event => {
-        const rect = event.currentTarget.getBoundingClientRect();
-        setPosition({ left: Math.max(8, Math.min(rect.right - 172, window.innerWidth - 180)), top: Math.min(rect.bottom + 4, window.innerHeight - actions.length * 34 - 16) });
-      }} className="flex size-7 cursor-pointer items-center justify-center rounded text-zinc-400 hover:bg-zinc-200/70 hover:text-zinc-700 focus-visible:outline-2 focus-visible:outline-zinc-400">
-      <MoreHorizontal aria-hidden className="size-4" />
-    </button>
-    <div ref={menu} id={id} popover="auto" role="menu" aria-label={`Manage ${name || "row"}`} style={{ ...position, right: "auto", bottom: "auto" }}
-      className="fixed m-0 w-43 overflow-hidden rounded border border-zinc-200 bg-white p-0 text-xs text-zinc-700 shadow-md">
-      {actions.map(action => <button key={action.label} type="button" role="menuitem" onClick={() => { menu.current?.hidePopover(); action.run(); }}
-        className={`flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left hover:bg-zinc-100 ${action.destructive ? "text-red-600" : "text-zinc-700"}`}>
-        {action.destructive ? <Trash2 aria-hidden className="size-3.5" /> : <Plus aria-hidden className="size-3.5" />}{action.label}
-      </button>)}
-    </div>
-  </>;
-}
 
-function Cell({ value, label, onChange, numeric = false, missing = false, nameId, money = false, alignRight = false }: {
-  value: string; label: string; onChange: (value: string) => void; numeric?: boolean; missing?: boolean; nameId?: string; money?: boolean; alignRight?: boolean;
+function Cell({ value, label, onChange, numeric = false, missing = false, nameId, money = false, alignRight = false, placeholder = "\u2014" }: {
+  value: string; label: string; onChange: (value: string) => void; numeric?: boolean; missing?: boolean; nameId?: string; money?: boolean; alignRight?: boolean; placeholder?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const number = numeric ? numberValue(value) : null;
@@ -97,7 +79,7 @@ function Cell({ value, label, onChange, numeric = false, missing = false, nameId
       flushSync(() => setEditing(true));
       event.currentTarget.select();
     }} onBlur={() => setEditing(false)}
-    data-missing={missing || undefined} data-draft-name={nameId} onChange={event => onChange(event.target.value)} placeholder="—"
+    data-missing={missing || undefined} data-draft-name={nameId} onChange={event => onChange(event.target.value)} placeholder={placeholder}
     className={`h-9 w-full min-w-0 rounded border px-2 text-xs font-medium text-zinc-700 outline-none transition-colors focus:border-zinc-400 focus:bg-white ${numeric || alignRight ? "text-right tabular-nums" : "text-left"} ${missing ? "border-amber-200 bg-amber-50/80 placeholder:text-amber-600" : "border-transparent bg-transparent placeholder:text-zinc-400 hover:bg-zinc-100/80"}`} />;
 }
 
@@ -146,10 +128,10 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
     setter(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   }
   function expandCategory(id: string) { setCollapsedCategories(previous => { const next = new Set(previous); next.delete(id); return next; }); }
-  function updateCategory(id: string, patch: Partial<Pick<DraftCategory, "name" | "amount">>) {
+  function updateCategory(id: string, patch: Partial<Pick<DraftCategory, "name" | "amount" | "itemNo">>) {
     onChange(previous => previous.map(category => category.id === id ? { ...category, ...patch } : category));
   }
-  function updateTask(id: string, taskId: string, patch: Partial<Pick<DraftTask, "name" | "quantity" | "unit">>) {
+  function updateTask(id: string, taskId: string, patch: Partial<Pick<DraftTask, "name" | "quantity" | "unit" | "itemNo">>) {
     onChange(previous => previous.map(category => category.id !== id ? category : { ...category, tasks: category.tasks.map(task => task.id === taskId ? { ...task, ...patch } : task) }));
   }
   function addCategory() {
@@ -196,33 +178,31 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
   function resourceRows(categoryId: string, taskId: string | null, owner: DraftResources & { id: string; name: string }, nameMatches: boolean, lastTask: boolean) {
     const update = (patch: Partial<DraftResources>) => updateOwner(categoryId, taskId, patch);
     const selectOwner = () => { setSelectedCategoryId(categoryId); setSelectedTaskId(taskId); };
-    const costLabel = owner.amountType === "labor" ? "Labor" : owner.amountType === "equipment" ? "Equipment" : owner.amountType === "other" ? "Other cost" : "Material";
     return <>
-      {hasResources(owner) && !!owner.amount?.trim() && <tr onClick={selectOwner} className={`${GROUP_ROW} bg-white`}>
-        <td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
-        <td className={`${DIVIDER} pl-6 pr-2`}><span className="text-[10px] text-zinc-400">{costLabel}</span><p className="py-2">{owner.name}</p></td>
-        <td className={DIVIDER}><Cell value={owner.amount} label={`Direct amount for ${owner.name}`} numeric money missing={numberValue(owner.amount) === null} onChange={amount => update({ amount })} /></td><td />
-      </tr>}
-      {owner.laborEstimate !== undefined && <tr onClick={selectOwner} className={`${GROUP_ROW} bg-white`}><td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
+      {owner.laborEstimate !== undefined && <tr onClick={selectOwner} className={`${GROUP_ROW} bg-white`}><td className={`${DIVIDER} px-1`} /><td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
         <td className={`${DIVIDER} pl-6 text-zinc-500`}>Labor</td>
         <td className={DIVIDER}><Cell value={owner.laborEstimate} label={`Labor amount for ${owner.name}`} numeric money missing={numberValue(owner.laborEstimate) === null} onChange={laborEstimate => update({ laborEstimate })} /></td>
         <td className="pr-1"><RowMenu name={`labor for ${owner.name}`} actions={[{ label: "Remove labor amount", destructive: true, run: () => update({ laborEstimate: undefined }) }]} /></td>
       </tr>}
       {(owner.materials ?? []).filter(line => (filter === "all" || materialMissing(line)) && (nameMatches || matches(line.name))).map(material => <tr key={material.id} onClick={selectOwner} data-resource-kind="material" className={`${GROUP_ROW} bg-[rgba(252,211,77,0.08)]`}>
+        <td className={`${DIVIDER} px-1`}><Cell value={material.itemNo ?? ""} label={`Item number for material ${material.name || "row"}`} onChange={itemNo => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, itemNo } : line) })} /></td>
         <td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
-        <td className={`${DIVIDER} border-l-3 border-l-zinc-300`}><div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,.8fr)_minmax(0,1fr)] divide-x divide-zinc-200">
-          <label className="min-w-0 pl-4 pt-1.5"><span className="block px-2 text-[10px] text-zinc-400">Material</span><Cell nameId={material.id} value={material.name} label="Material name" missing={!material.name.trim()} onChange={name => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, name } : line) })} /></label>
-          <label className="min-w-0 pt-1.5"><span className="block px-2 text-right text-[10px] text-zinc-400">Quantity</span><Cell value={material.quantity} label={`Material quantity for ${material.name || "material"}`} numeric missing={numberValue(material.quantity) === null} onChange={quantity => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, quantity } : line) })} /></label>
-          <label className="min-w-0 pt-1.5"><span className="block px-2 text-right text-[10px] text-zinc-400">Unit</span><Cell value={material.unit} label={`Unit for ${material.name || "material"}`} alignRight missing={!material.unit.trim()} onChange={unit => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, unit } : line) })} /></label>
-          <label className="min-w-0 pt-1.5"><span className="block px-2 text-right text-[10px] text-zinc-400">Unit Cost</span><Cell value={material.unitCost} label={`Unit cost for ${material.name || "material"}`} numeric missing={numberValue(material.unitCost) === null} onChange={unitCost => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, unitCost } : line) })} /></label>
+        <td className={`${DIVIDER} border-l-3 border-l-zinc-300`}><div className="grid grid-cols-[minmax(180px,2fr)_minmax(100px,1fr)_minmax(80px,.8fr)_minmax(120px,1fr)] divide-x divide-zinc-200">
+          <label className="flex min-w-0 items-center gap-1 px-2"><span className="shrink-0 text-[10px] text-zinc-400">Material</span><Cell placeholder="Material description" nameId={material.id} value={material.name} label="Material name" missing={!material.name.trim()} onChange={name => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, name } : line) })} /></label>
+          <label className="flex min-w-0 items-center gap-1 px-2"><span className="shrink-0 whitespace-nowrap text-[10px] text-zinc-400">Quantity</span><Cell value={material.quantity} label={`Material quantity for ${material.name || "material"}`} numeric missing={numberValue(material.quantity) === null} onChange={quantity => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, quantity } : line) })} /></label>
+          <label className="flex min-w-0 items-center gap-1 px-2"><span className="shrink-0 whitespace-nowrap text-[10px] text-zinc-400">Unit</span><Cell value={material.unit} label={`Unit for ${material.name || "material"}`} alignRight missing={!material.unit.trim()} onChange={unit => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, unit } : line) })} /></label>
+          <label className="flex min-w-0 items-center gap-1 px-2"><span className="shrink-0 whitespace-nowrap text-[10px] text-zinc-400">Unit Cost</span><Cell value={material.unitCost} label={`Unit cost for ${material.name || "material"}`} numeric missing={numberValue(material.unitCost) === null} onChange={unitCost => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, unitCost } : line) })} /></label>
         </div></td>
-        <td className={`${DIVIDER} px-4 text-right tabular-nums`}>{currency(materialAmount(material))}</td>
+        <td className={`${DIVIDER} text-right tabular-nums`}>{material.amount?.trim()
+          ? <Cell value={material.amount} label={`Amount for material ${material.name || "row"}`} numeric money onChange={amount => update({ materials: owner.materials!.map(line => line.id === material.id ? { ...line, amount } : line) })} />
+          : <span className="px-4">{currency(materialAmount(material))}</span>}</td>
         <td className="pr-1"><RowMenu name={material.name || "material"} actions={[{ label: "Delete material", destructive: true, run: () => update({ materials: owner.materials!.filter(line => line.id !== material.id) }) }]} /></td>
       </tr>)}
       {(["equipment", "otherCosts"] as const).flatMap(key => (owner[key] ?? []).filter(line => (filter === "all" || !line.name.trim() || numberValue(line.amount) === null) && (nameMatches || matches(line.name))).map(line => <tr key={line.id} onClick={selectOwner} data-resource-kind={key} className={`${GROUP_ROW} bg-zinc-50/50`}>
+        <td className={`${DIVIDER} px-1`}><Cell value={line.itemNo ?? ""} label={`Item number for ${line.name || key}`} onChange={itemNo => update({ [key]: owner[key]!.map(item => item.id === line.id ? { ...item, itemNo } : item) })} /></td>
         <td className={TREE_CELL}>{!lastTask && <TreeLine />}</td>
-        <td className={`${DIVIDER} pl-6 pr-2`}><label className="block min-w-0 pt-1.5"><span className="block px-2 text-[10px] text-zinc-400">{key === "equipment" ? "Equipment description" : "Other cost description"}</span>
-          <Cell nameId={line.id} value={line.name} label={`${key === "equipment" ? "Equipment" : "Other cost"} name`} missing={!line.name.trim()} onChange={name => update({ [key]: owner[key]!.map(item => item.id === line.id ? { ...item, name } : item) })} /></label></td>
+        <td className={`${DIVIDER} border-l-3 border-l-zinc-300`}><label className="flex min-w-0 items-center gap-1 px-2"><span className="shrink-0 text-[10px] text-zinc-400">{key === "equipment" ? "Equipment" : "Other"}</span>
+          <Cell placeholder={key === "equipment" ? "Equipment description" : "Other cost description"} nameId={line.id} value={line.name} label={`${key === "equipment" ? "Equipment" : "Other cost"} name`} missing={!line.name.trim()} onChange={name => update({ [key]: owner[key]!.map(item => item.id === line.id ? { ...item, name } : item) })} /></label></td>
         <td className={DIVIDER}><Cell value={line.amount} label={`Amount for ${line.name || (key === "equipment" ? "equipment" : "other cost")}`} numeric money missing={numberValue(line.amount) === null} onChange={amount => update({ [key]: owner[key]!.map(item => item.id === line.id ? { ...item, amount } : item) })} /></td>
         <td className="pr-1"><RowMenu name={line.name || key} actions={[{ label: key === "equipment" ? "Delete equipment cost" : "Delete other cost", destructive: true, run: () => update({ [key]: owner[key]!.filter(item => item.id !== line.id) }) }]} /></td>
       </tr>))}
@@ -279,9 +259,10 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div ref={tableScroll} className="min-h-0 flex-1 overflow-auto border border-zinc-200 [scroll-padding-top:32px]">
-          <table className="w-full min-w-180 table-fixed border-collapse text-left text-xs">
-            <colgroup><col className="w-9" /><col /><col className="w-32" /><col className="w-8" /></colgroup>
+          <table className="w-full min-w-200 table-fixed border-collapse text-left text-xs">
+            <colgroup><col className="w-16" /><col className="w-9" /><col /><col className="w-32" /><col className="w-8" /></colgroup>
             <thead className="sticky top-0 z-10 bg-zinc-50 text-xs font-medium text-zinc-500"><tr>
+              <th scope="col" className={`${DIVIDER} border-b px-2 py-2.5 text-center font-medium`}>Item No.</th>
               <th scope="col" colSpan={2} className={`${DIVIDER} border-b px-4 py-2.5 font-medium`}>Task</th>
               <th scope="col" className={`${DIVIDER} border-b px-4 py-2.5 text-right font-medium`}>Amount</th>
               <th scope="col" className="border-b border-zinc-200"><span className="sr-only">Row actions</span></th>
@@ -293,6 +274,7 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
                 const collapsed = collapsedCategories.has(category.id);
                 return <Fragment key={category.id}>
                   <tr data-draft-category={category.id} onClick={() => { setSelectedCategoryId(category.id); setSelectedTaskId(null); }} className={MAIN_TASK_ROW}>
+                    <td className={`${DIVIDER} px-1`}><Cell value={category.itemNo ?? ""} label={`Item number for ${category.name}`} onChange={itemNo => updateCategory(category.id, { itemNo })} /></td>
                     <td colSpan={2} className={`${DIVIDER} px-4`}><div className="flex items-center gap-1">
                       <button type="button" onClick={() => { toggle(setCollapsedCategories, category.id); setFocusName(null); }} aria-label={`${collapsed ? "Expand" : "Collapse"} ${category.name}`} aria-expanded={!collapsed} disabled={!category.tasks.length} className="flex size-5 shrink-0 cursor-pointer items-center justify-center text-zinc-400 disabled:hidden">{collapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}</button>
                       <Cell nameId={category.id} value={category.name} label="Category name" missing={!category.name.trim()} onChange={name => updateCategory(category.id, { name })} />
@@ -309,6 +291,7 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
                     const lastTask = taskIndex === tasks.length - 1;
                     return <Fragment key={task.id}>
                       <tr onClick={() => { setSelectedCategoryId(category.id); setSelectedTaskId(task.id); }} className={`${GROUP_ROW} bg-white`}>
+                        <td className={`${DIVIDER} px-1`}><Cell value={task.itemNo ?? ""} label={`Item number for ${task.name}`} onChange={itemNo => updateTask(category.id, task.id, { itemNo })} /></td>
                         <td className={TREE_CELL}><TreeLine branch end={lastTask} /></td>
                         <td className={SUBTASK_NAME_CELL}><div className="flex items-center gap-1">
                           {<button type="button" disabled={!task.materials.length && !task.equipment?.length && !task.otherCosts?.length && task.laborEstimate === undefined} aria-label={`${taskCollapsed ? "Expand" : "Collapse"} ${task.name}`} aria-expanded={!taskCollapsed} onClick={() => { toggle(setCollapsedTasks, task.id); setFocusName(null); }} className="flex size-5 shrink-0 cursor-pointer items-center justify-center text-zinc-400 disabled:hidden">{taskCollapsed ? <ChevronRight className="size-3" /> : <ChevronDown className="size-3" />}</button>}
@@ -324,7 +307,7 @@ export function ImportBomDraftReview({ categories, onChange, onBack, onConfirm, 
                   })}
                 </Fragment>;
               })}
-              {!visibleCategories.length && <tr><td colSpan={4} className="px-5 py-14 text-center text-xs text-zinc-500">{categories.length ? "No items match your search or filter." : "Add a category to start your draft."}</td></tr>}
+              {!visibleCategories.length && <tr><td colSpan={5} className="px-5 py-14 text-center text-xs text-zinc-500">{categories.length ? "No items match your search or filter." : "Add a category to start your draft."}</td></tr>}
             </tbody>
           </table>
         </div>

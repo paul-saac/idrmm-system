@@ -189,13 +189,46 @@ function ExpectedProgressCell({
   expected: number;
 }) {
   const status = scheduleStatusFor(actual, expected);
+  const tooltipId = useId();
+  const [tooltip, setTooltip] = useState<{ top: number; left: number; pointer: number } | null>(null);
+  useEffect(() => {
+    if (!tooltip) return;
+    const hide = () => setTooltip(null);
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    return () => {
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+    };
+  }, [tooltip]);
+  function showTooltip(element: HTMLElement) {
+    const rect = element.getBoundingClientRect();
+    const width = Math.min(360, window.innerWidth - 32);
+    const left = Math.max(16, Math.min(rect.left, window.innerWidth - width - 16));
+    setTooltip({ top: rect.bottom + 8, left, pointer: Math.max(12, Math.min(rect.left + rect.width / 2 - left, width - 24)) });
+  }
   return (
-    <span
-      className={`flex h-full w-full items-center px-2 text-xs font-medium ${SCHEDULE_STATUS_TEXT[status]}`}
-      title={`${SCHEDULE_STATUS_LABEL[status]} — actual ${Math.round(actual)}%, expected ${Math.round(expected)}%`}
+    <button
+      type="button"
+      className={`flex h-full w-full cursor-pointer items-center px-2 text-left text-xs font-medium ${SCHEDULE_STATUS_TEXT[status]}`}
+      aria-describedby={tooltip ? tooltipId : undefined}
+      onClick={event => {
+        event.stopPropagation();
+        if (tooltip) setTooltip(null);
+        else showTooltip(event.currentTarget);
+      }}
+      onBlur={() => setTooltip(null)}
+      onKeyDown={event => { if (event.key === "Escape") setTooltip(null); }}
     >
       {Math.round(expected)}%
-    </span>
+      {tooltip && createPortal(
+        <div id={tooltipId} role="tooltip" style={{ top: tooltip.top, left: tooltip.left }} className="pointer-events-none fixed z-50 w-max max-w-[min(640px,calc(100vw-2rem))] rounded bg-zinc-900 px-4 py-2 text-[11px] font-medium text-white uppercase shadow-lg">
+          <div aria-hidden="true" style={{ left: tooltip.pointer }} className="absolute -top-1.5 size-3 rotate-45 bg-zinc-900" />
+          {SCHEDULE_STATUS_LABEL[status]} &middot; Actual {Math.round(actual)}% &middot; Expected {Math.round(expected)}%
+        </div>,
+        document.body,
+      )}
+    </button>
   );
 }
 
@@ -3351,7 +3384,7 @@ export function GanttChartView({
                 isGroup ? "border-zinc-200 bg-zinc-100" : "border-zinc-100"
               }`}
             >
-              {rowAccent && <span aria-hidden="true" className="pointer-events-none absolute top-0 -bottom-px left-0 w-1" style={{ backgroundColor: rowAccent }} />}
+              {rowAccent && <span aria-hidden="true" className="pointer-events-none absolute inset-y-px left-0 w-1" style={{ backgroundColor: rowAccent }} />}
               <div
                 className="flex h-full shrink-0 items-center gap-1 border-r border-zinc-200 px-2 text-zinc-900"
                 style={{ width: columnWidths.text }}

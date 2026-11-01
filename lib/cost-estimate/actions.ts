@@ -771,7 +771,8 @@ export async function applyBomImport(
       const lines = owner.materials ?? [];
       if (lines.length) {
         const values = lines.map(line => ({ material_name: line.name.trim(), planned_quantity: parseNumber(line.quantity),
-          unit: line.unit.trim() || null, unit_cost: parseNumber(line.unitCost) }));
+          unit: line.unit.trim() || null, unit_cost: parseNumber(line.unitCost),
+          amount: line.amount?.trim() ? parseNumber(line.amount) : null }));
         const { error } = kind === "task"
           ? await supabase.from("estimate_task_material_assignments").insert(values.map(line => ({ ...line, task_id: id })))
           : await supabase.from("estimate_category_material_assignments").insert(values.map(line => ({ ...line, category_id: id })));

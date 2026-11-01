@@ -1,9 +1,10 @@
 "use client";
 
-import { ProjectWriteInput, ProjectWriteButton } from "@/components/projects/project-access-context";
+import { ProjectWriteInput, ProjectWriteButton, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { RowMenu } from "./estimate-row-menu";
 import { useRouter } from "next/navigation";
-import { Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { saveOtherCostBreakdown, saveEquipmentCostBreakdown } from "@/lib/cost-estimate/actions";
 import type { CostCategory, OtherCostItem } from "@/lib/cost-estimate/data";
 import { useEstimateSync } from "./estimate-sync-context";
@@ -68,6 +69,7 @@ export function OtherBreakdownModalContent({
   highlightTarget?: OtherBreakdownHighlightTarget;
   costType?: "other" | "equipment";
 }) {
+  const canEdit = useProjectCanEdit();
   const router = useRouter();
   const estimateSync = useEstimateSync();
   const label = costType === "equipment" ? "Equipment" : "Other";
@@ -137,13 +139,13 @@ export function OtherBreakdownModalContent({
     } finally { setPending(false); }
   }
   function addButton(owner: Owner) {
-    return <ProjectWriteButton type="button" disabled={pending}
+    return <ProjectWriteButton type="button" disabled={pending} aria-label={`Add ${label.toLowerCase()} cost to ${owner.name}`} title={`Add ${label.toLowerCase()} cost`}
       onClick={() => setDrafts((previous) => ({
         ...previous, [ownerKey(owner)]: [...(previous[ownerKey(owner)] ?? initialLines(owner, label)),
           { key: crypto.randomUUID(), costName: "", quantity: "1", unit: "", unitCost: "0", amountOverride: "" }],
       }))}
-      className="inline-flex h-6 shrink-0 cursor-pointer items-center rounded-sm border border-zinc-200 bg-white px-2.5 text-xs font-medium text-zinc-600 opacity-0 transition group-hover:opacity-100 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 focus-visible:opacity-100 disabled:opacity-50">
-      Add {label} Cost
+      className="inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded text-zinc-400 transition hover:bg-zinc-200/70 hover:text-zinc-700 disabled:opacity-50">
+      <Plus aria-hidden className="size-3.5" />
     </ProjectWriteButton>;
   }
   function detailRows(owner: Owner, tree: boolean, lastTask = false) {
@@ -180,25 +182,9 @@ export function OtherBreakdownModalContent({
                   placeholder={costType === "equipment" ? "Equipment / rental description" : "Cost name"}
                   className="h-9 min-w-0 flex-1 bg-transparent text-xs font-medium text-zinc-700 outline-none placeholder:font-normal placeholder:text-zinc-300"
                 />
-                <ProjectWriteButton
-                  type="button"
-                  disabled={pending}
-                  aria-label={`Remove ${line.costName || `${label.toLowerCase()} cost`} from ${owner.name}`}
-                  onClick={() =>
-                    setDrafts((previous) => ({
-                      ...previous,
-                      [ownerKey(owner)]: (
-                        previous[ownerKey(owner)] ?? initialLines(owner, label)
-                      ).filter((item) => item.key !== line.key),
-                    }))
-                  }
-                  className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 opacity-0 transition group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 disabled:opacity-50"
-                >
-                  <Trash2 className="size-3.5" />
-                </ProjectWriteButton>
               </div>
             </td>
-            <td>
+            <td className={DIVIDER}>
               <ProjectWriteInput
                 aria-label={`${owner.name} ${line.costName || `${label} cost`} amount`}
                 disabled={pending}
@@ -208,8 +194,15 @@ export function OtherBreakdownModalContent({
                 onChange={(event) =>
                   change(owner, line.key, "amountOverride", event.target.value)
                 }
-                className="h-9 w-full min-w-0 bg-transparent px-4 text-right text-xs font-medium text-zinc-700 outline-none transition hover:bg-zinc-900 hover:text-white focus:bg-transparent focus:text-zinc-700"
+                className="h-9 w-full min-w-0 bg-transparent px-4 text-right text-xs font-medium text-zinc-700 outline-none transition focus:bg-transparent focus:text-zinc-700"
               />
+            </td>
+            <td className="px-1">
+              <RowMenu name={line.costName || `${label.toLowerCase()} cost`} disabled={!canEdit || pending}
+                actions={[{ label: `Delete ${label.toLowerCase()} cost`, destructive: true, run: () =>
+                  setDrafts(previous => ({ ...previous, [ownerKey(owner)]:
+                    (previous[ownerKey(owner)] ?? initialLines(owner, label)).filter(item => item.key !== line.key) }))
+                }]} />
             </td>
           </tr>
         );
@@ -219,15 +212,17 @@ export function OtherBreakdownModalContent({
   return <div className="flex min-h-full flex-col gap-5">
     <div className="overflow-x-auto border border-zinc-200 bg-white">
       <table className="w-full min-w-[480px] table-fixed text-left text-xs">
-        <colgroup><col className="w-9" /><col /><col className="w-44" /></colgroup>
+        <colgroup><col className="w-9" /><col /><col className="w-44" /><col className="w-9" /></colgroup>
         <thead className="bg-zinc-50 font-medium text-zinc-500"><tr>
           <th colSpan={2} className={`${DIVIDER} border-b border-zinc-200 px-4 py-2.5`}>{costType === "equipment" ? "Task" : `Task / ${label} cost`}</th>
-          <th className="border-b border-zinc-200 px-4 py-2.5 text-right">Amount</th>
+          <th className={`${DIVIDER} border-b border-zinc-200 px-4 py-2.5 text-right`}>Amount</th>
+          <th className="border-b border-zinc-200"><span className="sr-only">Actions</span></th>
         </tr></thead>
-        <tbody>{categories.map((category) => {
+        <tbody>{categories.filter(category => category.tasks.length > 0 || !category.isMilestone).map((category) => {
           const categoryOwners = owners.filter((owner) => category.tasks.length
             ? owner.kind === "task" && category.tasks.some((task) => task.id === owner.id)
             : owner.kind === "category" && owner.id === category.id);
+          const visibleOwners = categoryOwners.filter(owner => owner.kind !== "task" || !category.tasks.find(task => task.id === owner.id)?.isMilestone);
           return <Fragment key={category.id}>
             <tr
               ref={(el) => {
@@ -240,10 +235,10 @@ export function OtherBreakdownModalContent({
                   : ""
               }`}
             >
-              <td colSpan={2} className={`${DIVIDER} px-4 py-2.5`}><div className="flex items-center justify-between gap-2"><GroupLabel label={category.name} />{!category.tasks.length && addButton(categoryOwners[0])}</div></td>
-              <td className="px-4 py-2.5 text-right font-medium">{currency(categoryOwners.reduce((sum, owner) => sum + total(owner), 0))}</td>
+              <td colSpan={2} className={`${DIVIDER} px-4`}><div className="flex h-9 items-center justify-between gap-2"><GroupLabel label={category.name} />{!category.tasks.length && addButton(categoryOwners[0])}</div></td>
+              <td className={`${DIVIDER} h-9 px-4 text-right font-medium`}>{currency(categoryOwners.reduce((sum, owner) => sum + total(owner), 0))}</td><td />
             </tr>
-            {category.tasks.length ? categoryOwners.map((owner, index) => <Fragment key={owner.id}>
+            {category.tasks.length ? visibleOwners.map((owner, index) => <Fragment key={owner.id}>
               <tr
                 ref={(el) => {
                   if (el) rowRefs.current.set(`task-${owner.id}`, el);
@@ -255,11 +250,11 @@ export function OtherBreakdownModalContent({
                     : "bg-white"
                 }`}
               >
-                <td className={TREE_CELL}><TreeLine branch end={index === categoryOwners.length - 1} /></td>
-                <td className={`${SUBTASK_NAME_CELL} py-2.5`}><div className="flex items-center justify-between gap-2"><GroupLabel label={owner.name} />{addButton(owner)}</div></td>
-                <td className="px-4 py-2.5 text-right font-medium">{currency(total(owner))}</td>
+                <td className={TREE_CELL}><TreeLine branch end={index === visibleOwners.length - 1} /></td>
+                <td className={SUBTASK_NAME_CELL}><div className="flex h-9 items-center justify-between gap-2"><GroupLabel label={owner.name} />{addButton(owner)}</div></td>
+                <td className={`${DIVIDER} h-9 px-4 text-right font-medium`}>{currency(total(owner))}</td><td />
               </tr>
-              {detailRows(owner, true, index === categoryOwners.length - 1)}
+              {detailRows(owner, true, index === visibleOwners.length - 1)}
             </Fragment>) : categoryOwners.map((owner) => <Fragment key={owner.id}>{detailRows(owner, false)}</Fragment>)}
           </Fragment>;
         })}</tbody>

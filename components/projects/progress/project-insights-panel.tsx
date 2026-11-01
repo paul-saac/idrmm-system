@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { AiGenerationStatus } from "@/components/ui/ai-generation-status";
 import { generateProjectInsights } from "@/lib/project-insights/actions";
 import type { ProjectInsightDestination, ProjectInsightsResult } from "@/lib/project-insights/types";
 
-export function ProjectInsightsPanel({ projectId, onNavigate }: {
+export function ProjectInsightsPanel({ projectId }: {
   projectId:number;
   onNavigate:(destination:ProjectInsightDestination)=>void;
 }) {
@@ -27,11 +28,9 @@ export function ProjectInsightsPanel({ projectId, onNavigate }: {
     setRefresh(value=>value+1);
   }
 
-  if (loading) return <div role="status" className="space-y-6 text-sm text-zinc-300">
-    <p className="flex items-center gap-2"><RefreshCw aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />Reviewing saved project data…</p>
-    <div aria-hidden="true" className="space-y-6 motion-safe:animate-pulse">
-      {[0,1,2].map(index=><div key={index} className="space-y-3"><div className="h-4 w-2/5 rounded bg-white/10" /><div className="h-3 w-full rounded bg-white/10" /><div className="h-3 w-5/6 rounded bg-white/10" /><div className="h-3 w-3/4 rounded bg-white/10" /></div>)}
-    </div>
+  if (loading) return <div className="space-y-3 py-4">
+    <AiGenerationStatus label="AI is generating project insights" />
+    <p className="text-xs text-zinc-400">Reviewing saved project records.</p>
   </div>;
   if (result?.empty) return <p className="text-sm leading-relaxed text-zinc-300">Add project tasks and Planned costs to start receiving project insights. Insights will use the saved records available when you open this panel.</p>;
   if (result?.error || !result?.data) return <div className="space-y-4 text-sm text-zinc-200">
@@ -50,9 +49,9 @@ export function ProjectInsightsPanel({ projectId, onNavigate }: {
       <h3 className="text-base font-semibold text-zinc-100">Potential Risks and Recommendations</h3>
       {data.findings.length ? <ol className="mt-3 list-decimal space-y-5 pl-6">
         {data.findings.map(finding=><li key={finding.id}>
-          <button type="button" onClick={()=>onNavigate(finding.destination)} className="block w-full cursor-pointer rounded text-left transition-colors hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400" title="Open related project data">
+          <p>
             <strong className="text-zinc-100">{finding.title}:</strong> {finding.evidence}
-          </button>
+          </p>
           <p className="mt-2 pl-4"><strong className="text-zinc-100">Recommendation:</strong> {finding.recommendation}</p>
         </li>)}
       </ol> : <p className="mt-3 text-zinc-300">No specific concerns were identified in the saved records reviewed.</p>}

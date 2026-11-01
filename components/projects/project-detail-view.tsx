@@ -975,7 +975,7 @@ function ProjectDetailContent({
           variant="centered"
           size={importBomStep === "review" ? "large" : "default"}
           bare={importBomStep === "review"}
-          className={importBomStep === "review" ? "!h-[min(840px,94dvh)] !max-h-[94dvh]" : undefined}
+          className={importBomStep === "review" ? "!h-[min(840px,94dvh)] !max-h-[94dvh] !max-w-[min(1280px,calc(100vw-2rem))]" : undefined}
           aiBorder={importBomStep !== "review"}
         >
           <ImportBomModalContent

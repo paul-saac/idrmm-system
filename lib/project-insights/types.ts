@@ -5,6 +5,8 @@ export type InsightFact = {
   title: string;
   evidence: string;
   destination: ProjectInsightDestination;
+  /** Data-readiness actions are supplied by the server, not inferred by AI. */
+  recommendedAction?: string;
 };
 
 export type ProjectInsights = {

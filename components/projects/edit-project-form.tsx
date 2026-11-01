@@ -8,6 +8,7 @@ import type { ProjectRow } from "@/lib/projects/data";
 import type { AccountRow } from "@/lib/accounts/data";
 import { projectElsewhere } from "@/lib/accounts/availability";
 import { DatePicker } from "@/components/ui/date-picker";
+import { AllocatedBudgetInput } from "./allocated-budget-input";
 
 const initialState: ProjectActionState = {};
 
@@ -156,14 +157,9 @@ export function EditProjectForm({
         >
           Allocated budget
         </label>
-        <input
+        <AllocatedBudgetInput
           id="edit-allocatedBudget"
-          name="allocatedBudget"
-          type="number"
-          min="0"
-          step="0.01"
-          defaultValue={project.allocatedBudget ?? ""}
-          autoComplete="off"
+          defaultValue={project.allocatedBudget}
           className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
         />
       </div>

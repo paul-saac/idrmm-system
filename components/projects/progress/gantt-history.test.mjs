@@ -112,7 +112,7 @@ test('renaming a just-created task reserves its gesture order before the server 
   }
 });
 
-test('bar hues remain stable and varied; child progress contrasts, summaries white, standalone gray, milestones blue', () => {
+test('bar hues remain stable and varied; child progress contrasts, summaries white, standalone colored, milestones blue', () => {
   const { ganttBarColors } = load('./gantt-bar-colors.ts');
   const colors = Array.from({length:250},(_,i)=>ganttBarColors(i+1,'summary'));
   assert.equal(new Set(colors.map(row=>row.backgroundColor)).size,250);
@@ -121,7 +121,7 @@ test('bar hues remain stable and varied; child progress contrasts, summaries whi
     assert.equal(parent.backgroundColor,child.backgroundColor); assert.equal(parent.progressColor,'#ffffff');
     assert.notEqual(child.progressColor,child.backgroundColor);
     assert.deepEqual(ganttBarColors(id,'summary'),parent);
-    assert.equal(ganttBarColors(id,'standalone').backgroundColor,'#b8c2cc');
+    assert.equal(ganttBarColors(id,'standalone').backgroundColor,parent.backgroundColor);
     assert.equal(ganttBarColors(id,'milestone').backgroundColor,'#155dfc');
   }
 });

@@ -47,7 +47,7 @@ function fixture() {
   function FilterMenu() { return React.createElement('div'); }
   const shared = load('./breakdown-table-shared.tsx');
   const { ImportBomDraftReview } = load('./import-bom-draft-review.tsx', {
-    react: hooks, '@/lib/bom-import/estimate-resources': load('../../../lib/bom-import/estimate-resources.ts'), './breakdown-table-shared': shared, '@/components/ui/view-menu': { ViewMenu: FilterMenu },
+    react: hooks, './estimate-row-menu': load('./estimate-row-menu.tsx', { react: hooks }), '@/lib/bom-import/estimate-resources': load('../../../lib/bom-import/estimate-resources.ts'), './breakdown-table-shared': shared, '@/components/ui/view-menu': { ViewMenu: FilterMenu },
   });
   let tree;
   const render = () => {
@@ -135,7 +135,7 @@ test('clicking a table row does not activate the outline filter', () => {
 
 test('the table has only Task and Amount headers with material fields labeled inside the row', () => {
   const f = fixture(); f.select('Earthworks'); const html = f.html();
-  for (const label of ['Task', 'Amount']) assert.match(html, new RegExp(`>${label}</th>`));
+  for (const label of ['Item No.', 'Task', 'Amount']) assert.match(html, new RegExp(`>${label}</th>`));
   assert.doesNotMatch(html, /Unit cost \(₱\)|Amount \(₱\)/);
   assert.match(html, /colSpan="2"/i);
   assert.doesNotMatch(html, />(?:Material Quantity|Quantity|Unit|Unit Cost)<\/th>/);
@@ -195,7 +195,8 @@ test('footer additions work for standalone tasks and preserve their original amo
   assert.equal(f.data[0].otherCosts.length,1);
   assert.equal(f.data[0].tasks.length,0);
   assert.equal(f.data[0].amount,'5000');
-  assert.equal(f.find(node=>node.props.label==='Direct amount for Mobilization').props.value,'5000');
+  assert.doesNotMatch(f.html(),/Direct amount for Mobilization/);
+  assert.match(f.html(),/5,200/);
 });
 
 test('clicking a resource row targets its task for footer additions, even after selecting another task',()=>{
@@ -207,4 +208,58 @@ test('clicking a resource row targets its task for footer additions, even after 
   f.find(node=>node.type==='button' && node.props.children==='+ Add equipment').props.onClick();f.render();
   assert.equal(f.data[1].tasks[0].equipment.length,1);
   assert.equal(f.data[1].tasks[1].equipment,undefined);
+});
+
+test('task amounts are preserved without repeating the task name in an extra cost row',()=>{
+  const f=fixture();
+  f.data[1].tasks[0].amount='9600';f.render();f.select('Earthworks');
+  assert.match(f.html(),/9,800/);
+  assert.equal(f.data[1].tasks[0].amount,'9600');
+  assert.equal(descendants(f.render(),node=>node.props.label==='Direct amount for Excavation').length,0);
+  assert.equal(descendants(f.render(),node=>node.props.label==='Task name' && node.props.value==='Excavation').length,1);
+  const material=f.find(node=>node.props['data-resource-kind']==='material');
+  const fields=descendants(material,node=>node.type==='label');
+  assert.equal(descendants(fields[0],node=>node.type==='span' && node.props.children==='Material').length,1);
+  for(const field of fields.slice(1)) {
+    assert.match(field.props.className,/flex.*items-center/);
+    assert.equal(field.props.children[0].type,'span');
+    assert.match(field.props.children[0].props.className,/text-zinc-400/);
+    assert.equal(field.props.children[1].type.name,'Cell');
+  }
+});
+
+test('source item numbers stay editable and new resource rows have blank numbers and descriptive placeholders',()=>{
+  const f=fixture();
+  f.data[1].itemNo='IV.'; f.data[1].tasks[0].itemNo='IV-02';
+  f.data[1].tasks[0].materials[0].itemNo='02.01';f.render();f.select('Earthworks');
+  assert.equal(f.find(node=>node.props.label==='Item number for Earthworks').props.value,'IV.');
+  assert.equal(f.find(node=>node.props.label==='Item number for Excavation').props.value,'IV-02');
+  f.find(node=>node.props.label==='Item number for material Gravel').props.onChange('A.01');f.render();
+  assert.equal(f.data[1].tasks[0].materials[0].itemNo,'A.01');
+  for(const [button,kind,label,placeholder] of [
+    ['+ Add material','material','Material name','Material description'],
+    ['+ Add equipment','equipment','Equipment name','Equipment description'],
+    ['+ Add other','otherCosts','Other cost name','Other cost description'],
+  ]) {
+    f.find(node=>node.type==='button' && node.props.children===button).props.onClick();f.render();
+    const row=descendants(f.render(),node=>node.props['data-resource-kind']===kind).at(-1);
+    const field=descendants(row,node=>node.props.label===label)[0];
+    assert.equal(field.props.placeholder,placeholder);assert.equal(field.props.value,'');
+    const number=descendants(row,node=>node.props.label?.startsWith?.('Item number for'))[0];
+    assert.equal(number.props.value,'');
+    const cells=row.props.children.filter(child=>child?.type==='td');
+    assert.match(cells[2].props.className,/border-l-3 border-l-zinc-300/);
+    assert.doesNotMatch(cells[2].props.className,/pl-[46]/);
+  }
+});
+
+test('printed material amounts can be corrected without inventing quantities or rates',()=>{
+  const f=fixture();
+  const material=f.data[1].tasks[0].materials[0];
+  material.quantity='';material.unitCost='';material.amount='9600';f.render();f.select('Earthworks');
+  f.find(node=>node.props.label==='Amount for material Gravel').props.onChange('9800');f.render();
+  assert.equal(f.data[1].tasks[0].materials[0].amount,'9800');
+  assert.equal(f.data[1].tasks[0].materials[0].quantity,'');
+  assert.equal(f.data[1].tasks[0].materials[0].unitCost,'');
+  assert.match(f.html(),/9,800/);
 });

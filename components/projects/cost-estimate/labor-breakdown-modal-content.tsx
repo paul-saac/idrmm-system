@@ -87,7 +87,7 @@ function PercentCell({
   label: string;
 }) {
   return (
-    <div className="group/cell flex h-9 items-center justify-end gap-1 px-4 transition hover:not-focus-within:bg-zinc-900">
+    <div className="flex h-9 items-center justify-end gap-1 px-4 transition">
       <ProjectWriteInput
         type="text"
         inputMode="decimal"
@@ -95,7 +95,7 @@ function PercentCell({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label={label}
-        className="w-full min-w-0 bg-transparent text-right text-xs font-medium text-zinc-700 outline-none transition group-hover/cell:not-focus:text-white"
+        className="w-full min-w-0 bg-transparent text-right text-xs font-medium text-zinc-700 outline-none transition"
       />
       <span className="shrink-0 text-xs text-zinc-400">%</span>
     </div>
@@ -384,8 +384,9 @@ export function LaborBreakdownModalContent({
             </tr>
           </thead>
           <tbody>
-            {categories.map((category) => {
+            {categories.filter(category => category.tasks.length > 0 || !category.isMilestone).map((category) => {
               const tasks = category.tasks;
+              const visibleTasks = tasks.filter(task => !task.isMilestone);
               const hasTasks = tasks.length > 0;
               const categoryTotal = hasTasks
                 ? tasks.reduce((sum, t) => sum + liveTaskAmount(t), 0)
@@ -422,7 +423,7 @@ export function LaborBreakdownModalContent({
                     )}
                     <td className={AMOUNT_CELL}>{formatCurrency(categoryTotal)}</td>
                   </tr>
-                  {tasks.map((task, taskIndex) => (
+                  {visibleTasks.map((task, taskIndex) => (
                     <tr
                       key={task.id}
                       ref={(el) => {
@@ -436,7 +437,7 @@ export function LaborBreakdownModalContent({
                       }`}
                     >
                       <td className={TREE_CELL}>
-                        <TreeLine branch end={taskIndex === tasks.length - 1} />
+                        <TreeLine branch end={taskIndex === visibleTasks.length - 1} />
                       </td>
                       <td className={SUBTASK_NAME_CELL}>
                         <GroupLabel label={task.name} />
