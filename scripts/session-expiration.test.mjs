@@ -36,7 +36,11 @@ async function setup(existingHook = false) {
     grant select,insert,update,delete on all tables in schema public,storage to authenticated,service_role;
   `);
   if (existingHook) await db.exec("alter role authenticator set pgrst.db_pre_request='public.other_hook'");
-  try { await db.exec(sql); } catch (error) { await db.close(); throw error; }
+  try {
+    await db.exec(sql);
+    await db.exec('create table public.system_backup_state(singleton boolean primary key,maintenance boolean);insert into public.system_backup_state values(true,false);');
+    await db.exec(readFileSync(new URL('../supabase/migrations/0117_session_checks_during_backup.sql', import.meta.url), 'utf8'));
+  } catch (error) { await db.close(); throw error; }
   return db;
 }
 async function actor(db, user=1, session=11, role='authenticated', route='/rpc/app_session_state') {
@@ -144,5 +148,28 @@ test('migration refuses to overwrite an unrelated pre-request hook',async()=>{
     await db.exec('reset role');
     const setting=(await db.query("select unnest(setconfig) as value from pg_db_role_setting where setrole=(select oid from pg_roles where rolname='authenticator')")).rows;
     assert.ok(setting.some(s=>s.value==='pgrst.db_pre_request=public.enforce_app_session'));
+  }finally{await db.close();}
+});
+
+test('maintenance session checks do not write, extend expiration, or revive expired logins',async()=>{
+  const db=await setup();try {
+    await actor(db);await state(db);
+    await db.exec('reset role');
+    await db.exec(`create function public.test_backup_guard() returns trigger language plpgsql as $$begin
+      if (select maintenance from public.system_backup_state where singleton) then raise exception 'maintenance write blocked';end if;
+      return new;end$$;
+      create trigger a_system_backup_write_guard before insert or update or delete on public.app_user_sessions for each row execute function public.test_backup_guard();
+      update public.system_backup_state set maintenance=true;`);
+    const before=(await db.query('select last_activity_at from public.app_user_sessions')).rows[0].last_activity_at;
+    await actor(db);assert.equal((await state(db,true)).active,true);
+    await db.exec('reset role');
+    assert.deepEqual((await db.query('select last_activity_at from public.app_user_sessions')).rows[0].last_activity_at,before);
+    await assert.rejects(db.exec('update public.app_user_sessions set last_activity_at=now()'),/maintenance write blocked/);
+    await actor(db,2,12);assert.equal((await state(db,true)).active,true);
+    await db.exec('reset role');assert.equal((await db.query('select count(*)::int as n from public.app_user_sessions')).rows[0].n,1);
+    await db.exec('update public.system_backup_state set maintenance=false');
+    await expire(db);await db.exec('update public.system_backup_state set maintenance=true');
+    await actor(db);assert.equal((await state(db,true)).reason,'idle');
+    await actor(db,2,12);assert.equal((await state(db,false,true)).reason,'signed_out');
   }finally{await db.close();}
 });
