@@ -4,13 +4,13 @@ export type ScheduleRow = { kind: "category" | "task"; id: number };
 export type SuccessorOption = ScheduleRow & { name: string };
 export function scheduleRowKey(row: ScheduleRow): string { return `${row.kind}:${row.id}`; }
 
-export function projectSuccessorOptions(categories: CostCategory[], source: ScheduleRow, milestone: boolean): SuccessorOption[] {
-  const parent = categories.find(category => category.tasks.some(task => source.kind === "task" && task.id === source.id));
+export function projectSuccessorOptions(categories: CostCategory[], source: ScheduleRow, milestone?: boolean): SuccessorOption[] {
   return categories.flatMap<SuccessorOption>(category => [
     ...(milestone || (source.kind === "category" && category.tasks.length === 0)
       ? [{ kind: "category" as const, id: category.id, name: category.name }] : []),
-    ...(milestone || (source.kind === "task" && category.id === parent?.id)
-      ? category.tasks.map(task => ({ kind: "task" as const, id: task.id, name: milestone ? `${category.name} / ${task.name}` : task.name })) : []),
+    ...(source.kind === "category" && category.id === source.id ? [] : category.tasks
+      .filter(task => !(source.kind === "task" && task.id === source.id))
+      .map(task => ({ kind: "task" as const, id: task.id, name: `${category.name} / ${task.name}` }))),
   ]).filter(row => row.id > 0 && !(row.kind === source.kind && row.id === source.id));
 }
 
