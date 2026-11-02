@@ -486,7 +486,7 @@ export async function extractBomFromFile(
       { role: "user", content: userContent },
     ],
     temperature: 0.1,
-    max_completion_tokens: 8_192,
+    max_completion_tokens: provider.maxOutputTokens,
   };
 
   const startedAt = Date.now();
