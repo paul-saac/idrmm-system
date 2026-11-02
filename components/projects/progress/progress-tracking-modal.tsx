@@ -1,5 +1,7 @@
 "use client";
 
+import { useProgressLogSync } from "./progress-log-sync";
+import type { OverrideLog } from "@/lib/progress-logs/types";
 import { useMemo } from "react";
 import { Modal } from "@/components/ui/modal";
 import { usePortal } from "@/components/portal/portal-context";
@@ -72,7 +74,8 @@ export function ProgressTrackingModal({
   categoryWorkerAssignments?: CategoryWorkerAssignments;
   onClose: () => void;
 }) {
-  const { isAdmin } = usePortal();
+  const { isAdmin, user } = usePortal();
+  const logSync = useProgressLogSync();
   const materialPrices = useMemo(() => {
     const byKey = new Map<string, { name: string; unit: string | null; unitCost: number }>();
     for (const category of categories) {
@@ -180,13 +183,34 @@ export function ProgressTrackingModal({
           highlightLatest={target.highlightLatest ?? false}
           highlightEntryDate={target.highlightEntryDate}
           overrideHistory={overrideHistory[itemKey] ?? []}
-          onSave={(input) => target.kind === "task"
-            ? recordTaskProgress(target.task.id, projectId, input)
-            : recordCategoryProgress(target.category.id, projectId, input)}
-          onDeleteOverride={isAdmin && !readOnly ? (entryDate) => target.kind === "task"
-            ? deleteTaskProgressEntry(target.task.id, projectId, entryDate)
-            : deleteCategoryProgressEntry(target.category.id, projectId, entryDate)
-            : undefined}
+          backgroundSync={!!logSync}
+          onSave={async (input) => {
+            const action = () => target.kind === "task" ? recordTaskProgress(target.task.id, projectId, input) : recordCategoryProgress(target.category.id, projectId, input);
+            if (!logSync) return action();
+            const date = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+            const attendance = input.attendance.map(mark => {
+              const worker = workerById.get(mark.workerId);
+              return { workerId: mark.workerId, name: worker?.fullName ?? "Team member", hours: mark.hours, rate: worker?.hourlyRate ?? 0 };
+            });
+            const sum = (rows: { amount: number }[] = []) => rows.reduce((total, row) => total + row.amount, 0);
+            const round = (amount: number) => Math.round(amount * 100) / 100;
+            const log: OverrideLog = {
+              id: -Date.now(), action: "saved", entryDate: date, createdAt: new Date().toISOString(),
+              savedByName: user.name, savedByRole: user.roleLabel, quantityCompleted: input.quantityCompletedToday,
+              costs: { material: 0, labor: attendance.length ? round(attendance.reduce((total, mark) => total + mark.hours * mark.rate, 0)) : input.costs.labor,
+                equipment: round(input.costs.equipment + sum(input.equipmentCostsUsed) + sum(input.unplannedEquipmentCosts)),
+                other: round(input.costs.other + sum(input.otherCostsUsed) + sum(input.unplannedOtherCosts)) },
+              materialsUsed: [...input.materialsUsed, ...input.unplannedMaterials], attendance,
+              equipmentCosts: [...(input.equipmentCostsUsed ?? []), ...(input.unplannedEquipmentCosts ?? []).map(row => ({ ...row, unplanned: true }))],
+              otherCosts: [...(input.otherCostsUsed ?? []), ...(input.unplannedOtherCosts ?? []).map(row => ({ ...row, unplanned: true }))],
+            };
+            return logSync.run({ kind: target.kind, id: item.id }, date, log, action) ? { success: true } : { error: "This task is still saving. Please wait and try again." };
+          }}
+          onDeleteOverride={isAdmin && !readOnly ? async (entryDate) => {
+            const action = () => target.kind === "task" ? deleteTaskProgressEntry(target.task.id, projectId, entryDate) : deleteCategoryProgressEntry(target.category.id, projectId, entryDate);
+            if (!logSync) return action();
+            return logSync.run({ kind: target.kind, id: item.id }, entryDate, null, action) ? { success: true } : { error: "This task is still saving. Please wait and try again." };
+          } : undefined}
           onClose={onClose}
         />
       )}

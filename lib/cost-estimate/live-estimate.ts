@@ -10,16 +10,20 @@ export type SavedEstimateProgress = {
 };
 
 export function withSavedEstimateProgress(categories: CostCategory[], progress: SavedEstimateProgress): CostCategory[] {
-  const percent = (row: CostCategory | CostTask, kind: "task" | "category") => computeProgressBreakdown({
+  const standing = (row: CostCategory | CostTask, kind: "task" | "category") => computeProgressBreakdown({
     plannedStartDate: row.plannedStartDate, plannedEndDate: row.plannedEndDate,
     estimatedQuantity: row.estimatedQuantity, plannedMaterials: groupPlannedMaterials(row.materialAssignments),
     plannedCosts: "laborEstimate" in row
       ? { labor: row.laborEstimate, material: row.materialEstimate, equipment: row.equipmentEstimate, other: row.otherCostEstimate }
       : { labor: row.categoryLaborEstimate, material: row.categoryMaterialEstimate, equipment: row.categoryEquipmentEstimate, other: row.categoryOtherEstimate },
     anchor: progress[kind][row.id] ?? EMPTY_PROGRESS_ANCHOR, workingDays: progress.workingDays, holidays: progress.holidays, today: new Date(),
-  }).percentComplete;
-  return categories.map(category => ({ ...category, percentComplete: percent(category, "category"),
-    tasks: category.tasks.map(task => ({ ...task, percentComplete: percent(task, "task") })),
+  });
+  const actual = (row: CostCategory | CostTask, kind: "task" | "category") => {
+    const value = standing(row, kind);
+    return { percentComplete: value.percentComplete, costsToDate: value.costsToDate, materialUsageToDate: value.materialUsageToDate };
+  };
+  return categories.map(category => ({ ...category, ...actual(category, "category"),
+    tasks: category.tasks.map(task => ({ ...task, ...actual(task, "task") })),
   }));
 }
 

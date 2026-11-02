@@ -32,7 +32,8 @@ import { applyScheduleModalEdits, scheduleModalEdit, unconfirmedScheduleModalEdi
 import { useEstimateSync } from "@/components/projects/cost-estimate/estimate-sync-context";
 import { applyEstimateChanges, withSavedEstimateProgress, type EstimateChange } from "@/lib/cost-estimate/live-estimate";
 import { computeWeights } from "@/lib/cost-estimate/weights";
-import { moveScheduleRow } from "@/lib/cost-estimate/reorder-actions";
+import { canNest, applyPendingNests, unconfirmedNests, type NestMove, type PendingNest, canOutdent, applyPendingOutdents, unconfirmedOutdents, type OutdentMove, type PendingOutdent } from "@/lib/cost-estimate/nesting";
+import { moveScheduleRow, nestScheduleRow, outdentScheduleRow } from "@/lib/cost-estimate/reorder-actions";
 import { applyPendingScheduleMoves, scheduleOrderForMove, unconfirmedScheduleMoves, type PendingScheduleMove, type ScheduleRowMove } from "@/lib/cost-estimate/schedule-order";
 import { AssignWorkersModalContent } from "@/components/projects/progress/assign-workers-modal-content";
 import { EquipmentTrackingPanel } from "@/components/projects/equipment/equipment-tracking-panel";
@@ -838,8 +839,9 @@ export function GanttChartView({
   const [previewHistory] = useState(() => createGanttPreviewHistory(categories));
   const [historyPreview, setHistoryPreview] = useState<CostCategory[] | null>(null);
   const historyPreviewRef = useRef(historyPreview);
-  historyPreviewRef.current = historyPreview;
+  useLayoutEffect(() => { historyPreviewRef.current = historyPreview; }, [historyPreview]);
   const gestureVersion = useRef(0);
+  const groupDragCleanup = useRef<(() => void) | null>(null);
   const creationSequence = useRef(0);
   const clientRowKeys = useRef(new Map<string, string>());
   function clientRowKey(kind: string, id: number) {
@@ -848,7 +850,7 @@ export function GanttChartView({
   function refreshAfterSaves() { operationQueue.whenIdle(() => router.refresh()); }
   const historyQueued = useRef(0);
   const categoriesRef = useRef(categories);
-  categoriesRef.current = categories;
+  useLayoutEffect(() => { categoriesRef.current = categories; }, [categories]);
   const estimateSync = useEstimateSync();
   const sharedCostChanges = estimateSync?.changes ?? NO_ESTIMATE_CHANGES;
   const savingSharedCost = sharedCostChanges.some(change => change.pending);
@@ -974,7 +976,14 @@ export function GanttChartView({
   const activeRowMoves = useMemo(() => unconfirmedScheduleMoves(activeCategoriesOverride ?? categories, rowMoves),
     [categories, activeCategoriesOverride, rowMoves]);
   if (activeRowMoves !== rowMoves) setRowMoves(activeRowMoves);
-  const savingRowOrder = activeRowMoves.some(entry => entry.pending);
+  const [nests, setNests] = useState<PendingNest[]>([]);
+  const activeNests = useMemo(() => unconfirmedNests(activeCategoriesOverride ?? categories, nests), [categories, activeCategoriesOverride, nests]);
+  if (activeNests.length !== nests.length) setNests(activeNests);
+  const [outdents, setOutdents] = useState<PendingOutdent[]>([]);
+  const activeOutdents = useMemo(() => unconfirmedOutdents(activeCategoriesOverride ?? categories, outdents), [categories, activeCategoriesOverride, outdents]);
+  if (activeOutdents.length !== outdents.length) setOutdents(activeOutdents);
+  const savingHierarchy = activeNests.length > 0 || activeOutdents.length > 0;
+  const savingRowOrder = activeRowMoves.some(entry => entry.pending) || savingHierarchy;
   // Keep rows hidden through unrelated refreshes while saving, and until
   // server data confirms their absence. Then discard the mask so Undo can
   // restore those IDs normally.
@@ -1024,8 +1033,10 @@ export function GanttChartView({
       }));
     }
     if (activeRowMoves.length > 0) result = applyPendingScheduleMoves(result, activeRowMoves);
+    if (activeNests.length) result = applyPendingNests(result, activeNests);
+    if (activeOutdents.length) result = applyPendingOutdents(result, activeOutdents);
     return result;
-  }, [categories, activeCategoriesOverride, activeNewPhases, activeNewTasks, activeDeletions, activeModalEdits, activeRowMoves, historyPreview]);
+  }, [categories, activeCategoriesOverride, activeNewPhases, activeNewTasks, activeDeletions, activeModalEdits, activeRowMoves, activeNests, activeOutdents, historyPreview]);
   const categoriesForDisplay = useMemo(() => {
     const updated = withSavedEstimateProgress(applyEstimateChanges(localCategoriesForDisplay, sharedCostChanges), {
       task: taskProgressToday, category: categoryProgressToday, workingDays, holidays,
@@ -1278,13 +1289,13 @@ export function GanttChartView({
   const [isUndoRedoPending, setIsUndoRedoPending] = useState(false);
 
   function clearRowDrag() {
-    if (dropMarker.current) delete dropMarker.current.dataset.ganttDrop;
+    if (dropMarker.current) { delete dropMarker.current.dataset.ganttDrop; delete dropMarker.current.dataset.ganttNest; }
     dropMarker.current = null;
     draggedRow.current = null;
   }
 
   function handleRowMove(move: ScheduleRowMove) {
-    if (!canEdit || deleting || isUndoRedoPending || move.id <= 0 || move.targetId <= 0) return;
+    if (!canEdit || deleting || isUndoRedoPending || (activeNests.length > 0 || activeOutdents.length > 0) || move.id <= 0 || move.targetId <= 0) return;
     if (!scheduleOrderForMove(categoriesForDisplay, move)) return;
     const token = ++rowMoveSequence.current;
     setRowMoveError(null);
@@ -1308,6 +1319,55 @@ export function GanttChartView({
     });
   }
 
+  function handleNest(move: NestMove) {
+    if (!canEdit || deleting || isUndoRedoPending || savingRowOrder || !canNest(categoriesForDisplay, move)) return;
+    const token = ++rowMoveSequence.current;
+    const taskId = move.kind === "task" ? move.id : --creationSequence.current;
+    setRowMoveError(null);
+    setNests(previous => [...previous, { token, move, taskId, pending: true }]);
+    setCollapsedPhaseIds(previous => { const next = new Set(previous); next.delete(phaseRowId(move.categoryId)); return next; });
+    const creation = queueEdit(async () => {
+      try {
+        const result = await nestScheduleRow(projectId, move);
+        if (result.error || !result.taskId) throw new Error(result.error ?? "Could not move the task.");
+        if (move.kind === "category") settleCreatedRow("task", taskId, result.taskId);
+        markHistoryEdit();
+        setNests(previous => previous.map(entry => entry.token === token ? { ...entry, taskId: result.taskId!, pending: false } : entry));
+        return result.taskId;
+      } catch (error) {
+        previewHistory.invalidate(); setHistoryPreview(null);
+        setNests(previous => previous.filter(entry => entry.token !== token));
+        setRowMoveError(error instanceof Error ? error.message : "Could not move the task.");
+        return undefined;
+      } finally { refreshAfterSaves(); }
+    });
+    if (move.kind === "category") pendingNameCreations.current.set(`task:${taskId}`, creation);
+  }
+
+  function handleOutdent(move: OutdentMove) {
+    if (!canEdit || deleting || isUndoRedoPending || savingRowOrder || !canOutdent(categoriesForDisplay, move)) return;
+    const token = ++rowMoveSequence.current;
+    const categoryId = --creationSequence.current;
+    setRowMoveError(null);
+    setOutdents(previous => [...previous, { token, move, categoryId, pending: true }]);
+    const creation = queueEdit(async () => {
+      try {
+        const result = await outdentScheduleRow(projectId, move);
+        if (result.error || !result.categoryId) throw new Error(result.error ?? "Could not outdent the task.");
+        settleCreatedRow("category", categoryId, result.categoryId);
+        markHistoryEdit();
+        setOutdents(previous => previous.map(entry => entry.token === token ? { ...entry, categoryId: result.categoryId!, pending: false } : entry));
+        return result.categoryId;
+      } catch (error) {
+        previewHistory.invalidate(); setHistoryPreview(null);
+        setOutdents(previous => previous.filter(entry => entry.token !== token));
+        setRowMoveError(error instanceof Error ? error.message : "Could not outdent the task.");
+        return undefined;
+      } finally { refreshAfterSaves(); }
+    });
+    pendingNameCreations.current.set(`category:${categoryId}`, creation);
+  }
+
   // Initialize before queued mutations, including edits made during first load.
   const [historyReady, setHistoryReady] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
@@ -1328,13 +1388,13 @@ export function GanttChartView({
   }, []);
 
   function handleUndo() {
-    if (!canEdit || savingSharedCost) return;
+    if (!canEdit || savingSharedCost || savingHierarchy) return;
     if ((!historyReady && !previewHistory.canUndo) || (!previewHistory.canUndo && (previewHistory.complete || !effectiveCanUndo))) return;
     return handleHistory("undo");
   }
 
   function handleRedo() {
-    if (!canEdit || savingSharedCost) return;
+    if (!canEdit || savingSharedCost || savingHierarchy) return;
     if ((!historyReady && !previewHistory.canRedo) || (!previewHistory.canRedo && (previewHistory.complete || !effectiveCanRedo))) return;
     return handleHistory("redo");
   }
@@ -1431,6 +1491,7 @@ export function GanttChartView({
     savingModalEdit,
     savingRowOrder,
     savingSharedCost,
+    savingHierarchy,
     categoryModal,
     taskModal,
   ]);
@@ -2304,19 +2365,35 @@ export function GanttChartView({
   // request — a zero-duration marker has nothing to track progress
   // against. Filler rows are excluded too (never real tasks at all).
   //
-  // Double-clicking a bar to open its Edit modal used to live here too
-  // (debounced by hand against this single-click handler, since
-  // gantt-task-react wires onClick/onDoubleClick straight to the DOM's
-  // own click/dblclick with no debounce of its own) — removed per an
-  // explicit request; Edit is still reachable from the row's own edit
-  // button in the task list, just not from the chart bar itself anymore.
-  // Deliberately positioned here, after visibleTasks rather than up near
-  // categoryById/taskById (which it reads from) — the React Compiler
-  // failed to preserve effectiveTasks' own memoization with this placed
-  // any earlier, confirmed directly by bisecting hook position, the
-  // exact same hazard usePendingOverrides' own doc comment describes for
-  // the same reason.
+  // Defer single-click progress just long enough to distinguish double-click Edit.
+  // Neither drag feedback nor background saving waits for this timer.
+
+  function cancelBarClick() {
+    if (barClickTimer.current !== null) clearTimeout(barClickTimer.current);
+    barClickTimer.current = null;
+  }
+  function handleBarDoubleClick(row: GanttTask) {
+    cancelBarClick();
+    if (!canEdit || barJustDraggedRef.current || row.id.startsWith(FILLER_ROW_ID_PREFIX)) return;
+    setProgressModal(null);
+    const task = taskById.get(row.id);
+    if (task && task.id > 0) {
+      const override = pendingScheduleOverrides.get(task.id);
+      setTaskModal(override ? { ...task, plannedStartDate: override.start, plannedEndDate: override.end } : task);
+      return;
+    }
+    const category = categoryById.get(row.id);
+    if (category && category.id > 0) setCategoryModal(category);
+  }
   function handleBarClick(row: GanttTask) {
+    cancelBarClick();
+    if (barJustDraggedRef.current) return;
+    barClickTimer.current = setTimeout(() => {
+      barClickTimer.current = null;
+      openBarProgress(row);
+    }, 300);
+  }
+  function openBarProgress(row: GanttTask) {
     // Suppress the click that follows a real bar drag (move/resize/
     // progress) — see barJustDraggedRef's own doc comment above for why
     // this has to exist at all.
@@ -2469,15 +2546,14 @@ export function GanttChartView({
   // onClick straight to that same native click event with no drag
   // awareness of its own).
   const barJustDraggedRef = useRef(false);
+  const nativeBarDragMoved = useRef(false);
+  const lastBarGestureWasDrag = useRef(false);
+  const barClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (barClickTimer.current !== null) clearTimeout(barClickTimer.current); }, []);
   const [selectedBarIds, setSelectedBarIds] = useState<ReadonlySet<string>>(() => new Set());
   const [savingBarGroup, setSavingBarGroup] = useState(false);
   const [barGroupError, setBarGroupError] = useState<string | null>(null);
-  const groupDragCleanup = useRef<(() => void) | null>(null);
-  const [barMoveQueue] = useState(() => createScheduleMoveQueue(async changes => {
-    const result = await moveSelectedSchedules(projectId, changes);
-    if (!result.error) markHistoryEdit();
-    return result;
-  }, operation => queueEdit(operation)));
+  const barMoveQueue = useRef<ReturnType<typeof createScheduleMoveQueue> | null>(null);
   useEffect(() => () => groupDragCleanup.current?.(), []);
   useEffect(() => {
     const root = chartWrapRef.current;
@@ -2513,7 +2589,14 @@ export function GanttChartView({
     }
     updateScheduleOverrides(tasks);
     updateCategoryScheduleOverrides(categories);
-    return barMoveQueue.enqueue(changes, {
+    // Initialize at the gesture boundary, not during rendering: queue callbacks
+    // access the latest history refs only when an operation actually runs.
+    if (!barMoveQueue.current) barMoveQueue.current = createScheduleMoveQueue(async queuedChanges => {
+      const result = await moveSelectedSchedules(projectId, queuedChanges);
+      if (!result.error) markHistoryEdit();
+      return result;
+    }, operation => queueEdit(operation));
+    return barMoveQueue.current.enqueue(changes, {
       onBusy: setSavingBarGroup,
       onRollback(positions, message) {
         previewHistory.invalidate(); setHistoryPreview(null);
@@ -2535,6 +2618,7 @@ export function GanttChartView({
   function handleBarSelectionMouseDown(event: React.MouseEvent<HTMLDivElement>) {
     if (!canEdit || event.button !== 0 || !(event.target instanceof Element)) return;
     const bar = event.target.closest<SVGGElement>("[data-gantt-row-id]");
+    if (bar) cancelBarClick();
     if (!bar) {
       if (selectedBarIds.size > 0 && !event.shiftKey && event.target.closest("svg") && !event.target.closest("button")) setSelectedBarIds(new Set());
       return;
@@ -2542,11 +2626,24 @@ export function GanttChartView({
     const id = bar.dataset.ganttRowId;
     const row = effectiveTasks.find(item => item.id === id);
     if (!id || !row || row.isDisabled || (!taskById.has(id) && !categoryById.has(id))) return;
+    // A second press after a click belongs to Edit. A second press after a
+    // completed drag may start the next drag immediately, even on the same bar.
+    const followsDrag = lastBarGestureWasDrag.current;
+    lastBarGestureWasDrag.current = false;
+    if (event.detail > 1 && !followsDrag) {
+      groupDragCleanup.current?.();
+      event.preventDefault(); event.stopPropagation();
+      return;
+    }
+    // Keep native edge resizing; bar-body moves all use our nonblocking queue.
+    if (event.target.closest(".handleGroup")) return;
     const wasSelected = selectedBarIds.has(id);
-    if (!event.shiftKey && !wasSelected) { if (selectedBarIds.size > 0) setSelectedBarIds(new Set()); return; }
+    if (row.type === "project" && !event.shiftKey && !wasSelected) return;
     event.preventDefault(); event.stopPropagation();
-    const selected = new Set(selectedBarIds); selected.add(id);
-    if (!wasSelected) setSelectedBarIds(selected);
+    const selected = event.shiftKey || wasSelected ? new Set(selectedBarIds) : new Set<string>();
+    selected.add(id);
+    if (event.shiftKey && !wasSelected) setSelectedBarIds(selected);
+    else if (!event.shiftKey && !wasSelected && selectedBarIds.size > 0) setSelectedBarIds(new Set());
     const previewIds = new Set(selected);
     for (const item of effectiveTasks) if (item.project && selected.has(item.project)) previewIds.add(item.id);
     const svg = bar.ownerSVGElement;
@@ -2617,6 +2714,7 @@ export function GanttChartView({
     function up(e: MouseEvent) {
       pixels = displacement(e.clientX);
       moved ||= Math.abs(pixels) > 3;
+      lastBarGestureWasDrag.current = moved;
       const delta = barDragDays(pixels, effectiveColumnWidth, view, first);
       cleanup();
       if (!moved) {
@@ -2654,11 +2752,18 @@ export function GanttChartView({
     const svg = e.target.closest("svg");
     if (!svg || svg.closest("button")) return;
 
+    cancelBarClick();
+    nativeBarDragMoved.current = false;
     const startX = e.clientX;
     const startY = e.clientY;
+    function onMove(ev: MouseEvent) {
+      if (Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3) nativeBarDragMoved.current = true;
+    }
 
     function onUp(ev: MouseEvent) {
       window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("mousemove", onMove);
+      onMove(ev);
 
       // Real mouse movement between this mousedown and its own mouseup
       // — i.e. an actual move/resize/progress drag, not a plain click
@@ -2668,6 +2773,7 @@ export function GanttChartView({
       // still jitters a pixel or two between press and release.
       const moved =
         Math.abs(ev.clientX - startX) > 3 || Math.abs(ev.clientY - startY) > 3;
+      lastBarGestureWasDrag.current = moved;
       if (moved) {
         barJustDraggedRef.current = true;
         // Cleared on the next tick, not synchronously here — the
@@ -2683,6 +2789,7 @@ export function GanttChartView({
         }, 0);
       }
     }
+    window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }
 
@@ -2778,31 +2885,22 @@ export function GanttChartView({
     return true;
   }
 
-  async function persistDrag(task: GanttTask): Promise<boolean> {
-    if (task.type === "project") return false; // cheap insurance — see doc comment; a category WITH tasks stays type: "project" and never reaches here
-    // A task-less category's own bar — dragged the same way a real
-    // task's is (see this component's own doc comment above), but
-    // persisted through the category-specific action, one level up
-    // from persistTaskDates below.
-    const category = categoryById.get(task.id);
-    if (category) {
-      return persistCategoryDates(
-        category.id,
-        toIsoDate(task.start),
-        toIsoDate(trueEndDate(task))
-      );
-    }
-    if (!taskById.has(task.id)) return false; // defensive — every real dragged row should already be in taskById or categoryById
-    // A milestone only moves (no resize handles on a zero-duration
-    // diamond), so task.start/task.end are still equal after a drag —
-    // both get persisted as the same planned_start_date/planned_end_date.
-    // trueEndDate is a no-op for a milestone (its own end was never
-    // shifted to begin with), so this is safe for both row kinds.
-    return persistTaskDates(
-      Number(task.id),
-      toIsoDate(task.start),
-      toIsoDate(trueEndDate(task))
-    );
+  function persistDrag(task: GanttTask): boolean {
+    if (!canEdit || !nativeBarDragMoved.current || task.type === "project" || task.id.startsWith(FILLER_ROW_ID_PREFIX)) return false;
+    const categoryEntry = categoryById.get(task.id);
+    const kind = categoryEntry ? "category" : "task";
+    const item = categoryEntry ? categoriesForDisplay.find(row => row.id === categoryEntry.id) : taskById.get(task.id);
+    if (!item || item.id <= 0) return false;
+    const previous = categoryEntry ? pendingCategoryScheduleOverrides.get(item.id) : pendingScheduleOverrides.get(item.id);
+    const start = toIsoDate(task.start);
+    const end = toIsoDate(trueEndDate(task));
+    cancelBarClick();
+    // Do not return the save Promise to gantt-task-react: its completion handler
+    // would otherwise hold this drag open until the network save finishes.
+    flushSync(() => { void persistBarGroup([{ kind, id: item.id, start, end: end < start ? start : end,
+      previousStart: previous?.start ?? item.plannedStartDate,
+      previousEnd: previous?.end ?? item.plannedEndDate }]); });
+    return true;
   }
 
   // Same idea as persistTaskDates above, one level up — a category's
@@ -3353,40 +3451,76 @@ export function GanttChartView({
           const rowAccent = isFiller ? undefined : category
             ? ganttBarColors(category.id, isGroup ? "summary" : isMilestoneRow ? "milestone" : "standalone").backgroundColor
             : task ? ganttBarColors(task.categoryId, "subtask").backgroundColor : undefined;
-          const canReorder = canEdit && !isFiller && !deleting && !isUndoRedoPending;
-          function allowedDrop() {
+          const canReorder = canEdit && !isFiller && !deleting && !isUndoRedoPending && activeNests.length === 0 && activeOutdents.length === 0;
+          function dropAction(event: React.DragEvent<HTMLDivElement>) {
             const source = draggedRow.current;
-            return canReorder && source && source.kind === rowKind && source.id !== savedRowId &&
-              (rowKind === "category" || source.categoryId === parentId) ? source : null;
+            if (!canReorder || !source || source.id <= 0) return null;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const after = event.clientY >= bounds.top + bounds.height / 2;
+            if (source.kind === "task" && event.clientX < bounds.left + 44) {
+              if (savingRowOrder) return null;
+              const outdent: OutdentMove = { id: source.id, targetCategoryId: rowKind === "category" ? savedRowId : parentId!, after: rowKind === "task" || after };
+              return canOutdent(categoriesForDisplay, outdent) ? { source, after: outdent.after, nest: null, outdent } : null;
+            }
+            const sourceCategory = source.kind === "category" ? categoriesForDisplay.find(item => item.id === source.id) : null;
+            const leaf = source.kind === "task" || sourceCategory?.tasks.length === 0;
+            const nesting = leaf && (rowKind === "category" ? source.id !== savedRowId || source.kind !== rowKind : source.categoryId !== parentId || source.kind === "category") &&
+              (source.kind === "task" || rowKind === "task" || event.clientX >= bounds.left + 44);
+            if (nesting) {
+              if (savingRowOrder) return null;
+              const targetCategoryId = rowKind === "category" ? savedRowId : parentId;
+              const targetCategory = categoriesForDisplay.find(item => item.id === targetCategoryId);
+              if (!targetCategory || targetCategory.isMilestone || source.kind === "category" && source.id === targetCategory.id) return null;
+              const siblings = targetCategory.tasks.filter(item => source.kind !== "task" || item.id !== source.id);
+              const index = siblings.findIndex(item => item.id === savedRowId);
+              const beforeTaskId = rowKind === "category" ? siblings[0]?.id ?? null : after ? siblings[index + 1]?.id ?? null : savedRowId;
+              const nest: NestMove = { kind: source.kind, id: source.id, categoryId: targetCategory.id, beforeTaskId };
+              return canNest(categoriesForDisplay, nest) ? { source, after: rowKind === "category" ? true : after, nest, outdent: null } : null;
+            }
+            if (source.kind !== rowKind || source.id === savedRowId || rowKind === "task" && source.categoryId !== parentId) return null;
+            return { source, after, nest: null, outdent: null };
           }
-
           return (
             <div
               key={category || task ? clientRowKey(rowKind, savedRowId) : row.id}
               data-gantt-order-row={row.id}
               onDragOver={(event) => {
-                if (!allowedDrop()) return;
+                const drop = dropAction(event);
+                if (!drop) return;
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
-                const element = event.currentTarget;
-                const bounds = element.getBoundingClientRect();
-                if (dropMarker.current && dropMarker.current !== element) delete dropMarker.current.dataset.ganttDrop;
-                element.dataset.ganttDrop = event.clientY >= bounds.top + bounds.height / 2 ? "after" : "before";
-                dropMarker.current = element;
+                let marker = event.currentTarget;
+                if (drop.outdent) {
+                  const group = categoriesForDisplay.find(item => item.id === drop.outdent.targetCategoryId);
+                  const groupIds = new Set([phaseRowId(drop.outdent.targetCategoryId), ...(group?.tasks.map(item => String(item.id)) ?? [])]);
+                  const boundary = tableRows.filter(item => groupIds.has(item.id));
+                  const markerId = drop.outdent.after ? boundary.at(-1)?.id : boundary[0]?.id;
+                  marker = Array.from(event.currentTarget.parentElement?.children ?? []).find(item => (item as HTMLElement).dataset.ganttOrderRow === markerId) as HTMLDivElement ?? marker;
+                }
+                if (dropMarker.current && dropMarker.current !== marker) { delete dropMarker.current.dataset.ganttDrop; delete dropMarker.current.dataset.ganttNest; }
+                dropMarker.current = marker;
+                marker.dataset.ganttDrop = drop.after ? "after" : "before";
+                marker.dataset.ganttNest = drop.nest ? "true" : "false";
               }}
               onDragLeave={(event) => {
                 if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                  delete event.currentTarget.dataset.ganttDrop;
+                  if (dropMarker.current) {
+                    delete dropMarker.current.dataset.ganttDrop;
+                    delete dropMarker.current.dataset.ganttNest;
+                    dropMarker.current = null;
+                  }
                 }
               }}
               onDrop={(event) => {
-                const source = allowedDrop();
-                if (!source) { clearRowDrag(); return; }
+                const drop = dropAction(event);
+                if (!drop) { clearRowDrag(); return; }
                 event.preventDefault();
-                const bounds = event.currentTarget.getBoundingClientRect();
-                const after = event.clientY >= bounds.top + bounds.height / 2;
                 clearRowDrag();
-                handleRowMove({ kind: source.kind, id: source.id, targetId: savedRowId, after });
+                flushSync(() => {
+                  if (drop.outdent) handleOutdent(drop.outdent);
+                  else if (drop.nest) handleNest(drop.nest);
+                  else handleRowMove({ kind: drop.source.kind, id: drop.source.id, targetId: savedRowId, after: drop.after });
+                });
               }}
               style={{ height: ROW_HEIGHT }}
               // Phase rows get a faint darker fill so the hierarchy reads
@@ -3405,13 +3539,15 @@ export function GanttChartView({
                 className="flex h-full shrink-0 items-center gap-1 border-r border-zinc-200 px-2 text-zinc-900"
                 style={{ width: columnWidths.text }}
               >
-                {canReorder && (
+                {canEdit && !isFiller && (
                   <button
                     type="button"
-                    draggable={savedRowId > 0}
+                    draggable={savedRowId > 0 && canReorder}
+                    disabled={!canReorder}
                     aria-label={`Reorder ${category?.name ?? task?.name ?? row.name}`}
-                    title="Drag to reorder. Use Alt + Up or Down to move with the keyboard."
+                    title="Drag to reorder or move into a main task. Use Alt + Up or Down to reorder."
                     onDragStart={(event) => {
+                      if (!canReorder) { event.preventDefault(); return; }
                       event.stopPropagation();
                       draggedRow.current = { kind: rowKind, id: savedRowId, categoryId: parentId };
                       event.dataTransfer.effectAllowed = "move";
@@ -3651,7 +3787,7 @@ export function GanttChartView({
                     >
                       <Plus className="size-3.5" />
                     </ProjectWriteButton>
-                    <ProjectWriteButton
+                    {!category.hasTasks && <ProjectWriteButton
                       type="button"
                       disabled={category.id < 0}
                       onClick={() => setCategoryModal(category)}
@@ -3660,7 +3796,7 @@ export function GanttChartView({
                       className="shrink-0 cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-700"
                     >
                       <EditIcon className="size-3.5" />
-                    </ProjectWriteButton>
+                    </ProjectWriteButton>}
                   </>
                 ) : isProject ? null : (
                   !isProject &&
@@ -4453,7 +4589,7 @@ export function GanttChartView({
           <ProjectWriteButton
             type="button"
             onClick={handleUndo}
-            disabled={(!historyReady && !previewHistory.canUndo) || (!previewHistory.canUndo && (previewHistory.complete || !effectiveCanUndo)) || savingSharedCost}
+            disabled={(!historyReady && !previewHistory.canUndo) || (!previewHistory.canUndo && (previewHistory.complete || !effectiveCanUndo)) || savingSharedCost || savingHierarchy}
             aria-label="Undo"
             title="Undo last action (Ctrl+Z)"
             aria-busy={isUndoRedoPending}
@@ -4464,7 +4600,7 @@ export function GanttChartView({
           <ProjectWriteButton
             type="button"
             onClick={handleRedo}
-            disabled={(!historyReady && !previewHistory.canRedo) || (!previewHistory.canRedo && (previewHistory.complete || !effectiveCanRedo)) || savingSharedCost}
+            disabled={(!historyReady && !previewHistory.canRedo) || (!previewHistory.canRedo && (previewHistory.complete || !effectiveCanRedo)) || savingSharedCost || savingHierarchy}
             aria-label="Redo"
             title="Redo last action (Ctrl+Y)"
             aria-busy={isUndoRedoPending}
@@ -4672,6 +4808,7 @@ export function GanttChartView({
                   TaskListTable={StableTaskListTable}
                   onDateChange={(task) => persistDrag(task)}
                   onClick={handleBarClick}
+                  onDoubleClick={handleBarDoubleClick}
                   onExpanderClick={(task) => {
                     setCollapsedPhaseIds((prev) => {
                       const next = new Set(prev);

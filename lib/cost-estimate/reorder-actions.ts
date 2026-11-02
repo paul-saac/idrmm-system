@@ -36,3 +36,46 @@ export async function moveScheduleRow(projectId: number, move: ScheduleRowMove):
     return { error: "Could not save the task order. Please try again." };
   }
 }
+
+
+/** Cross-category movement and standalone-to-subtask conversion are atomic. */
+export async function nestScheduleRow(projectId: number, move: import("./nesting").NestMove): Promise<{ error?: string; taskId?: number }> {
+  try {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) return { error: "You do not have permission to move this project's tasks." };
+    if (!move || !["task", "category"].includes(move.kind) || !Number.isSafeInteger(move.id) || move.id <= 0 ||
+        !Number.isSafeInteger(move.categoryId) || move.categoryId <= 0 ||
+        move.beforeTaskId != null && (!Number.isSafeInteger(move.beforeTaskId) || move.beforeTaskId <= 0))
+      return { error: "Choose a saved task and a main task in this project." };
+    const client = await createClient();
+    const { data, error } = await client.rpc("nest_estimate_row", { p_project_id: projectId, p_kind: move.kind,
+      p_row_id: move.id, p_category_id: move.categoryId, p_before_task_id: move.beforeTaskId });
+    if (error) return { error: ["PGRST202", "42883"].includes(error.code)
+      ? "Moving tasks into main tasks needs migration 0120_nest_estimate_rows.sql. Apply it and retry."
+      : ["22023", "40001", "55000"].includes(error.code) ? error.message : "Could not move this task. The previous structure has been restored." };
+    if (!data?.task_id) return { error: "The task move could not be confirmed. Refresh and retry." };
+    await recordGanttCheckpoint(client, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { taskId: data.task_id };
+  } catch { return { error: "Could not move the task. The previous structure has been restored." }; }
+}
+
+/** Outdent a leaf as one undoable transaction; operational records are protected. */
+export async function outdentScheduleRow(projectId: number, move: import("./nesting").OutdentMove): Promise<{ error?: string; categoryId?: number }> {
+  try {
+    const profile = await requireProjectAccess(projectId);
+    if (!profile) return { error: "You do not have permission to move this project's tasks." };
+    if (!move || !Number.isSafeInteger(move.id) || move.id <= 0 || !Number.isSafeInteger(move.targetCategoryId) || move.targetCategoryId <= 0 || typeof move.after !== "boolean")
+      return { error: "Choose a saved subtask and a position in this project." };
+    const client = await createClient();
+    const { data, error } = await client.rpc("outdent_estimate_row", { p_project_id: projectId, p_task_id: move.id,
+      p_target_category_id: move.targetCategoryId, p_after: move.after });
+    if (error) return { error: ["PGRST202", "42883"].includes(error.code)
+      ? "Outdenting needs migration 0121_outdent_estimate_rows.sql. Apply it and retry."
+      : ["22023", "40001", "55000"].includes(error.code) ? error.message : "Could not outdent this task. Its previous position has been restored." };
+    if (!data?.category_id) return { error: "The task move could not be confirmed. Refresh and retry." };
+    await recordGanttCheckpoint(client, projectId, profile.id);
+    revalidateProjectPaths(projectId);
+    return { categoryId: data.category_id };
+  } catch { return { error: "Could not outdent the task. Its previous position has been restored." }; }
+}

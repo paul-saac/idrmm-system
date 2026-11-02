@@ -260,7 +260,7 @@ export async function listCategoryProgressAnchors(
 /** Local calendar date as `YYYY-MM-DD` — matches listTaskProgressToday's
  * own todayIso. */
 function todayIso() {
-  return new Date().toLocaleDateString("en-CA");
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 }
 
 /**

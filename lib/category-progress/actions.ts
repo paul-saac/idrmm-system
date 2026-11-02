@@ -48,7 +48,7 @@ async function safely(
 }
 
 function todayIso() {
-  return new Date().toLocaleDateString("en-CA");
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 }
 
 /**
@@ -155,24 +155,15 @@ export async function recordCategoryProgress(
     const supabase = await createClient();
     const entryDate = todayIso();
 
-    const crew = await resolveAttendance(supabase, input.attendance ?? [], entryDate, {
-      categoryId,
-    });
-    if ("error" in crew) {
-      return { error: crew.error };
-    }
-    // Labor: with anyone's hours logged, each person's hours × their own
-    // Default Rate, priced here (never the browser's figure); otherwise
-    // typed.
+    const [crew, priced] = await Promise.all([
+      resolveAttendance(supabase, input.attendance ?? [], entryDate, { categoryId }),
+      priceMaterialsUsed(supabase, { categoryId }, input.materialsUsed ?? []),
+    ]);
+    if ("error" in crew) return { error: crew.error };
+    if ("error" in priced) return { error: priced.error };
+    // Server-side rates remain authoritative, regardless of the UI preview.
     const laborCost = crew.rows.length > 0 ? crew.laborCost : input.costs.labor;
 
-    // Material cost: what was used, priced from the category's own
-    // Material Breakdown — or, without any
-    // lines, typed.
-    const priced = await priceMaterialsUsed(supabase, { categoryId }, materialsUsed);
-    if ("error" in priced) {
-      return { error: priced.error };
-    }
     // Material usage affects stock only. Purchases are recorded separately.
     const materialCost = 0;
 
@@ -205,6 +196,7 @@ export async function recordCategoryProgress(
       .single();
 
     if (upsertError || !savedEntry) {
+      if (upsertError?.code === "22023") return { error: upsertError.message };
       if (upsertError) {
         logSupabaseError(
           "[recordCategoryProgress] Supabase entry upsert failed",

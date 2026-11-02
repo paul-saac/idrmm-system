@@ -1620,6 +1620,14 @@ export interface Database {
           p_successor_id: number | null; p_milestone?: boolean | null; p_name?: string | null };
         Returns: undefined;
       };
+      outdent_estimate_row: {
+        Args: { p_project_id: number; p_task_id: number; p_target_category_id: number; p_after: boolean };
+        Returns: { category_id: number; ids: number[] };
+      };
+      nest_estimate_row: {
+        Args: { p_project_id: number; p_kind: string; p_row_id: number; p_category_id: number; p_before_task_id?: number | null };
+        Returns: { task_id: number; category_id: number; ids: number[] };
+      };
       move_estimate_row: {
         Args: { p_project_id: number; p_kind: string; p_row_id: number; p_target_id: number; p_after: boolean };
         Returns: { category_id: number | null; ids: number[] };

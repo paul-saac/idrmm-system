@@ -1,4 +1,5 @@
 "use client";
+import { ProgressLogSyncProvider, useProgressLogSync } from "./progress/progress-log-sync";
 import { SheetsSection } from "@/components/projects/sheets/sheets-section";
 import type { listSheets } from "@/lib/sheets/actions";
 
@@ -199,6 +200,14 @@ function ArchiveProjectModalContent({
 }
 
 export function ProjectDetailView(props: Parameters<typeof ProjectDetailContent>[0]) {
+  return <ProgressLogSyncProvider key={props.project.id} task={props.taskProgressToday} category={props.categoryProgressToday} history={props.overrideHistory}>
+    <LiveProjectDetailView {...props} />
+  </ProgressLogSyncProvider>;
+}
+
+function LiveProjectDetailView(serverProps: Parameters<typeof ProjectDetailContent>[0]) {
+  const logSync = useProgressLogSync()!;
+  const props = { ...serverProps, taskProgressToday: logSync.task, categoryProgressToday: logSync.category, overrideHistory: logSync.history };
   const [localProject, setLocalProject] = useState<{ source: ProjectRow; value: ProjectRow } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

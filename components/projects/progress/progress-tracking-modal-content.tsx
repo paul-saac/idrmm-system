@@ -42,6 +42,7 @@ import {
   type MaterialStockItem,
 } from "@/lib/materials/purchases-model";
 import type { LatestOverride, TaskProgressToday } from "@/lib/task-progress/data";
+import { remainingQuantity, exceedsQuantity } from "@/lib/progress-logs/quantity-limit";
 import type { OverrideLog } from "@/lib/progress-logs/types";
 import { downloadDailyLogPdf } from "@/lib/progress-logs/daily-log-pdf";
 import type { Worker } from "@/lib/workers/data";
@@ -504,7 +505,7 @@ function formatDateTime(timestamp: string) {
 function deleteOverrideMessage(entryDate: string) {
   const update =
     entryDate === toIsoDate(new Date()) ? "Today's update" : `The ${formatDay(entryDate)} update`;
-  return `${update} will be removed, with everything logged on it, and taken off the override history. That day goes back to counting its planned share automatically.`;
+  return `${update} will be removed, with everything logged on it, and taken off the override history. Actual progress and costs will be recalculated from the remaining saved logs.`;
 }
 
 function formatFileSize(bytes: number) {
@@ -525,7 +526,7 @@ const HISTORY_COST_LABEL: Record<CostComponent, string> = {
   other: "Other",
 };
 
-const HISTORY_COST_ORDER: CostComponent[] = ["material", "labor", "other", "equipment"];
+const HISTORY_COST_ORDER: CostComponent[] = ["labor", "other", "equipment"];
 const EMPTY_INCIDENTS: Incident[] = [];
 
 /** One override in full, under its opened card — who worked (their hours
@@ -847,8 +848,6 @@ function OverrideHistory({
                       <span className="contents">
                         <span className="text-zinc-500">Quantity</span>
                         <span className="text-right font-medium text-zinc-900 tabular-nums">{formatQuantity(log.quantityCompleted)}{unit ? ` ${unit}` : ""}</span>
-                        <span aria-hidden />
-                        <span aria-hidden />
                       </span>
                       {HISTORY_COST_ORDER.map((component) => (
                         <span key={component} className="contents">
@@ -998,7 +997,6 @@ function SavedProgressLogModal({
                   {unit ? ` ${unit}` : ""}
                 </dd>
               </div>
-              <div aria-hidden />
               {HISTORY_COST_ORDER.map((component) => (
                 <div key={component} className="flex justify-between gap-3">
                   <dt className="text-zinc-500">{HISTORY_COST_LABEL[component]}</dt>
@@ -1142,6 +1140,7 @@ export function ProgressTrackingModalContent({
   incidentContext,
   materialStocks,
   onSave,
+  backgroundSync = false,
   onDeleteOverride,
   loadOverrideHistory,
   onClose,
@@ -1181,6 +1180,7 @@ export function ProgressTrackingModalContent({
   projectName: string;
   incidentContext?: IncidentContext;
   materialStocks?: readonly MaterialStockItem[];
+  backgroundSync?: boolean;
   onSave: (input: {
     quantityCompletedToday: number;
     costs: CostAmounts;
@@ -1283,7 +1283,7 @@ export function ProgressTrackingModalContent({
   }
 
   async function handleDeleteOverride() {
-    if (readOnly || !deleteDate || !onDeleteOverride) return;
+    if (readOnly || deletingOverride || !deleteDate || !onDeleteOverride) return;
     setDeletingOverride(true);
     setDeleteOverrideError(null);
     const result = await onDeleteOverride(deleteDate);
@@ -1293,7 +1293,7 @@ export function ProgressTrackingModalContent({
       return;
     }
     setDeleteDate(null);
-    router.refresh();
+    if (!backgroundSync) router.refresh();
     onClose();
   }
 
@@ -1597,6 +1597,8 @@ export function ProgressTrackingModalContent({
   }
 
   const quantity = parseAmount(quantityInput);
+  // Today is a replacement entry, so only earlier saved work reduces the limit.
+  const quantityLimit = remainingQuantity(estimatedQuantity, progressToday.cumulativeQuantityCompleted, savedToday?.quantityCompleted ?? 0);
   const materialsUsed = plannedMaterials.map((material) => ({
     key: material.key,
     name: material.name,
@@ -2058,10 +2060,14 @@ export function ProgressTrackingModalContent({
   ];
 
   async function handleSave() {
-    if (readOnly) return;
+    if (readOnly || pending) return;
     setError(null);
     if (quantity === null) {
       setError("Quantity completed must be 0 or more.");
+      return;
+    }
+    if (exceedsQuantity(quantity, quantityLimit)) {
+      setError(`Quantity completed cannot exceed the remaining planned quantity (${formatQuantity(quantityLimit)}${unit ? ` ${unit}` : ""}).`);
       return;
     }
     if (COST_COMPONENTS.some((component) => costs[component] === null)) {
@@ -2157,7 +2163,7 @@ export function ProgressTrackingModalContent({
       setError(result.error);
       return;
     }
-    router.refresh();
+    if (!backgroundSync) router.refresh();
     onClose();
   }
 
@@ -2229,9 +2235,18 @@ export function ProgressTrackingModalContent({
               <AmountInput
                 id="progress-quantity"
                 value={quantityInput}
-                onChange={setQuantityInput}
+                onChange={(value) => {
+                  const parsed = parseAmount(value);
+                  if (parsed !== null && exceedsQuantity(parsed, quantityLimit)) {
+                    setError(`Maximum quantity for today's log is ${formatQuantity(quantityLimit)}${unit ? ` ${unit}` : ""}.`);
+                    return;
+                  }
+                  setError(null);
+                  setQuantityInput(value);
+                }}
                 unit={unit}
               />
+              <p className="mt-1 text-right text-xs text-zinc-400">(Planned: {formatQuantity(estimatedQuantity)}{unit ? ` ${unit}` : ""})</p>
             </Field>
 
             {COST_COMPONENTS.map((component) => {

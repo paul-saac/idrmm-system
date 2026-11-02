@@ -384,7 +384,7 @@ export async function listTaskProgressAnchors(
  * parsing convention in lib/task-progress/calculate.ts (local midnight,
  * never UTC). */
 function todayIso() {
-  return new Date().toLocaleDateString("en-CA");
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
 }
 
 /**

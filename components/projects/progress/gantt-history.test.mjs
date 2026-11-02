@@ -73,7 +73,7 @@ test('the actual Gantt handlers accept repeated Undo/Redo clicks while saves are
     {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
   const queue=createGanttOperationQueue(), history=[0];let cursor=0,busy=false,active=0,maxActive=0,error=null;
   const previewHistory=createGanttPreviewHistory([]);
-  const globals={ exports:{},previewHistory,historyPreview:null,historyPreviewRef:{current:null},gestureVersion:{current:0},canEdit:true,savingSharedCost:false,historyReady:false,effectiveCanUndo:true,effectiveCanRedo:true,
+  const globals={ exports:{},previewHistory,historyPreview:null,historyPreviewRef:{current:null},gestureVersion:{current:0},canEdit:true,savingSharedCost:false,savingHierarchy:false,historyReady:false,effectiveCanUndo:true,effectiveCanRedo:true,
     operationQueue:queue,historyQueued:{current:0},groupDragCleanup:{current:null},categoriesRef:{current:[]},
     setHistoryPreview(){},setEditingCategoryId(){},setEditingTaskId(){},refreshAfterSaves(){},setIsUndoRedoPending:value=>busy=value,setHistoryError:value=>error=value,markHistoryEdit(){},
     setHistoryAvailability(){},setRowMoves(){},setModalEdits(){},setOptimisticDeletions(){},setUndoRedoOverride(){},

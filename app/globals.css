@@ -273,6 +273,22 @@ input[type="date"][data-empty="true"] {
 .gantt-task-react-root [data-gantt-drop="after"] {
   box-shadow: inset 0 -2px var(--color-zinc-600);
 }
+.gantt-task-react-root [data-gantt-nest="true"][data-gantt-drop] {
+  box-shadow: none;
+}
+.gantt-task-react-root [data-gantt-nest="true"][data-gantt-drop]::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  left: 48px;
+  right: 0;
+  height: 2px;
+  background: var(--color-zinc-600);
+}
+.gantt-task-react-root [data-gantt-nest="true"][data-gantt-drop="before"]::after { top: 0; }
+.gantt-task-react-root [data-gantt-nest="true"][data-gantt-drop="after"]::after { bottom: 0; }
+
 
 /*
  * The date-header row's own text (e.g. "Thu, 4" and the "June" month

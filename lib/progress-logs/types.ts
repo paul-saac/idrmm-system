@@ -41,7 +41,7 @@ export type OverrideLog = {
     unplanned?: boolean;
   }[];
   /** Who worked that day, their hours and hourly rate then. */
-  attendance: { name: string; hours: number; rate: number }[];
+  attendance: { name: string; hours: number; rate: number; workerId?: number | null }[];
 };
 
 /** Every saved override history in a project, grouped by its task or
