@@ -49,8 +49,8 @@ export function getAIProvider(env: NodeJS.ProcessEnv = process.env): AIProvider 
   }
   const format = env.AZURE_AI_RESPONSE_FORMAT?.trim() || "json_object";
   if (!["json_schema","json_object","text"].includes(format)) throw new Error("AZURE_AI_RESPONSE_FORMAT must be json_schema, json_object or text.");
-  const maxOutputTokens = Number(env.AZURE_AI_MAX_OUTPUT_TOKENS || "4096");
-  if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 256 || maxOutputTokens > 8192) throw new Error("AZURE_AI_MAX_OUTPUT_TOKENS must be an integer between 256 and 8192.");
+  const maxOutputTokens = Number(env.AZURE_AI_MAX_OUTPUT_TOKENS || "16384");
+  if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 256 || maxOutputTokens > 32768) throw new Error("AZURE_AI_MAX_OUTPUT_TOKENS must be an integer between 256 and 32768.");
   return {id:"azure-foundry",name:"Azure AI",endpoint:url.toString(),apiKey,textModel,
     visionModel:env.AZURE_AI_VISION_MODEL?.trim() || null,apiStyle,
     responseMode:format === "json_schema" ? "strict" : format as "json_object"|"text",maxOutputTokens};
