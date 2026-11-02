@@ -5,8 +5,9 @@ export type SuccessorOption = ScheduleRow & { name: string };
 export function scheduleRowKey(row: ScheduleRow): string { return `${row.kind}:${row.id}`; }
 
 export function projectSuccessorOptions(categories: CostCategory[], source: ScheduleRow, milestone?: boolean): SuccessorOption[] {
+  const parent = source.kind === "task" ? categories.find(category => category.tasks.some(task => task.id === source.id)) : undefined;
   return categories.flatMap<SuccessorOption>(category => [
-    ...(milestone || (source.kind === "category" && category.tasks.length === 0)
+    ...(!(source.kind === "category" && category.id === source.id) && (milestone || category.id !== parent?.id)
       ? [{ kind: "category" as const, id: category.id, name: category.name }] : []),
     ...(source.kind === "category" && category.id === source.id ? [] : category.tasks
       .filter(task => !(source.kind === "task" && task.id === source.id))
