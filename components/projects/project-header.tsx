@@ -28,7 +28,7 @@ function shortDate(iso: string) {
 /** One figure in the stats strip — a small caps label, then the figure. */
 function Stat({ label, value, description }: { label: string; value: ReactNode; description?: ReactNode }) {
   return (
-    <div className="min-w-0 px-4 py-4 sm:px-6 xl:px-8">
+    <div className="flex min-w-0 flex-col justify-center px-4 py-4 sm:px-6 xl:px-8">
       <p className="text-xs font-medium tracking-wider text-zinc-500 uppercase">{label}</p>
       <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2 text-lg leading-7 font-semibold text-zinc-900">
         {value}
@@ -182,7 +182,7 @@ export function ProjectHeader({
         )}
       </div>
 
-      <div className="mt-3.5 grid grid-cols-2 border-y border-zinc-300 bg-zinc-200 lg:grid-cols-4 lg:divide-x lg:divide-zinc-300">
+      <div className="mt-3.5 grid grid-cols-2 border-y border-zinc-400 bg-zinc-200 lg:grid-cols-4 lg:divide-x lg:divide-zinc-400">
         <Stat
           label="Overall progress"
           value={<span className="whitespace-nowrap tabular-nums">{progress.toFixed(2)}%</span>}
