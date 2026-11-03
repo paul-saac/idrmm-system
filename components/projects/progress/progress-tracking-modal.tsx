@@ -2,7 +2,9 @@
 
 import { useProgressLogSync } from "./progress-log-sync";
 import type { OverrideLog } from "@/lib/progress-logs/types";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { logEditor } from "@/lib/progress-logs/edit-model";
+import { editProgressLog } from "@/lib/progress-logs/edit-actions";
 import { Modal } from "@/components/ui/modal";
 import { usePortal } from "@/components/portal/portal-context";
 import { ProgressTrackingModalContent } from "./progress-tracking-modal-content";
@@ -76,6 +78,8 @@ export function ProgressTrackingModal({
 }) {
   const { isAdmin, user } = usePortal();
   const logSync = useProgressLogSync();
+  const [selection,setSelection] = useState<{key:string;log:OverrideLog}|null>(null);
+  const [summaryState, setSummaryState] = useState<{key:string;collapsed:boolean}|null>(null);
   const materialPrices = useMemo(() => {
     const byKey = new Map<string, { name: string; unit: string | null; unitCost: number }>();
     for (const category of categories) {
@@ -143,12 +147,23 @@ export function ProgressTrackingModal({
     const worker = workerById.get(id);
     return worker ? [worker] : [];
   });
+  const editor = selection?.key === itemKey ? logEditor(selection.log,workers,crew) : null;
+  const editingLog = editor?.log ?? null;
+  const editorTeam = editor ? [...workers.filter(worker=>!editor.workers.some(saved=>saved.id===worker.id)),...editor.workers] : workers;
+  function close() { setSelection(null); setSummaryState(null); onClose(); }
 
   return (
-    <Modal open={target !== null} onClose={onClose} size="large" bare hideCloseButton={!readOnly} title={item?.name ?? "Progress Tracking"}>
+    <Modal open={target !== null} onClose={close} size="large" bare hideCloseButton={!readOnly} title={item?.name ?? "Progress Tracking"}>
       {target && item && (
         <ProgressTrackingModalContent
-          key={`${itemKey}:${target.highlightEntryDate ?? ""}:${historyVersion}`}
+          key={`${itemKey}:${target.highlightEntryDate ?? ""}:${historyVersion}:${editingLog?.id ?? "today"}`}
+          editingLog={editingLog}
+          initialSummaryCollapsed={summaryState?.key === itemKey ? summaryState.collapsed : !editingLog}
+          onSummaryCollapsedChange={collapsed=>setSummaryState({key:itemKey,collapsed})}
+          onEditHistory={!readOnly ? log=>{
+            setSummaryState({key:itemKey,collapsed:false});
+            setSelection(log ? {key:itemKey,log}:null);
+          } : undefined}
           projectId={projectId}
           projectName={projectName}
           incidentContext={{ kind: target.kind, id: item.id, name: item.name }}
@@ -178,18 +193,21 @@ export function ProgressTrackingModal({
           materialPrices={materialPrices}
           equipmentCostSuggestions={equipmentCostSuggestions}
           otherCostSuggestions={otherCostSuggestions}
-          crew={crew}
-          team={workers}
+          crew={editor?.crew ?? crew}
+          team={editorTeam}
           highlightLatest={target.highlightLatest ?? false}
           highlightEntryDate={target.highlightEntryDate}
           overrideHistory={overrideHistory[itemKey] ?? []}
           backgroundSync={!!logSync}
+          saving={logSync?.pendingKeys.includes(itemKey) ?? false}
           onSave={async (input) => {
-            const action = () => target.kind === "task" ? recordTaskProgress(target.task.id, projectId, input) : recordCategoryProgress(target.category.id, projectId, input);
+            const action = () => editingLog ? editProgressLog(projectId,target.kind,item.id,editingLog.id,{...input,
+              retainedMaterials:editingLog.materialsUsed.filter(row=>row.unitCost==null&&!groupPlannedMaterials(item.materialAssignments).some(planned=>planned.key===materialKey(row.name,row.unit))).map(({name,unit})=>({name,unit}))})
+              : target.kind === "task" ? recordTaskProgress(target.task.id, projectId, input) : recordCategoryProgress(target.category.id, projectId, input);
             if (!logSync) return action();
-            const date = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+            const date = editingLog?.entryDate ?? new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
             const attendance = input.attendance.map(mark => {
-              const worker = workerById.get(mark.workerId);
+              const worker = editorTeam.find(worker=>worker.id===mark.workerId) ?? workerById.get(mark.workerId);
               return { workerId: mark.workerId, name: worker?.fullName ?? "Team member", hours: mark.hours, rate: worker?.hourlyRate ?? 0 };
             });
             const sum = (rows: { amount: number }[] = []) => rows.reduce((total, row) => total + row.amount, 0);
@@ -197,21 +215,22 @@ export function ProgressTrackingModal({
             const log: OverrideLog = {
               id: -Date.now(), action: "saved", entryDate: date, createdAt: new Date().toISOString(),
               savedByName: user.name, savedByRole: user.roleLabel, quantityCompleted: input.quantityCompletedToday,
-              costs: { material: 0, labor: attendance.length ? round(attendance.reduce((total, mark) => total + mark.hours * mark.rate, 0)) : input.costs.labor,
+              costs: { material: editingLog?.costs.material ?? 0, labor: attendance.length ? round(attendance.reduce((total, mark) => total + mark.hours * mark.rate, 0)) : input.costs.labor,
                 equipment: round(input.costs.equipment + sum(input.equipmentCostsUsed) + sum(input.unplannedEquipmentCosts)),
                 other: round(input.costs.other + sum(input.otherCostsUsed) + sum(input.unplannedOtherCosts)) },
-              materialsUsed: [...input.materialsUsed, ...input.unplannedMaterials], attendance,
+              materialsUsed: [...input.materialsUsed, ...input.unplannedMaterials,...(editingLog?.materialsUsed.filter(row=>row.unitCost==null&&!groupPlannedMaterials(item.materialAssignments).some(planned=>planned.key===materialKey(row.name,row.unit))) ?? [])], attendance,
               equipmentCosts: [...(input.equipmentCostsUsed ?? []), ...(input.unplannedEquipmentCosts ?? []).map(row => ({ ...row, unplanned: true }))],
               otherCosts: [...(input.otherCostsUsed ?? []), ...(input.unplannedOtherCosts ?? []).map(row => ({ ...row, unplanned: true }))],
             };
-            return logSync.run({ kind: target.kind, id: item.id }, date, log, action) ? { success: true } : { error: "This task is still saving. Please wait and try again." };
+            const operation = logSync.run({ kind: target.kind, id: item.id }, date, log, action);
+            return operation ? operation.completion : { error: "This task is still saving. Please wait and try again." };
           }}
           onDeleteOverride={isAdmin && !readOnly ? async (entryDate) => {
             const action = () => target.kind === "task" ? deleteTaskProgressEntry(target.task.id, projectId, entryDate) : deleteCategoryProgressEntry(target.category.id, projectId, entryDate);
             if (!logSync) return action();
             return logSync.run({ kind: target.kind, id: item.id }, entryDate, null, action) ? { success: true } : { error: "This task is still saving. Please wait and try again." };
           } : undefined}
-          onClose={onClose}
+          onClose={close}
         />
       )}
     </Modal>

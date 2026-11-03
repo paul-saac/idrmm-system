@@ -1615,6 +1615,10 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      edit_saved_progress_log: {
+        Args: { p_project_id:number; p_kind:string; p_item_id:number; p_log_id:number; p_input:unknown };
+        Returns: undefined;
+      };
       import_reviewed_estimate: {
         Args: { p_project_id: number; p_categories: unknown };
         Returns: undefined;

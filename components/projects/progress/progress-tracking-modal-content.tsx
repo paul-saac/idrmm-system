@@ -4,7 +4,7 @@ import { SuggestionInput } from "@/components/ui/suggestion-input";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import Image from "next/image";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   CalendarDays,
@@ -26,6 +26,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal, ModalFooter, ModalHeaderActions, ModalHeaderAddon } from "@/components/ui/modal";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { InitialsAvatar } from "@/components/ui/list-table";
@@ -44,6 +45,8 @@ import {
 import type { LatestOverride, TaskProgressToday } from "@/lib/task-progress/data";
 import { remainingQuantity, exceedsQuantity } from "@/lib/progress-logs/quantity-limit";
 import type { OverrideLog } from "@/lib/progress-logs/types";
+import { dayEntry, latestDailyLogs } from "@/lib/progress-logs/optimistic";
+import { progressLogDraftKey } from "@/lib/progress-logs/draft";
 import { downloadDailyLogPdf } from "@/lib/progress-logs/daily-log-pdf";
 import type { Worker } from "@/lib/workers/data";
 import { formatHours, weekdayIndex } from "@/lib/workers/schedule";
@@ -505,7 +508,7 @@ function formatDateTime(timestamp: string) {
 function deleteOverrideMessage(entryDate: string) {
   const update =
     entryDate === toIsoDate(new Date()) ? "Today's update" : `The ${formatDay(entryDate)} update`;
-  return `${update} will be removed, with everything logged on it, and taken off the override history. Actual progress and costs will be recalculated from the remaining saved logs.`;
+  return `${update} and its associated quantity, resource, and cost entries will be removed. Logs from other dates will remain. Actual progress and costs will be recalculated from the remaining saved logs.`;
 }
 
 function formatFileSize(bytes: number) {
@@ -677,7 +680,7 @@ function HistoryHeading() {
   return (
     <div className="-mx-6 border-b border-zinc-200 px-6 pb-3">
       <h3 className="flex items-center gap-2 text-base font-semibold text-zinc-900">
-        <HistoryIcon aria-hidden className="size-4 text-zinc-400" />
+        <HistoryIcon aria-hidden className="size-5 text-zinc-400" />
         Log history
       </h3>
     </div>
@@ -685,11 +688,9 @@ function HistoryHeading() {
 }
 
 /**
- * The log history — every save of this task's (or phase's) Daily
- * Progress Updates, newest first: who, exactly when, and what was
- * entered. Deleted overrides aren't in it (see listOverrideLogs). The
- * version each day counts now (its newest save, while the day still has
- * its update) gets the green check — and is the one an admin can delete.
+ * One daily record per task or phase, newest work date first. Its latest
+ * values open immediately; earlier saved versions remain inside the
+ * record's edit history. Deleted days are omitted by listOverrideLogs.
  * The newest entry is highlighted (and scrolled to) when the window was
  * opened from a notification.
  */
@@ -700,6 +701,8 @@ function OverrideHistory({
   highlightLatest,
   highlightEntryDate,
   onDelete,
+  onEdit,
+  editingLogId,
   projectId,
   projectName,
   incidentContext,
@@ -712,24 +715,28 @@ function OverrideHistory({
   highlightLatest: boolean;
   highlightEntryDate?: string;
   onDelete?: (entryDate: string) => void;
+  onEdit?: (log: OverrideLog | null) => void;
+  editingLogId?: number;
   projectId?: number;
   projectName: string;
   incidentContext?: IncidentContext;
   currentIncidents: Incident[];
 }) {
-  // An actual progress entry is unique per item and day. The append-only
-  // history can contain multiple re-saves for that day, so choose its
-  // newest matching save.
-  const targetIndex = highlightEntryDate
-    ? logs.findIndex((log) => log.entryDate === highlightEntryDate)
+  // Show one record per work date. Keep every saved version for its audit
+  // trail, and resolve an open record by date so refreshed edits stay current.
+  const orderedLogs = [...logs].sort((a,b)=>b.createdAt.localeCompare(a.createdAt) || Number(a.id>=0)-Number(b.id>=0) || b.id-a.id);
+  const dailyLogs = [...latestDailyLogs(orderedLogs).values()].sort((a,b)=>b.entryDate.localeCompare(a.entryDate));
+  const editingDate = logs.find(log=>log.id===editingLogId)?.entryDate;
+  const targetIndex = editingDate ? dailyLogs.findIndex(log=>log.entryDate===editingDate) : highlightEntryDate
+    ? dailyLogs.findIndex((log) => log.entryDate === highlightEntryDate)
     : highlightLatest
       ? 0
       : -1;
-  const targetLog = targetIndex >= 0 ? logs[targetIndex] : null;
+  const targetLog = targetIndex >= 0 ? dailyLogs[targetIndex] : null;
   const targetLogId = targetLog?.id ?? null;
   const targetNeedsReveal = targetIndex >= HISTORY_PREVIEW;
   const [showAll, setShowAll] = useState(false);
-  const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [historyIncidents, setHistoryIncidents] = useState<Record<string, Incident[]>>({});
   const historyDates = [...new Set(logs.map(log => log.entryDate))].sort().join(",");
   const historyContextKind = incidentContext?.kind;
@@ -756,25 +763,23 @@ function OverrideHistory({
   }, [targetLogId]);
 
   const logged = new Set(loggedDates);
-  const seenDays = new Set<string>();
-  const currentIds = new Set<number>();
-  for (const log of logs) {
-    if (seenDays.has(log.entryDate)) continue;
-    seenDays.add(log.entryDate);
-    if (log.action === "saved" && logged.has(log.entryDate)) currentIds.add(log.id);
-  }
-  const shown = showAll || targetNeedsReveal ? logs : logs.slice(0, HISTORY_PREVIEW);
-  const selectedLog = selectedLogId === null ? null : logs.find((log) => log.id === selectedLogId) ?? null;
+  const latestDate = dailyLogs.find(log=>logged.has(log.entryDate))?.entryDate;
+  const shown = showAll || targetNeedsReveal ? dailyLogs : dailyLogs.slice(0, HISTORY_PREVIEW);
+  const selectedLog = dailyLogs.find(log=>log.entryDate===selectedDate) ?? null;
+  const selectedVersions = orderedLogs.filter(log=>log.entryDate===selectedDate && log.action==="saved");
 
   return (
     <section className="flex flex-col gap-5">
       <HistoryHeading />
-      {/* A timeline, newest on top: a marker per save on a line down to
-          the next — green for the one that counts now, gray before it. */}
+      {/* A timeline with one marker per daily log. */}
       <ol className="flex flex-col">
         {shown.map((log, index) => {
-          const current = currentIds.has(log.id);
-          const highlighted = highlightedId === log.id;
+          const current = logged.has(log.entryDate);
+          const latest = current && log.entryDate===latestDate;
+          const highlighted = highlightedId === log.id || editingLogId === log.id;
+          const versions = orderedLogs.filter(row=>row.entryDate===log.entryDate && row.action==="saved");
+          const original = versions[versions.length-1] ?? log;
+          const edited = versions.length > 1;
           const last = index === shown.length - 1;
           return (
             <li
@@ -791,23 +796,20 @@ function OverrideHistory({
                   className="absolute top-5 -bottom-1 left-2 w-px -translate-x-1/2 bg-zinc-300"
                 />
               )}
-              {/* The circle's CSS (perfectly round — an SVG circle filling
-                  its own box gets its edges trimmed), the check an SVG the
-                  same size on top, its outline centered exactly (4.5–11.5
-                  across, 5.5–10.5 down); mt-1 centers it on the header
-                  row's text. */}
+              {/* Both marker colors share the same circle and ring size.
+                  Center the check explicitly, without inline SVG baseline space. */}
               <span
                 aria-hidden
-                className={`mt-1 size-4 shrink-0 rounded-full ${
-                  current ? "bg-emerald-100 ring-1 ring-emerald-200" : "bg-zinc-400"
+                className={`relative mt-1 inline-flex size-4 shrink-0 items-center justify-center rounded-full leading-none ring-1 ${
+                  latest ? "bg-emerald-100 ring-emerald-200" : "bg-zinc-400 ring-zinc-400"
                 }`}
               >
-                <svg viewBox="0 0 16 16" className={`block size-4 ${current ? "text-emerald-700" : "text-white"}`}>
+                <svg viewBox="0 0 12 12" focusable="false" className={`block size-3 shrink-0 ${latest ? "text-emerald-700" : "text-white"}`}>
                   <path
-                    d="M4.5 8 7 10.5l4.5-5"
+                    d="M2.5 6 5 8.5l4.5-5"
                     fill="none"
                     stroke="currentColor"
-                    strokeWidth="1.75"
+                    strokeWidth="1.5"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
@@ -818,30 +820,33 @@ function OverrideHistory({
                 <div className="flex min-h-6 flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-sm font-semibold text-zinc-900">Saved</span>
                   <span className="text-xs text-zinc-500 tabular-nums">
-                    {formatDateTime(log.createdAt)}
+                    {formatDateTime(original.createdAt)}
                   </span>
-                  {current && onDelete && (
+                  {edited && <span className="text-xs text-zinc-500">(Edited)</span>}
+                  {current && (onEdit || onDelete) && <div className="ml-auto flex items-center gap-1">
+                  {onEdit && log.id > 0 && <button type="button" onClick={()=>onEdit(editingLogId===log.id ? null : log)} aria-label={`${editingLogId===log.id ? "Cancel editing" : "Edit"} ${formatDay(log.entryDate)} log`} aria-pressed={editingLogId===log.id} title={editingLogId===log.id ? "Cancel edit" : "Edit log"} className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700">{editingLogId===log.id ? <X className="size-4" /> : <EditIcon className="size-4" />}</button>}
+                  {onDelete && (
                     <button
                       type="button"
                       onClick={() => onDelete(log.entryDate)}
                       aria-label="Delete this override"
                       title="Delete this override"
-                      className="ml-auto cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
+                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
                     >
                       <Trash2 className="size-4" />
                     </button>
-                  )}
+                  )}</div>}
                 </div>
 
                 {/* The card opens the full record in a centered modal. */}
                 <div
                   className={`mt-2 overflow-hidden rounded-md border bg-white ${
-                    highlighted ? "border-emerald-100 ring-2 ring-emerald-50" : "border-zinc-200"
+                    highlighted ? "border-zinc-900" : "border-zinc-200"
                   }`}
                 >
                   <button
                     type="button"
-                    onClick={() => setSelectedLogId(log.id)}
+                    onClick={() => setSelectedDate(log.entryDate)}
                     className="block w-full cursor-pointer p-4 text-left transition hover:bg-zinc-50"
                   >
                     <span className="grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
@@ -857,17 +862,17 @@ function OverrideHistory({
                       ))}
                     </span>
                     <span className="mt-3 flex items-center gap-2.5 border-t border-zinc-100 pt-3">
-                      <InitialsAvatar name={log.savedByName ?? "?"} />
+                      <InitialsAvatar name={original.savedByName ?? "?"} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-xs text-zinc-500">
                           Saved by{" "}
                           <span className="font-semibold text-zinc-900">
-                            {log.savedByName ?? "an unknown account"}
+                            {original.savedByName ?? "an unknown account"}
                           </span>
                         </span>
-                        {log.savedByRole && (
+                        {original.savedByRole && (
                           <span className="block truncate text-[11px] text-zinc-400">
-                            {log.savedByRole}
+                            {original.savedByRole}
                           </span>
                         )}
                       </span>
@@ -880,31 +885,57 @@ function OverrideHistory({
           );
         })}
       </ol>
-      {logs.length > HISTORY_PREVIEW && !targetNeedsReveal && (
+      {dailyLogs.length > HISTORY_PREVIEW && !targetNeedsReveal && (
         <button
           type="button"
           onClick={() => setShowAll((all) => !all)}
           className="cursor-pointer self-start text-xs font-medium text-zinc-500 transition hover:text-zinc-900"
         >
-          {showAll ? "Show less" : `Show all ${logs.length}`}
+          {showAll ? "Show less" : `Show all ${dailyLogs.length}`}
         </button>
       )}
       <SavedProgressLogModal
-        key={selectedLog?.id ?? "none"}
+        key={selectedDate ?? "none"}
         log={selectedLog}
+        versions={selectedVersions}
         unit={unit}
         projectId={projectId}
         projectName={projectName}
         incidentContext={incidentContext}
         fallbackIncidents={selectedLog ? historyIncidents[selectedLog.entryDate] ?? currentIncidents.filter(incident => incident.log_date === selectedLog.entryDate) : EMPTY_INCIDENTS}
-        onClose={() => setSelectedLogId(null)}
+        onClose={() => setSelectedDate(null)}
       />
     </section>
   );
 }
 
+function LogEditHistoryMenu({versions, selectedId, onSelect}: {
+  versions: OverrideLog[];
+  selectedId: number;
+  onSelect: (id: number | null) => void;
+}) {
+  const id = useId();
+  const menu = useRef<HTMLDivElement>(null);
+  const [position,setPosition] = useState({left:0,top:0});
+  return <>
+    <button type="button" popoverTarget={id} aria-haspopup="menu" className="mr-2 flex cursor-pointer items-center gap-2 rounded border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-100"
+      onClick={event=>{const rect=event.currentTarget.getBoundingClientRect();setPosition({left:Math.max(8,rect.right-Math.min(420,window.innerWidth-16)),top:rect.bottom+4});}}>
+      Edit history <ChevronDown aria-hidden className="size-4 text-zinc-400" />
+    </button>
+    <div id={id} ref={menu} popover="auto" role="menu" aria-label="Edit history" style={{...position,right:"auto",bottom:"auto",width:"min(420px, calc(100vw - 16px))"}} className="fixed m-0 max-h-64 overflow-y-auto rounded border border-zinc-200 bg-white p-0 text-xs text-zinc-700 shadow-md">
+      {versions.map((version,index)=><button key={version.id} type="button" role="menuitemradio" aria-checked={selectedId===version.id}
+        onClick={()=>{menu.current?.hidePopover();onSelect(index===0 ? null : version.id);}}
+        className={`block w-full cursor-pointer px-3 py-2.5 text-left transition hover:bg-zinc-100 ${selectedId===version.id ? "bg-zinc-50" : ""}`}>
+        <span className="block font-medium">{index===versions.length-1 ? "Original log" : `Edit ${versions.length-1-index}`}{index===0 ? " · Latest version" : ""}</span>
+        <span className="mt-0.5 block text-zinc-500">{version.savedByName ?? "Unknown account"}{version.savedByRole ? ` · ${version.savedByRole}` : ""} · {formatDateTime(version.createdAt)}</span>
+      </button>)}
+    </div>
+  </>;
+}
+
 function SavedProgressLogModal({
   log,
+  versions,
   unit,
   projectId,
   projectName,
@@ -913,6 +944,7 @@ function SavedProgressLogModal({
   onClose,
 }: {
   log: OverrideLog | null;
+  versions: OverrideLog[];
   unit: string | null;
   projectId?: number;
   projectName: string;
@@ -924,6 +956,10 @@ function SavedProgressLogModal({
   const [error, setError] = useState("");
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState("");
+  const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null);
+  const displayedLog = versions.find(version=>version.id===selectedVersionId) ?? log;
+  const original = versions[versions.length-1] ?? log;
+  const edited = versions.length > 1;
 
   const entryDate = log?.entryDate;
   const contextKind = incidentContext?.kind;
@@ -950,7 +986,7 @@ function SavedProgressLogModal({
 
 
   async function downloadReport() {
-    if (!log || pdfBusy) return;
+    if (!displayedLog || pdfBusy) return;
     setPdfBusy(true);
     setPdfError("");
     try {
@@ -958,7 +994,7 @@ function SavedProgressLogModal({
         projectName,
         workItemName: incidentContext?.name ?? "Progress item",
         unit,
-        log,
+        log: displayedLog,
         incidents,
       });
     } catch (cause) {
@@ -974,26 +1010,30 @@ function SavedProgressLogModal({
       <Modal
         open={log !== null}
         onClose={onClose}
-        title={log ? formatDay(log.entryDate) : "Log history"}
+        title={log ? `${formatDay(log.entryDate)}${edited ? " (Edited)" : ""}` : "Log history"}
         description={
           log
-            ? `Logged by ${log.savedByName ?? "Unknown account"}`
+            ? `Logged by ${original?.savedByName ?? "Unknown account"}`
             : undefined
         }
-        icon={<HistoryIcon className="size-4" />}
+        icon={<HistoryIcon className="size-6" />}
         bareIcon
         variant="centered"
         size="wide"
+        headerClassName="[&_h2]:text-base [&_p]:text-xs"
       >
-        {log && (
+        {edited && displayedLog && <ModalHeaderActions><LogEditHistoryMenu versions={versions} selectedId={displayedLog.id} onSelect={setSelectedVersionId} /></ModalHeaderActions>}
+        {log && displayedLog && (
           <article className="flex flex-col gap-4">
+            {edited && <p className="text-xs text-zinc-500">Last edited by <span className="font-medium text-zinc-700">{log.savedByName ?? "Unknown account"}</span> · {formatDateTime(log.createdAt)}</p>}
+            {displayedLog && displayedLog.id!==log.id && <p className="border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">Viewing earlier version · {displayedLog.savedByName ?? "Unknown account"} · {formatDateTime(displayedLog.createdAt)}</p>}
             <section className="overflow-hidden rounded border border-zinc-200">
               <h4 className="bg-zinc-100 px-3 py-2 text-[13px] font-semibold text-zinc-800">Work progress and cost summary</h4>
               <dl className="grid grid-cols-2 gap-x-8 gap-y-2 px-3 py-3 text-[13px]">
               <div className="flex justify-between gap-3">
                 <dt className="text-zinc-500">Quantity</dt>
                 <dd className="font-medium tabular-nums">
-                  {formatQuantity(log.quantityCompleted)}
+                  {formatQuantity(displayedLog.quantityCompleted)}
                   {unit ? ` ${unit}` : ""}
                 </dd>
               </div>
@@ -1001,13 +1041,13 @@ function SavedProgressLogModal({
                 <div key={component} className="flex justify-between gap-3">
                   <dt className="text-zinc-500">{HISTORY_COST_LABEL[component]}</dt>
                   <dd className="font-medium tabular-nums">
-                    {formatPeso(log.costs[component])}
+                    {formatPeso(displayedLog.costs[component])}
                   </dd>
                 </div>
               ))}
               </dl>
             </section>
-            <OverrideLogDetails log={log} />
+            <OverrideLogDetails log={displayedLog} />
             <section className="overflow-hidden rounded border border-zinc-200">
               <div className="flex items-center gap-2 bg-zinc-100 px-3 py-2">
                 <Flag className="size-4 text-amber-600" />
@@ -1140,7 +1180,12 @@ export function ProgressTrackingModalContent({
   incidentContext,
   materialStocks,
   onSave,
+  editingLog = null,
+  onEditHistory,
+  initialSummaryCollapsed,
+  onSummaryCollapsedChange,
   backgroundSync = false,
+  saving = false,
   onDeleteOverride,
   loadOverrideHistory,
   onClose,
@@ -1181,6 +1226,11 @@ export function ProgressTrackingModalContent({
   incidentContext?: IncidentContext;
   materialStocks?: readonly MaterialStockItem[];
   backgroundSync?: boolean;
+  saving?: boolean;
+  editingLog?: OverrideLog | null;
+  onEditHistory?: (log: OverrideLog | null) => void;
+  initialSummaryCollapsed?: boolean;
+  onSummaryCollapsedChange?: (collapsed: boolean) => void;
   onSave: (input: {
     quantityCompletedToday: number;
     costs: CostAmounts;
@@ -1200,9 +1250,11 @@ export function ProgressTrackingModalContent({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const savedToday = progressToday.today;
+  const savedToday = editingLog ? dayEntry(editingLog) : progressToday.today;
+  const retainedMaterials = editingLog?.materialsUsed.filter(row=>row.unitCost==null&&!plannedMaterials.some(planned=>planned.key===materialKey(row.name,row.unit))) ?? [];
+  const workDate = editingLog?.entryDate ?? new Date().toLocaleDateString("en-CA", {timeZone:"Asia/Manila"});
   const [reportingIncident, setReportingIncident] = useState(false);
-  const [summaryCollapsed, setSummaryCollapsed] = useState(true);
+  const [summaryCollapsed, setSummaryCollapsed] = useState(initialSummaryCollapsed ?? !editingLog);
   const [summaryHasToggled, setSummaryHasToggled] = useState(false);
   const [incidentsOpen, setIncidentsOpen] = useState(false);
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -1210,7 +1262,7 @@ export function ProgressTrackingModalContent({
   const [incidentsError, setIncidentsError] = useState("");
   const [incidentRefresh, setIncidentRefresh] = useState(0);
   const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null);
-  const incidentOpen = reportingIncident && !readOnly && !!projectId && !!incidentContext;
+  const incidentOpen = !editingLog && reportingIncident && !readOnly && !!projectId && !!incidentContext;
   const incidentContextKind = incidentContext?.kind;
   const incidentContextId = incidentContext?.id;
 
@@ -1271,7 +1323,7 @@ export function ProgressTrackingModalContent({
   }, [effectiveMaterialStocks, assignedMaterialNames, assignedMaterialKeys]);
 
   // An override's Delete — the day it's for while its confirmation is
-  // open; then the window closes like Save does, so it reopens from
+  // open; then the window closes, so it reopens from
   // what's left.
   const [deleteDate, setDeleteDate] = useState<string | null>(null);
   const [deletingOverride, setDeletingOverride] = useState(false);
@@ -1298,7 +1350,8 @@ export function ProgressTrackingModalContent({
   }
 
   // The override history is already present when this modal opens.
-  const [history, setHistory] = useState<OverrideLog[]>(overrideHistory);
+  const [loadedHistory, setHistory] = useState<OverrideLog[]>(overrideHistory);
+  const history = loadOverrideHistory ? loadedHistory : overrideHistory;
   useEffect(() => {
     if (!loadOverrideHistory) return;
     let active = true;
@@ -1381,6 +1434,7 @@ export function ProgressTrackingModalContent({
       (savedToday?.unplannedEquipmentCosts?.length ?? 0) > 0;
     for (const item of plannedEquipmentCosts) {
       if (savedToday) {
+        if (editingLog) { initial[item.key]=toInput(savedMap[item.key] ?? 0); continue; }
         if (hasSavedItems || savedToday.costs.equipment === 0) {
           initial[item.key] = toInput(savedMap[item.key] ?? 0);
         } else {
@@ -1395,7 +1449,8 @@ export function ProgressTrackingModalContent({
     return initial;
   });
   const [unplannedEquipmentRows, setUnplannedEquipmentRows] = useState<UnplannedOtherRow[]>(() =>
-    (savedToday?.unplannedEquipmentCosts ?? []).map((item, index) => ({
+    [...(savedToday?.unplannedEquipmentCosts ?? []),...(editingLog?.equipmentCosts?.filter(row=>!row.unplanned&&!plannedEquipmentCosts.some(planned=>planned.key===otherCostKey(row.name))) ?? []),
+      ...(editingLog && savedToday && savedToday.costs.equipment > (editingLog.equipmentCosts ?? []).reduce((sum,row)=>sum+row.amount,0) ? [{name:"Recorded equipment cost",amount:savedToday.costs.equipment-(editingLog.equipmentCosts ?? []).reduce((sum,row)=>sum+row.amount,0)}] : [])].map((item, index) => ({
       id: index,
       name: item.name,
       amount: toInput(item.amount),
@@ -1410,6 +1465,7 @@ export function ProgressTrackingModalContent({
       (savedToday?.unplannedOtherCosts?.length ?? 0) > 0;
     for (const item of plannedOtherCosts) {
       if (savedToday) {
+        if (editingLog) { initial[item.key]=toInput(savedMap[item.key] ?? 0); continue; }
         if (hasSavedItems || savedToday.costs.other === 0) {
           initial[item.key] = toInput(savedMap[item.key] ?? 0);
         } else {
@@ -1424,7 +1480,8 @@ export function ProgressTrackingModalContent({
     return initial;
   });
   const [unplannedOtherRows, setUnplannedOtherRows] = useState<UnplannedOtherRow[]>(() =>
-    (savedToday?.unplannedOtherCosts ?? []).map((item, index) => ({
+    [...(savedToday?.unplannedOtherCosts ?? []),...(editingLog?.otherCosts?.filter(row=>!row.unplanned&&!plannedOtherCosts.some(planned=>planned.key===otherCostKey(row.name))) ?? []),
+      ...(editingLog && savedToday && savedToday.costs.other > (editingLog.otherCosts ?? []).reduce((sum,row)=>sum+row.amount,0) ? [{name:"Recorded other cost",amount:savedToday.costs.other-(editingLog.otherCosts ?? []).reduce((sum,row)=>sum+row.amount,0)}] : [])].map((item, index) => ({
       id: index,
       name: item.name,
       amount: toInput(item.amount),
@@ -1450,7 +1507,7 @@ export function ProgressTrackingModalContent({
   const crewHourly = crew.filter(paidHourly);
   const [hours, setHours] = useState<Record<number, string>>(() => {
     const initial: Record<number, string> = {};
-    const saved = progressToday.todayAttendance;
+    const saved = editingLog ? editingLog.attendance.map(row=>({workerId:row.workerId ?? null,hours:row.hours})) : progressToday.todayAttendance;
     for (const worker of crewHourly) {
       initial[worker.id] = "";
     }
@@ -1479,7 +1536,10 @@ export function ProgressTrackingModalContent({
     hours: parseHours(hours[worker.id] ?? ""),
   }));
   // Labor's priced from hours once anyone's listed; typed otherwise.
-  const laborFromHours = laborRows.length > 0;
+  // Preserve a historical lump-sum labor cost until actual worker hours are
+  // entered. Merely displaying the assigned crew must not erase saved costs.
+  const savedAttendanceCount = editingLog?.attendance.length ?? progressToday.todayAttendance.length;
+  const laborFromHours = laborRows.length > 0 && !(savedToday && savedAttendanceCount===0 && savedToday.costs.labor>0 && !hoursWorked.some(row=>(row.hours ?? 0)>0));
   const laborToday = laborRows.reduce(
     (sum, { worker }, index) => sum + (worker.hourlyRate ?? 0) * (hoursWorked[index].hours ?? 0),
     0
@@ -1712,7 +1772,7 @@ export function ProgressTrackingModalContent({
       (progressToday.cumulativeUnplannedMaterialCost ?? 0) -
       unplannedMaterialCost(savedToday?.unplannedMaterials ?? []) +
       unplannedToday,
-    loggedDates: [...progressToday.loggedDates, toIsoDate(new Date())],
+    loggedDates: [...new Set([...progressToday.loggedDates, workDate])],
   };
   for (const material of materialsUsed) {
     anchor.cumulativeMaterialUsage[material.key] =
@@ -2059,57 +2119,8 @@ export function ProgressTrackingModalContent({
     },
   ];
 
-  async function handleSave() {
-    if (readOnly || pending) return;
-    setError(null);
-    if (quantity === null) {
-      setError("Quantity completed must be 0 or more.");
-      return;
-    }
-    if (exceedsQuantity(quantity, quantityLimit)) {
-      setError(`Quantity completed cannot exceed the remaining planned quantity (${formatQuantity(quantityLimit)}${unit ? ` ${unit}` : ""}).`);
-      return;
-    }
-    if (COST_COMPONENTS.some((component) => costs[component] === null)) {
-      setError("Costs must be 0 or more.");
-      return;
-    }
-    if (materialsUsed.some((material) => material.quantity === null)) {
-      setError("Materials used must be 0 or more.");
-      return;
-    }
-    if (unplannedMaterials.some((material) => material.quantity === null || material.unitCost === null)) {
-      setError("An unplanned material needs a quantity and unit cost of 0 or more.");
-      return;
-    }
-    if (unplannedMaterials.some((material) => (material.quantity ?? 0) > 0 && !material.name)) {
-      setError("Name each unplanned material used.");
-      return;
-    }
-    if (equipmentCostsUsed.some((item) => item.amount === null) || unplannedEquipmentCosts.some((item) => item.amount === null)) {
-      setError("Equipment costs must be 0 or more.");
-      return;
-    }
-    if (unplannedEquipmentCosts.some((item) => (item.amount ?? 0) > 0 && !item.name)) {
-      setError("Enter a description for each added equipment cost item.");
-      return;
-    }
-    if (otherCostsUsed.some((item) => item.amount === null) || unplannedOtherCosts.some((item) => item.amount === null)) {
-      setError("Other costs must be 0 or more.");
-      return;
-    }
-    if (unplannedOtherCosts.some((item) => (item.amount ?? 0) > 0 && !item.name)) {
-      setError("Name each added other cost item.");
-      return;
-    }
-    if (hoursWorked.some((entry) => entry.hours === null)) {
-      setError("Hours worked must be between 0 and 24.");
-      return;
-    }
-
-    setPending(true);
-    const result = await onSave({
-      quantityCompletedToday: quantity,
+  const draft = {
+      quantityCompletedToday: quantity!,
       costs: {
         labor: costs.labor!,
         // Just the typed part — the server prices what's used itself.
@@ -2157,14 +2168,84 @@ export function ProgressTrackingModalContent({
       attendance: hoursWorked
         .filter((entry) => (entry.hours ?? 0) > 0)
         .map((entry) => ({ workerId: entry.workerId, hours: entry.hours! })),
-    });
-    setPending(false);
+  };
+  const draftKey = progressLogDraftKey(draft);
+  const [savedDraftKey,setSavedDraftKey] = useState<string | null>(()=>savedToday ? draftKey : null);
+  const savedDraftRef = useRef(savedDraftKey);
+  const dirty = draftKey !== savedDraftKey;
+  const saveInFlight = useRef(false);
+
+  async function handleSave() {
+    if (readOnly || pending || saving || saveInFlight.current || !dirty || draftKey===savedDraftRef.current) return;
+    setError(null);
+    if (quantity === null) {
+      setError("Quantity completed must be 0 or more.");
+      return;
+    }
+    if (exceedsQuantity(quantity, quantityLimit)) {
+      setError(`Quantity completed cannot exceed the remaining planned quantity (${formatQuantity(quantityLimit)}${unit ? ` ${unit}` : ""}).`);
+      return;
+    }
+    if (COST_COMPONENTS.some((component) => costs[component] === null)) {
+      setError("Costs must be 0 or more.");
+      return;
+    }
+    if (materialsUsed.some((material) => material.quantity === null)) {
+      setError("Materials used must be 0 or more.");
+      return;
+    }
+    if (unplannedMaterials.some((material) => material.quantity === null || material.unitCost === null)) {
+      setError("An unplanned material needs a quantity and unit cost of 0 or more.");
+      return;
+    }
+    if (unplannedMaterials.some((material) => (material.quantity ?? 0) > 0 && !material.name)) {
+      setError("Name each unplanned material used.");
+      return;
+    }
+    if (equipmentCostsUsed.some((item) => item.amount === null) || unplannedEquipmentCosts.some((item) => item.amount === null)) {
+      setError("Equipment costs must be 0 or more.");
+      return;
+    }
+    if (unplannedEquipmentCosts.some((item) => (item.amount ?? 0) > 0 && !item.name)) {
+      setError("Enter a description for each added equipment cost item.");
+      return;
+    }
+    if (otherCostsUsed.some((item) => item.amount === null) || unplannedOtherCosts.some((item) => item.amount === null)) {
+      setError("Other costs must be 0 or more.");
+      return;
+    }
+    if (unplannedOtherCosts.some((item) => (item.amount ?? 0) > 0 && !item.name)) {
+      setError("Name each added other cost item.");
+      return;
+    }
+    if (hoursWorked.some((entry) => entry.hours === null)) {
+      setError("Hours worked must be between 0 and 24.");
+      return;
+    }
+
+    saveInFlight.current = true;
+    setPending(true);
+    let result: ProgressActionResult;
+    try {
+      result = await onSave(draft);
+    } catch {
+      result = {error:"Could not save this log. Your entered values are still here; please try again."};
+    } finally {
+      saveInFlight.current = false;
+      setPending(false);
+    }
     if (result.error) {
       setError(result.error);
       return;
     }
+    if (!result.success) return;
+    savedDraftRef.current = draftKey;
+    setSavedDraftKey(draftKey);
     if (!backgroundSync) router.refresh();
-    onClose();
+    // Finish the historical correction without closing the progress modal.
+    // Returning to today's form also avoids reusing the old audit version
+    // for a second correction while the saved history refreshes.
+    if (editingLog) onEditHistory?.(null);
   }
 
   let logSectionIndex = 0;
@@ -2201,7 +2282,8 @@ export function ProgressTrackingModalContent({
             aria-label={incidentOpen ? "Close" : summaryCollapsed ? "Show Planned, Actual, and Log history" : "Hide Planned, Actual, and Log history"}
             onClick={incidentOpen ? onClose : () => {
               setSummaryHasToggled(true);
-              setSummaryCollapsed((collapsed) => !collapsed);
+              setSummaryCollapsed(!summaryCollapsed);
+              onSummaryCollapsedChange?.(!summaryCollapsed);
             }}
             className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
           >
@@ -2211,15 +2293,15 @@ export function ProgressTrackingModalContent({
       )}
 
       {!readOnly && (
-        <div className="flex min-w-0 flex-col divide-y divide-zinc-200 lg:overflow-y-auto">
+        <div className={`flex min-w-0 flex-col divide-y divide-zinc-200 lg:overflow-y-auto ${editingLog ? "outline outline-1 -outline-offset-1 outline-zinc-900" : ""}`}>
           {/* Today's own record — an override of today. Each field's figure
               is the total with today over planned, live. */}
           <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <h3 className="text-base font-semibold text-zinc-900">Today&apos;s log</h3>
+              <h3 className="text-base font-semibold text-zinc-900">{editingLog ? `${formatDay(editingLog.entryDate)} log` : "Today's log"}</h3>
               <span className="flex items-center gap-1.5 text-sm text-zinc-700">
                 <CalendarDays aria-hidden className="size-4 text-zinc-400" />
-                {new Date().toLocaleDateString("en-US", {
+                {new Date(`${workDate}T00:00:00`).toLocaleDateString("en-US", {
                   weekday: "short",
                   month: "short",
                   day: "numeric",
@@ -2230,7 +2312,7 @@ export function ProgressTrackingModalContent({
             <div className="grid grid-cols-1 gap-x-4 gap-y-5 sm:grid-cols-2">
             <Field
               htmlFor="progress-quantity"
-              label="Quantity completed today"
+              label={editingLog ? "Quantity completed" : "Quantity completed today"}
             >
               <AmountInput
                 id="progress-quantity"
@@ -2238,7 +2320,7 @@ export function ProgressTrackingModalContent({
                 onChange={(value) => {
                   const parsed = parseAmount(value);
                   if (parsed !== null && exceedsQuantity(parsed, quantityLimit)) {
-                    setError(`Maximum quantity for today's log is ${formatQuantity(quantityLimit)}${unit ? ` ${unit}` : ""}.`);
+                    setError(`Maximum quantity for this log is ${formatQuantity(quantityLimit)}${unit ? ` ${unit}` : ""}.`);
                     return;
                   }
                   setError(null);
@@ -2246,7 +2328,10 @@ export function ProgressTrackingModalContent({
                 }}
                 unit={unit}
               />
-              <p className="mt-1 text-right text-xs text-zinc-400">(Planned: {formatQuantity(estimatedQuantity)}{unit ? ` ${unit}` : ""})</p>
+              <div className="mt-1 flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-zinc-400">
+                <span>Logged: {formatQuantity(progressToday.cumulativeQuantityCompleted)}{unit ? ` ${unit}` : ""}</span>
+                <span className="ml-auto text-right">Planned: {formatQuantity(estimatedQuantity)}{unit ? ` ${unit}` : ""}</span>
+              </div>
             </Field>
 
             {COST_COMPONENTS.map((component) => {
@@ -2371,7 +2456,7 @@ export function ProgressTrackingModalContent({
                   return next;
                 })
               }
-              laborToday={laborToday}
+              laborToday={costs.labor ?? 0}
               laborDetail={
                 plannedCosts.labor > 0 ? (
                   <span
@@ -2544,6 +2629,7 @@ export function ProgressTrackingModalContent({
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <h3 className="text-base font-semibold text-zinc-900">Materials used</h3>
             </div>
+            {retainedMaterials.length>0 && <div className="space-y-1 text-xs text-zinc-500"><p>Previously logged materials no longer in the plan are retained:</p>{retainedMaterials.map((row,index)=><p key={index}>{row.name} · {formatQuantity(row.quantity)} {row.unit}</p>)}</div>}
 
             {(hasItemizedMaterials || unplannedRows.length > 0) && (
             <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
@@ -2841,7 +2927,7 @@ export function ProgressTrackingModalContent({
           </div>
         </section>
 
-        <section className={`${nextLogSectionBg()}`}>
+        {!editingLog && <section className={`${nextLogSectionBg()}`}>
           <button
             type="button"
             aria-expanded={incidentOpen}
@@ -2871,7 +2957,7 @@ export function ProgressTrackingModalContent({
                 ))}</div>}
             </div>
           )}
-        </section>
+        </section>}
       </div>
     )}
 
@@ -3013,6 +3099,8 @@ export function ProgressTrackingModalContent({
             highlightLatest={highlightLatest}
             highlightEntryDate={highlightEntryDate}
             onDelete={!readOnly && onDeleteOverride ? askToDelete : undefined}
+            onEdit={!readOnly && onEditHistory ? log=>onEditHistory(log) : undefined}
+            editingLogId={editingLog?.id}
             projectId={projectId}
             projectName={projectName}
             incidentContext={incidentContext}
@@ -3051,7 +3139,7 @@ export function ProgressTrackingModalContent({
       {!readOnly && onDeleteOverride && (
         <ConfirmDialog
           open={deleteDate !== null}
-          title="Delete this override?"
+          title="Delete this daily log?"
           message={deleteDate ? deleteOverrideMessage(deleteDate) : ""}
           pending={deletingOverride}
           error={deleteOverrideError}
@@ -3111,7 +3199,7 @@ export function ProgressTrackingModalContent({
             {error}
           </p>
         ) : (
-          <p className="mr-auto text-xs text-zinc-500">Changes apply to today&apos;s log only.</p>
+          <p className="mr-auto text-xs text-zinc-500">{editingLog ? `Changes apply to the ${formatDay(editingLog.entryDate)} log only. Previous versions remain in history.` : "Changes apply to today's log only."}</p>
         )}
         <button
           type="button"
@@ -3123,11 +3211,13 @@ export function ProgressTrackingModalContent({
         <button
           type="button"
           onClick={handleSave}
-          disabled={pending}
+          disabled={pending || saving || !dirty}
+          aria-busy={pending || saving}
+          title={!dirty ? "No changes to save" : undefined}
           className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <Check aria-hidden className="size-4" />
-          {pending ? "Saving..." : "Save"}
+          {pending || saving ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <Check aria-hidden className="size-4" />}
+          {pending || saving ? "Saving..." : editingLog ? "Save changes" : "Save"}
         </button>
       </ModalFooter>}
     </div>

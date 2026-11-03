@@ -7,7 +7,8 @@ import { projectProgressLog } from "@/lib/progress-logs/optimistic";
 
 type State = { task: Record<number, TaskProgressToday>; category: Record<number, TaskProgressToday>; history: ProjectOverrideHistory };
 type Change = { key: string; item: OverrideLogItem; source: OverrideLog[] | undefined; sourceProgress: TaskProgressToday | undefined; date: string; deleting: boolean; progress: TaskProgressToday; history: OverrideLog[]; pending: boolean };
-type Sync = State & { run: (item: OverrideLogItem, date: string, log: OverrideLog | null, action: () => Promise<{ error?: string; success?: boolean }>) => boolean };
+type SaveResult = { error?: string; success?: boolean };
+type Sync = State & { pendingKeys: string[]; run: (item: OverrideLogItem, date: string, log: OverrideLog | null, action: () => Promise<SaveResult>) => false | {completion: Promise<SaveResult>} };
 const Context = createContext<Sync | null>(null);
 export const useProgressLogSync = () => useContext(Context);
 
@@ -39,7 +40,7 @@ export function ProgressLogSyncProvider({ task, category, history, children }: S
     for (const change of active) { value[change.item.kind][change.item.id] = change.progress; value.history[change.key] = change.history; }
     return value;
   }, [task, category, history, active]);
-  const value: Sync = { ...visible, run };
+  const value: Sync = { ...visible, pendingKeys:active.map(change=>change.key), run };
   function run(item: OverrideLogItem, date: string, log: OverrideLog | null, action: () => Promise<{ error?: string; success?: boolean }>) {
     const key = `${item.kind}-${item.id}`;
     if (locks.current.has(key)) { setError("This task is still saving. Please wait before changing its log again."); return false; }
@@ -47,22 +48,23 @@ export function ProgressLogSyncProvider({ task, category, history, children }: S
     setError(null);
     const next = projectProgressLog(value[item.kind][item.id], value.history[key] ?? [], date, log, new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" }));
     setChanges(previous => [...previous, { key, item, date, deleting: log === null, source: history[key], sourceProgress: (item.kind === "task" ? task : category)[item.id], ...next, pending: true }]);
-    void (async () => {
+    const completion = (async (): Promise<SaveResult> => {
       try {
         const result = await action();
         if (!result.success) throw new Error(result.error || "Could not save the progress change.");
         setChanges(previous => previous.map(change => change.key === key ? { ...change, pending: false } : change));
+        return {success:true};
       } catch (failure) {
         locks.current.delete(key);
         setChanges(previous => previous.filter(change => change.key !== key));
         setError(`${failure instanceof Error ? failure.message : "Could not save the progress change."} The previous view has been restored. Reopen the task to review and retry.`);
+        return {error:failure instanceof Error ? failure.message : "Could not save the progress change."};
       } finally { router.refresh(); }
     })();
-    return true;
+    return {completion};
   }
   return <Context.Provider value={value}>
     {error && <p role="alert" className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">{error}</p>}
-    {active.some(change => change.pending) && <p role="status" className="px-6 py-1 text-xs text-zinc-500">Saving progress changes...</p>}
     {children}
   </Context.Provider>;
 }

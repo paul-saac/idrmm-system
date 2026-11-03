@@ -9,7 +9,7 @@ export function latestDailyLogs(logs: readonly OverrideLog[]) {
   }
   return byDate;
 }
-function dayEntry(log: OverrideLog): ProgressDayEntry {
+export function dayEntry(log: OverrideLog): ProgressDayEntry {
   const materialUsage: Record<string, number> = {};
   for (const row of log.materialsUsed.filter(row => row.unitCost == null)) {
     const key = materialKey(row.name, row.unit);

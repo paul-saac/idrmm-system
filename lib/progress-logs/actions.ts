@@ -117,6 +117,7 @@ function toOverrideLog(row: OverrideLogRow, accounts: SavedByAccounts): Override
       })
     ),
     attendance: readList(row.attendance, (worker) => ({
+      workerId: typeof worker.workerId === "number" && worker.workerId > 0 ? worker.workerId : null,
       name: String(worker.name ?? ""),
       hours: toNumber(worker.hours),
       rate: toNumber(worker.rate),

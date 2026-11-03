@@ -418,6 +418,7 @@ export async function recordTaskProgress(
         unplanned: row.unplanned,
       })),
       attendance: crew.rows.map((row) => ({
+        workerId: row.worker_id,
         name: row.worker_name,
         hours: row.hours,
         rate: row.hourly_rate,
