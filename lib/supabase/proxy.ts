@@ -17,6 +17,10 @@ import { sessionLoginError } from "@/lib/auth/session-policy";
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
   const { pathname } = request.nextUrl;
+  // These public, read-only notices must remain available before sign-in and
+  // invitation acceptance. Server actions still pass through authentication.
+  if (["GET", "HEAD"].includes(request.method) && !request.headers.has("next-action") &&
+    ["/privacy", "/terms"].includes(pathname)) return response;
   // These handlers establish/inspect sessions themselves. An expired cookie
   // must not prevent a fresh password login or invitation/reset exchange.
   if (pathname === "/api/auth/session" || pathname.startsWith("/auth/") ||

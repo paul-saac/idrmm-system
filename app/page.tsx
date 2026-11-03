@@ -175,6 +175,7 @@ export default async function LoginPage({
               </div>
               <div className="mt-6">
                 <LoginForm initialError={initialError} />
+                <p className="mt-4 text-center text-xs text-zinc-500"><a href="/terms" className="underline">Terms and Conditions</a><span aria-hidden="true"> · </span><a href="/privacy" className="underline">Privacy notice</a></p>
               </div>
           </div>
           <p className="mt-4 text-[0.5625rem] text-zinc-400">IDR M&amp;M · Construction management</p>

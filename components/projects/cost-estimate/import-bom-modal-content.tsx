@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import { AiGenerationStatus } from "@/components/ui/ai-generation-status";
+import { AI_IMPORT_NOTICE_VERSION } from "@/lib/bom-import/privacy";
 import {
   extractBomFromFile,
   type ExtractedCategory,
@@ -224,6 +225,7 @@ export function ImportBomModalContent({
   const confirmLock = useRef(false);
   const [step, setStep] = useState<ImportBomStep>("upload");
   const [file, setFile] = useState<File | null>(null);
+  const [privacyAcknowledged, setPrivacyAcknowledged] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [categories, setCategories] = useState<DraftCategory[]>([]);
@@ -269,6 +271,7 @@ export function ImportBomModalContent({
     const picked = files?.[0];
     if (picked) {
       setFile(picked);
+      setPrivacyAcknowledged(false);
       setProcessError(null);
     }
   }
@@ -311,12 +314,17 @@ export function ImportBomModalContent({
 
   async function handleProcess() {
     if (!file || processLock.current) return;
+    if (!privacyAcknowledged) {
+      setProcessError("Review the AI privacy notice and confirm the acknowledgment before processing.");
+      return;
+    }
     processLock.current = true;
     try {
       setProcessError(null);
       setStep("processing");
       const formData = new FormData();
       formData.set("file", file);
+      formData.set("aiPrivacyAcknowledgment", AI_IMPORT_NOTICE_VERSION);
       const result = await extractBomFromFile(formData);
       if (!result.categories) {
         setProcessError(result.error ?? "Something went wrong. Please try again.");
@@ -486,6 +494,19 @@ export function ImportBomModalContent({
           )}
         </div>
 
+        <section aria-labelledby="ai-upload-privacy" className="rounded border border-white/15 px-3 py-3 text-xs leading-relaxed text-zinc-300">
+          <h3 id="ai-upload-privacy" className="font-semibold text-zinc-100">Before processing with AI</h3>
+          <p className="mt-2">Use a redacted copy. Remove unnecessary names, signatures, personal contact details, IDs, and confidential information not needed for tasks and costs. Redaction is not automatic.</p>
+          <p className="mt-2">Only Process with AI sends this copy to the configured external AI service. Readable text and, where needed, page images are processed. Selecting a file alone does not send it to AI.</p>
+          <p className="mt-2">Extracted drafts are saved on this browser for recovery. Review them before confirming; delete drafts you no longer need and avoid shared devices.</p>
+          <p className="mt-2"><a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">Privacy notice</a><span aria-hidden="true"> · </span><a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">Terms and AI use</a></p>
+          <label className="mt-3 flex cursor-pointer items-start gap-2">
+            <input type="checkbox" checked={privacyAcknowledged} onChange={event => setPrivacyAcknowledged(event.target.checked)} className="mt-0.5 size-3.5 shrink-0 accent-zinc-500" />
+            <span>I have checked this copy and removed unnecessary personal information and signatures. I am authorized to send it for AI processing and have read the notice.</span>
+          </label>
+          <p className="mt-2 text-zinc-400">If you cannot confirm, cancel and use manual task and cost entry.</p>
+        </section>
+
         {processError && (
           <p role="alert" className="text-sm text-red-400">
             {processError}
@@ -503,7 +524,7 @@ export function ImportBomModalContent({
           <button
             type="button"
             onClick={handleProcess}
-            disabled={!file}
+            disabled={!file || !privacyAcknowledged}
             className="flex cursor-pointer items-center gap-2 rounded bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-100 disabled:cursor-not-allowed"
           >
             <AiSparklesIcon className="size-5 text-emerald-600 shrink-0" />
