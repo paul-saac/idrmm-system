@@ -1,8 +1,11 @@
+import { applyDependencySelection, rowPredecessors, dependencyKey } from "@/lib/cost-estimate/dependency-model";
 import type { CostCategory } from "@/lib/cost-estimate/data";
 
 export type ScheduleModalEdit = {
   kind: "task" | "category";
   id: number;
+  predecessors?: string[];
+  successors?: string[];
   name?: string;
   isMilestone?: boolean;
   /** Undefined means this form does not expose the relationship. */
@@ -23,6 +26,8 @@ export function scheduleModalEdit(kind: ScheduleModalEdit["kind"], id: number, f
   const previous = /^(category|task):([1-9][0-9]*)$/.exec(String(form.get("previousSuccessorRowKey") ?? ""));
   return {
     kind, id,
+    ...(form.has("dependenciesField") ? { predecessors: JSON.parse(String(form.get("predecessorRowKeys") ?? "[]")),
+      successors: JSON.parse(String(form.get("successorRowKeys") ?? "[]")) } : {}),
     ...(form.has("previousSuccessorRowKey") ? { previousSuccessorId: previous ? Number(previous[2]) : null,
       previousSuccessorKind: (previous?.[1] ?? kind) as "category" | "task" } : {}),
     ...(form.has("predecessorRowKey") ? { predecessorId: predecessor ? Number(predecessor[2]) : null,
@@ -53,7 +58,8 @@ export function applyScheduleModalEdits(categories: CostCategory[], edits: reado
     if (ownsOldLink && edit.kind === "task" && row.predecessorTaskId === edit.id) return { ...row, predecessorTaskId: null };
     return row;
   }
-  return edits.reduce((current, edit) => current.map(category => {
+  return edits.reduce((current, edit) => (edit.predecessors !== undefined
+    ? applyDependencySelection(current, edit, edit.predecessors, edit.successors ?? []) : current).map(category => {
     let next = dependency(category, "category", edit);
     if (edit.kind === "category" && category.id === edit.id) next = { ...next,
         ...(edit.name !== undefined ? { name: edit.name } : {}),
@@ -71,9 +77,11 @@ function sameModalFields(left: CostCategory[], right: CostCategory[]) {
   return left.every((category, index) => {
     const next = right[index];
     return category.name === next.name && category.isMilestone === next.isMilestone &&
+      JSON.stringify(rowPredecessors(category).map(dependencyKey).sort()) === JSON.stringify(rowPredecessors(next).map(dependencyKey).sort()) &&
       (category.predecessorCategoryId ?? null) === (next.predecessorCategoryId ?? null) &&
       (category.predecessorTaskId ?? null) === (next.predecessorTaskId ?? null) &&
       category.tasks.every((task, taskIndex) => task.isMilestone === next.tasks[taskIndex].isMilestone &&
+        JSON.stringify(rowPredecessors(task).map(dependencyKey).sort()) === JSON.stringify(rowPredecessors(next.tasks[taskIndex]).map(dependencyKey).sort()) &&
         (task.predecessorTaskId ?? null) === (next.tasks[taskIndex].predecessorTaskId ?? null) &&
         (task.predecessorCategoryId ?? null) === (next.tasks[taskIndex].predecessorCategoryId ?? null));
   });

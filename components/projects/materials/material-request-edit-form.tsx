@@ -1,5 +1,7 @@
 "use client";
 
+import { useRequestSync } from "@/components/projects/request-sync-context";
+import { materialRequestIssue } from "@/lib/material-requests/validation";
 import { RequiredMark } from "@/components/ui/required-mark";
 import { useActionState, useEffect, useId, useState, type ReactNode } from "react";
 import {
@@ -146,6 +148,7 @@ export function MaterialRequestEditForm({
   currentUserName?: string;
   onSuccess?: () => void;
 }) {
+  const requestSync = useRequestSync();
   const boundAction = request
     ? updateMaterialRequest.bind(null, request.id, projectId)
     : createMaterialRequest.bind(null, projectId);
@@ -171,12 +174,14 @@ export function MaterialRequestEditForm({
 
   useEffect(() => {
     if (state.success) {
+      if (state.request) requestSync?.saveMaterial(state.request);
       onSuccess?.();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
   function updateItem(index: number, patch: Partial<EditableItem>) {
+    setFormError(null);
     setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   }
 
@@ -204,20 +209,6 @@ export function MaterialRequestEditForm({
     }))
   );
 
-  // The required fields (the asterisks) — checked here before it's sent.
-  function missingRequired(): string | null {
-    if (!dateRequired) return "Pick the date the materials are required.";
-    if (items.length === 0) return "Add at least one material item to the request.";
-    const incomplete = items.some(
-      (item) =>
-        !item.materialName.trim() ||
-        !(Number(item.quantityNeeded) > 0) ||
-        !item.uom.trim() ||
-        !item.purpose.trim()
-    );
-    if (incomplete) return "Each item needs a material name, quantity, unit and purpose.";
-    return null;
-  }
 
   return (
     <Modal
@@ -235,9 +226,13 @@ export function MaterialRequestEditForm({
         className="flex flex-col gap-6"
         noValidate
         onSubmit={(e) => {
-          const missing = missingRequired();
-          setFormError(missing);
-          if (missing) e.preventDefault();
+          const issue = materialRequestIssue(dateRequired, items);
+          setFormError(issue?.message ?? null);
+          if (issue) {
+            e.preventDefault();
+            const id = issue.field === "dateRequired" ? `${formId}-dateRequired` : `${formId}-item-${issue.index}-${issue.field}`;
+            document.getElementById(id)?.focus();
+          }
         }}
       >
         <input type="hidden" name="items" value={itemsJson} readOnly />

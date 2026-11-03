@@ -1,5 +1,6 @@
 "use client";
 
+import { CancelRequestButton } from "@/components/projects/cancel-request-button";
 import { ProjectWriteButton } from "@/components/projects/project-access-context";
 import { useActionState, useState, type ReactNode } from "react";
 import { PackageCheck } from "lucide-react";
@@ -9,7 +10,6 @@ import { Modal, ModalFooter } from "@/components/ui/modal";
 import { MaterialRequestEditForm } from "@/components/projects/materials/material-request-edit-form";
 import {
   approveMaterialRequest,
-  cancelMaterialRequest,
   recordMaterialRequestDelivery,
   type MaterialRequestActionState,
 } from "@/lib/material-requests/actions";
@@ -217,38 +217,6 @@ function ApproveButton({ requestId, projectId }: { requestId: number; projectId:
   );
 }
 
-function CancelButton({ requestId, projectId }: { requestId: number; projectId: number }) {
-  const boundAction = cancelMaterialRequest.bind(null, requestId, projectId);
-  const [state, formAction, pending] = useActionState(boundAction, actionInitialState);
-  return (
-    <span className="relative inline-flex">
-      <form
-        action={formAction}
-        onSubmit={(e) => {
-          if (!window.confirm("Cancel this material request?")) {
-            e.preventDefault();
-          }
-        }}
-      >
-        <ProjectWriteButton
-          type="submit"
-          disabled={pending}
-          className="cursor-pointer rounded border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Cancel request
-        </ProjectWriteButton>
-      </form>
-      {state?.error && (
-        <span
-          role="alert"
-          className="absolute top-full right-0 z-10 mt-1 w-48 rounded-md border border-red-200 bg-white px-2 py-1 text-right text-xs font-normal text-red-600 shadow-sm"
-        >
-          {state.error}
-        </span>
-      )}
-    </span>
-  );
-}
 
 /**
  * A material request in full, opened in its row of a request table
@@ -299,7 +267,7 @@ export function MaterialRequestDetails({ request }: { request: MaterialRequestDe
               Fulfill
             </ProjectWriteButton>
           )}
-          {!isTerminal && <CancelButton requestId={request.id} projectId={projectId} />}
+          {!isTerminal && <CancelRequestButton kind="material" requestId={request.id} projectId={projectId} />}
           <ProjectWriteButton
             type="button"
             onClick={() => {

@@ -10,7 +10,8 @@ function compile(source, dependencies = {}, globals = {}) {
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   runInNewContext(code, { exports, require: name => dependencies[name], FormData, Error, ...globals });return exports;
 }
-const { applyScheduleModalEdits, scheduleModalEdit, unconfirmedScheduleModalEdits } = compile(modelSource);
+const dependencies = compile(readFileSync(new URL('../../../lib/cost-estimate/dependency-model.ts', import.meta.url), 'utf8'));
+const { applyScheduleModalEdits, scheduleModalEdit, unconfirmedScheduleModalEdits } = compile(modelSource, { '@/lib/cost-estimate/dependency-model': dependencies });
 const { createGanttOperationQueue } = compile(readFileSync(new URL('./gantt-operation-queue.ts', import.meta.url), 'utf8'));
 const plain = value => JSON.parse(JSON.stringify(value));
 const fixture = () => [
@@ -131,4 +132,19 @@ test('both edit forms intercept submission only for the parent-owned edit save; 
     assert.equal(intercept(undefined, false, () => {}), undefined);
     assert.equal(intercept({ id: 1 }, true, undefined), undefined);
   }
+});
+
+
+test('multiple dependencies patch immediately and wait for every server-confirmed link',()=>{
+ const base=fixture();
+ const edit=scheduleModalEdit('task',11,form({dependenciesField:'1',predecessorRowKeys:'["category:3","task:13"]',successorRowKeys:'["task:12"]'}));
+ const next=applyScheduleModalEdits(base,[edit]);
+ assert.equal(next[3].tasks[0].predecessors.length,2);
+ assert.equal(next[1].predecessorCategoryId,1);
+ const pending=[{token:1,edit,pending:false}];
+ assert.equal(unconfirmedScheduleModalEdits(base,pending).length,1);
+ const incomplete=plain(next);incomplete[3].tasks[0].predecessors.pop();
+ assert.equal(unconfirmedScheduleModalEdits(incomplete,pending).length,1);
+ assert.equal(unconfirmedScheduleModalEdits(next,pending).length,0);
+ assert.equal(next[3].tasks[0].laborEstimate,500);
 });

@@ -36,10 +36,11 @@ export async function redoGanttAction(projectId: number, includeCategories = tru
   return moveGanttHistory(projectId, "redo", includeCategories);
 }
 
-/** Begin a new visit with a complete, atomic baseline before any queued edits. */
-export async function resetGanttHistory(projectId: number): Promise<void> {
+/** Ensure a baseline without erasing this editor's saved import/Undo history. */
+export async function resetGanttHistory(projectId: number): Promise<{ canUndo: boolean; canRedo: boolean }> {
   if (!await requireProjectAccess(projectId)) throw new Error("You are not authorized to edit this project.");
   const client = await createClient();
-  const { error } = await client.rpc("gantt_history", { p_project_id: projectId, p_action: "reset" });
+  const { data, error } = await client.rpc("gantt_history", { p_project_id: projectId, p_action: "checkpoint" });
   if (error) throw new Error("Could not initialize schedule history. Refresh the project and retry.");
+  return data as { canUndo: boolean; canRedo: boolean };
 }

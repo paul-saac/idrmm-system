@@ -14,14 +14,13 @@ import {
 } from "@/lib/cost-estimate/actions";
 import type { CostCategory, TaskMaterialAssignment } from "@/lib/cost-estimate/data";
 import { TaskDependenciesFields } from "@/components/projects/progress/task-dependencies-fields";
-import { currentProjectSuccessor, projectSuccessorOptions, projectPredecessorOptions, scheduleRowKey } from "@/lib/cost-estimate/successor-options";
 
 const initialState: CostEstimateActionState = {};
 
 export function CategoryForm({
   projectId,
   category,
-  siblingCategories,
+  siblingCategories: _siblingCategories,
   projectCategories,
   onViewMaterials,
   showDeleteButton,
@@ -62,15 +61,6 @@ export function CategoryForm({
   onSave?: (form: FormData) => void;
 }) {
   const [milestone, setMilestone] = useState(category?.isMilestone ?? false);
-  const [successorSelection, setSuccessorSelection] = useState(() => category && projectCategories
-    ? currentProjectSuccessor(projectCategories, { kind: "category", id: category.id }) : (() => { const next = (siblingCategories ?? []).find(row => row.predecessorCategoryId === category?.id); return next ? `category:${next.id}` : ""; })());
-  const [predecessorSelection, setPredecessorSelection] = useState(() => {
-    const row = projectCategories?.find(row => row.id === category?.id) ?? category;
-    return row?.predecessorTaskId ? `task:${row.predecessorTaskId}` : row?.predecessorCategoryId ? `category:${row.predecessorCategoryId}` : "";
-  });
-  const predecessorOptions = category && projectCategories ? projectPredecessorOptions(projectCategories, { kind: "category", id: category.id })
-    : (siblingCategories ?? []).filter(row => row.id !== category?.id).map(row => ({ kind: "category" as const, id: row.id, name: row.name }));
-  const projectOptions = category && projectCategories ? projectSuccessorOptions(projectCategories, { kind: "category", id: category.id }, milestone) : [];
   const boundAction = category
     ? updateCategory.bind(null, category.id, projectId)
     : createCategory.bind(null, projectId);
@@ -159,8 +149,7 @@ export function CategoryForm({
                   onChange={event => {
                     const checked = event.target.checked;
                     setMilestone(checked);
-                    if (projectCategories && !projectSuccessorOptions(projectCategories, { kind: "category", id: category.id }, checked)
-                      .some(option => scheduleRowKey(option) === successorSelection)) setSuccessorSelection("");
+
                   }}
                   className="peer size-4 cursor-pointer appearance-none rounded-sm border border-zinc-300 bg-zinc-100 transition checked:border-zinc-900 checked:bg-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-300 focus-visible:outline-none"
                 />
@@ -181,17 +170,13 @@ export function CategoryForm({
           </>
         )}
 
-        {category && <TaskDependenciesFields id={formId} predecessor={predecessorSelection} successor={successorSelection}
-          predecessorOptions={predecessorOptions} successorOptions={projectCategories ? [ ...projectOptions, ...predecessorOptions.filter(option => scheduleRowKey(option) === successorSelection && !projectOptions.some(existing => scheduleRowKey(existing) === successorSelection)) ] : (siblingCategories ?? []).filter(row => row.id !== category?.id).map(row => ({ kind: "category" as const, id: row.id, name: row.name }))}
-          onPredecessor={setPredecessorSelection} onSuccessor={setSuccessorSelection} />}
+        {category && <TaskDependenciesFields id={formId} source={{ kind: "category", id: category.id }} categories={projectCategories ?? []} />}
 
         {category && (
           <div
-            className={`-mx-6 flex flex-col gap-2 px-6 ${
-              category.hasTasks === false ? "border-t border-zinc-200 pt-4" : ""
-            }`}
+            className="-mx-6 flex flex-col gap-3 border-t border-zinc-200 px-6"
           >
-            <div className="flex items-center justify-between">
+            <div className="-mx-6 flex items-center justify-between border-b border-zinc-200 px-6 py-4">
               <h3 className="text-sm font-medium text-zinc-900">
                 Assigned Resources
               </h3>

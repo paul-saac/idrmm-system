@@ -15,6 +15,14 @@ export type ProjectInsights = {
   asOfDate: string;
   summary: string;
   findings: (InsightFact & { recommendation: string })[];
+  schedule?: {
+    risk: "low" | "medium" | "high" | "unassessed" | "completed";
+    reason: string;
+    targetDate: string | null;
+    forecastDate: string | null;
+    differenceDays: number | null;
+    delayedTasks: number;
+  };
 };
 
 export type ProjectInsightsResult = { data?: ProjectInsights; error?: string; empty?: boolean };

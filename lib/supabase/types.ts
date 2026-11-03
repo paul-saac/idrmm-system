@@ -29,6 +29,19 @@ export type AccountEventAction =
 export interface Database {
   public: {
     Tables: {
+      project_ai_insights: {
+        Row: { project_id: number; analysis: unknown; generated_by: string | null; generated_at: string };
+        Insert: { project_id: number; analysis: unknown; generated_by?: string | null; generated_at?: string };
+        Update: { analysis?: unknown; generated_by?: string | null; generated_at?: string };
+        Relationships: [];
+      };
+      estimate_dependencies: {
+        Row: { id: number; project_id: number; predecessor_category_id: number | null; predecessor_task_id: number | null; successor_category_id: number | null; successor_task_id: number | null; predecessor_key: string; successor_key: string; created_at: string; created_by: string | null };
+        Insert: { id?: number; project_id: number; predecessor_category_id?: number | null; predecessor_task_id?: number | null; successor_category_id?: number | null; successor_task_id?: number | null; created_at?: string; created_by?: string | null };
+        Update: { predecessor_category_id?: number | null; predecessor_task_id?: number | null; successor_category_id?: number | null; successor_task_id?: number | null };
+        Relationships: [];
+      };
+
       material_purchases: {
         Row: MaterialPurchase;
         Insert: Omit<MaterialPurchase,"id" | "amount" | "created_at">;
@@ -1602,6 +1615,10 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      import_reviewed_estimate: {
+        Args: { p_project_id: number; p_categories: unknown };
+        Returns: undefined;
+      };
       save_estimate_links: {
         Args: { p_project_id: number; p_source_kind: string; p_source_id: number;
           p_predecessor_kind: string | null; p_predecessor_id: number | null; p_successor_kind: string | null;
@@ -1618,6 +1635,10 @@ export interface Database {
       save_estimate_successor: {
         Args: { p_project_id: number; p_source_kind: string; p_source_id: number; p_successor_kind: string | null;
           p_successor_id: number | null; p_milestone?: boolean | null; p_name?: string | null };
+        Returns: undefined;
+      };
+      save_estimate_dependencies: {
+        Args: { p_project_id: number; p_source_kind: string; p_source_id: number; p_predecessors: string[]; p_successors: string[]; p_previous_predecessors?: string[]; p_previous_successors?: string[]; p_milestone?: boolean | null; p_name?: string | null };
         Returns: undefined;
       };
       outdent_estimate_row: {

@@ -81,6 +81,42 @@ export function patchGanttScroll(source) {
     }
     patched = patched.replaceAll(original, replacement);
   }
+  // Match inclusive task ends: a milestone on the 11th sits on the
+  // right boundary of the 11th. Only display geometry moves, not saved dates.
+  const milestoneStart = "  var x = taskXCoordinate(task.start, dates, columnWidth);\n  var y = taskYCoordinate(index, rowHeight, taskHeight);\n  var x1 = x - taskHeight * 0.5;";
+  const previousMilestoneCentered = `  // IDRMM: center date-only milestone geometry in its scheduled day.
+  var milestoneDayStart = new Date(task.start.getTime());
+  milestoneDayStart.setHours(0, 0, 0, 0);
+  var milestoneDayEnd = new Date(milestoneDayStart.getTime());
+  milestoneDayEnd.setDate(milestoneDayEnd.getDate() + 1);
+  var milestoneDisplayDate = new Date((milestoneDayStart.getTime() + milestoneDayEnd.getTime()) / 2);
+  var x = taskXCoordinate(milestoneDisplayDate, dates, columnWidth);
+  var y = taskYCoordinate(index, rowHeight, taskHeight);
+  var x1 = x - taskHeight * 0.5;`;
+  const milestoneAligned = `  // IDRMM: align date-only milestones to the inclusive end-date boundary.
+  var milestoneDayEnd = new Date(task.start.getTime());
+  milestoneDayEnd.setHours(0, 0, 0, 0);
+  milestoneDayEnd.setDate(milestoneDayEnd.getDate() + 1);
+  var x = taskXCoordinate(milestoneDayEnd, dates, columnWidth);
+  var y = taskYCoordinate(index, rowHeight, taskHeight);
+  var x1 = x - taskHeight * 0.5;`;
+  if (!patched.includes(milestoneAligned)) {
+    const previous = patched.includes(previousMilestoneCentered) ? previousMilestoneCentered : milestoneStart;
+    if (patched.split(previous).length !== 2) throw new Error("Gantt milestone geometry patch no longer matches convertToMilestone.");
+    patched = patched.replace(previous, milestoneAligned);
+  }
+  // Forward a display-only calendar layer into both SVG surfaces. It is
+  // rendered below today and task bars; no geometry/scroll effects are changed.
+  for (const [original, replacement] of [
+    ["  var gridProps = {\n    columnWidth: columnWidth,", "  var gridProps = {\n    renderNonWorkingDays: _ref.renderNonWorkingDays,\n    viewMode: viewMode,\n    columnWidth: columnWidth,"],
+    ["  var calendarProps = {\n    dateSetup: dateSetup,", "  var calendarProps = {\n    renderNonWorkingDays: _ref.renderNonWorkingDays,\n    dateSetup: dateSetup,"],
+    ["  }, gridRows),", "  }, gridRows), _ref.renderNonWorkingDays && _ref.renderNonWorkingDays({ dates: dates, columnWidth: columnWidth, height: y, header: false, viewMode: _ref.viewMode }),"],
+    ["  }), bottomValues, \" \", topValues);", "  }), _ref.renderNonWorkingDays && _ref.renderNonWorkingDays({ dates: dateSetup.dates, columnWidth: columnWidth, height: headerHeight, header: true, viewMode: viewMode }), bottomValues, \" \", topValues);"],
+  ]) {
+    if (patched.includes(replacement)) continue;
+    if (patched.split(original).length !== 2) throw new Error("Gantt non-working calendar layer patch no longer matches its SVG surface.");
+    patched = patched.replace(original, replacement);
+  }
   return patched;
 }
 

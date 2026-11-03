@@ -99,7 +99,12 @@ export function ProjectHeader({
   );
   const crew = workers.filter((worker) => crewIds.has(worker.id));
 
-  const scheduled = project.startDate && project.targetEndDate;
+  const baselineStart = categories.flatMap(category => category.tasks.length
+    ? category.tasks.map(task => task.plannedStartDate) : [category.plannedStartDate])
+    .filter((date): date is string => !!date).sort()[0];
+  const baselineFinish = categories.flatMap(category => category.tasks.length
+    ? category.tasks.map(task => task.plannedEndDate) : [category.plannedEndDate])
+    .filter((date): date is string => !!date).sort().at(-1);
 
   return (
     <div className="bg-zinc-900 pt-4">
@@ -186,9 +191,9 @@ export function ProjectHeader({
           label="Project schedule"
           description={project.targetEndDate ? `Official target: ${toDate(project.targetEndDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : undefined}
           value={
-            scheduled ? (
+            baselineStart && baselineFinish ? (
               <span className="truncate">
-                {shortDate(project.startDate!)} – {shortDate(project.targetEndDate!)}
+                {shortDate(baselineStart)} – {shortDate(baselineFinish)}
               </span>
             ) : (
               <span className="text-zinc-500">Not scheduled</span>
@@ -212,12 +217,16 @@ export function ProjectHeader({
       <Modal open={assessmentOpen} onClose={() => setAssessmentOpen(false)} title="Project schedule assessment">
         <div className="space-y-5 text-sm text-zinc-700">
           <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-3">
+            <dt className="text-zinc-500">Last planned task completion</dt><dd>{baselineFinish ?? "Not scheduled"}</dd>
             <dt className="text-zinc-500">Official target</dt><dd>{project.targetEndDate ?? "Not scheduled"}</dd>
             <dt className="text-zinc-500">Forecast completion</dt><dd>{assessment.forecastDate ?? "Insufficient data"}</dd>
             <dt className="text-zinc-500">Delay risk</dt><dd className={riskStyles[assessment.risk]}>{riskLabels[assessment.risk]}</dd>
             <dt className="text-zinc-500">Latest progress record</dt><dd>{assessment.lastRecordedDate ?? "No saved progress"}</dd>
           </dl>
           <p>{assessment.reason}</p>
+          <section className="space-y-2"><h3 className="font-semibold text-zinc-900">Planned schedule and forecast</h3>
+            <p>The Gantt Start and End dates are the planned schedule baseline. Only an authorized schedule edit changes them. Forecasted dates are read-only estimates; recalculating them does not move task bars, change saved accomplishments, or update the official project target.</p>
+          </section>
           <section className="space-y-2"><h3 className="font-semibold text-zinc-900">How the forecast is calculated</h3><p>{assessment.method}</p>
             <p>Actual completion comes from saved progress entries. For started tasks, the remaining work is divided by the recorded average progress per working day since the planned start. Tasks with no recorded completion retain their planned duration. Successors wait for predecessor completion; parallel activities keep their own planned start constraints.</p>
           </section>

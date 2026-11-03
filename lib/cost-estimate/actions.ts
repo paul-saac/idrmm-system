@@ -4,7 +4,7 @@ import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
-import { importResourceTotals, validImportResources, type ImportResources } from "@/lib/bom-import/estimate-resources";
+import { validImportResources, type ImportResources } from "@/lib/bom-import/estimate-resources";
 import { validOtherCostChanges, type OtherCostChange } from "./other-cost-lines";
 import { recordGanttCheckpoint } from "@/lib/cost-estimate/undo-redo";
 import type { CostCategory } from "@/lib/cost-estimate/data";
@@ -223,6 +223,23 @@ async function saveProjectSuccessor(
   return { success: true };
 }
 
+async function saveMultipleDependencies(supabase: Awaited<ReturnType<typeof createClient>>, projectId: number,
+  kind: "category" | "task", id: number, form: FormData): Promise<CostEstimateActionState> {
+  function keys(name: string): string[] {
+    const values: unknown = JSON.parse(String(form.get(name) ?? "[]"));
+    if (!Array.isArray(values) || values.length > 2000 || values.some(value => typeof value !== "string" || !/^(category|task):[1-9][0-9]*$/.test(value))) throw new Error("Choose valid task dependencies.");
+    return [...new Set(values as string[])];
+  }
+  const { error } = await supabase.rpc("save_estimate_dependencies", { p_project_id: projectId, p_source_kind: kind, p_source_id: id,
+    p_predecessors: keys("predecessorRowKeys"), p_successors: keys("successorRowKeys"),
+    p_previous_predecessors: keys("previousPredecessorRowKeys"), p_previous_successors: keys("previousSuccessorRowKeys"),
+    p_milestone: kind === "task" || form.has("milestoneField") ? form.get("isMilestone") === "on" : null,
+    p_name: kind === "category" ? String(form.get("categoryName") ?? "").trim() : null,
+  });
+  if (error) return { error: ["22023", "42501", "55000", "40001"].includes(error.code) ? error.message : "Could not save task dependencies. Please retry." };
+  return { success: true };
+}
+
 async function saveProjectLinks(supabase: Awaited<ReturnType<typeof createClient>>, projectId: number,
   kind: "category" | "task", id: number, form: FormData): Promise<CostEstimateActionState> {
   const parse = (field: string) => {
@@ -272,6 +289,13 @@ export async function updateCategory(
     }
 
     const supabase = await createClient();
+    if (formData.has("dependenciesField")) {
+      const result = await saveMultipleDependencies(supabase, projectId, "category", categoryId, formData);
+      if (result.error) return result;
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
+      revalidateProjectPaths(projectId);
+      return result;
+    }
     if (formData.has("predecessorRowKey")) {
       const result = await saveProjectLinks(supabase, projectId, "category", categoryId, formData);
       if (result.error) return result;
@@ -717,7 +741,7 @@ export type BomImportCategoryInput = ImportResources & {
 
 /** Save reviewed planned costs to existing estimate tables. Resource imports never
  * create actual spend, worker accounts, inventory assets or equipment assignments.
- * The import is one undo checkpoint; a partial write failure is reported explicitly. */
+ * One database transaction saves the draft and its undo checkpoints, or nothing. */
 export async function applyBomImport(
   projectId: number,
   categories: BomImportCategoryInput[]
@@ -760,128 +784,23 @@ export async function applyBomImport(
       return { error: INVALID_DATE_RANGE_ERROR };
     }
 
-    // Imported drafts have no schedule: start each item on the project start
-    // date until its duration is planned in the Gantt chart.
-    const initialSchedule = {
-      planned_start_date: project.start_date,
-      planned_end_date: project.start_date,
-    };
-
-    async function saveResources(kind: "category" | "task", id: number, owner: ImportResources) {
-      const lines = owner.materials ?? [];
-      if (lines.length) {
-        const values = lines.map(line => ({ material_name: line.name.trim(), planned_quantity: parseNumber(line.quantity),
-          unit: line.unit.trim() || null, unit_cost: parseNumber(line.unitCost),
-          amount: line.amount?.trim() ? parseNumber(line.amount) : null }));
-        const { error } = kind === "task"
-          ? await supabase.from("estimate_task_material_assignments").insert(values.map(line => ({ ...line, task_id: id })))
-          : await supabase.from("estimate_category_material_assignments").insert(values.map(line => ({ ...line, category_id: id })));
-        if (error) return error;
+    const { error } = await supabase.rpc("import_reviewed_estimate", {
+      p_project_id: projectId,
+      p_categories: cleanCategories,
+    });
+    if (error) {
+      // Keep diagnostic fields in the server log; never expose row data or SQL.
+      console.error("[applyBomImport] Atomic draft save failed", JSON.stringify({
+        code: error.code, message: error.message, details: error.details, hint: error.hint,
+      }));
+      if (error.code === "PGRST202" || error.code === "42883") {
+        return { error: "AI import needs database migration 0125. No tasks were added. Ask your administrator to apply it, then retry this draft." };
       }
-      const otherLines = [...(owner.otherCosts ?? []), ...(owner.amountType === "other" && owner.amount?.trim() ? [{ name: "Direct planned cost", amount: owner.amount }] : [])];
-      if (otherLines.length) {
-        const { error } = await supabase.from("estimate_task_other_costs").insert(otherLines.map(line => ({
-          ...(kind === "task" ? { task_id: id } : { category_id: id }), cost_name: line.name.trim(),
-          amount: parseNumber(line.amount), amount_override: parseNumber(line.amount),
-        })));
-        if (error) return error;
-      }
-      const equipmentLines = [...(owner.equipment ?? []), ...(owner.amountType === "equipment" && owner.amount?.trim() ? [{ name: "Direct planned cost", amount: owner.amount }] : [])];
-      if (equipmentLines.length) {
-        const { error } = await supabase.rpc("save_equipment_cost_breakdown", { p_project_id: projectId, p_changes: [{ kind, id,
-          lines: equipmentLines.map(line => ({ costName: line.name.trim(), quantity: 0, unit: "", unitCost: 0, amountOverride: parseNumber(line.amount) })),
-        }] });
-        if (error) return error;
-      }
-      return null;
+      const reason = error.code === "42501" ? "Your session or project edit access could not be verified. Sign in again and retry."
+        : error.code === "55000" ? "Saving is temporarily paused for backup or restore. Retry when it finishes."
+        : "The draft could not be saved. Your draft is still available; retry or contact your administrator.";
+      return { error: `${reason} No tasks or resource details from this attempt were added.` };
     }
-    const directMaterial = (owner: ImportResources) => (owner.amountType ?? "material") === "material" ? parseNumber(owner.amount ?? "") : 0;
-    async function detailsFailed(name: string, error: PostgrestError) {
-      logSupabaseError("[applyBomImport] Resource details insert failed", error);
-      await recordGanttCheckpoint(supabase, projectId, profile!.id);
-      revalidateProjectPaths(projectId);
-      return { error: `The import stopped after creating "${name}" because its resource details could not be saved. Some records are already saved; review the project before importing again.` };
-    }
-
-    for (const category of cleanCategories) {
-      const costs = importResourceTotals(category);
-      const isStandalone = category.tasks.length === 0;
-
-      const { data: categoryRow, error: categoryError } = await supabase
-        .from("estimate_categories")
-        .insert({
-          project_id: projectId,
-          category_name: category.name,
-          ...initialSchedule,
-          ...(isStandalone && {
-            material_direct_amount: directMaterial(category),
-            category_material_estimate: costs.material,
-            category_labor_estimate: costs.labor,
-            category_equipment_estimate: costs.equipment,
-            category_other_estimate: costs.other,
-          }),
-        })
-        .select("id")
-        .single();
-
-      if (categoryError || !categoryRow) {
-        if (categoryError) {
-          logSupabaseError(
-            "[applyBomImport] Supabase category insert failed",
-            categoryError
-          );
-        }
-        await recordGanttCheckpoint(supabase, projectId, profile.id);
-        revalidateProjectPaths(projectId);
-        return {
-          error: `Could not create "${category.name}" — the import stopped partway through; whatever was already created is still saved. Please try again for the rest.`,
-        };
-      }
-
-      if (isStandalone) {
-        const error = await saveResources("category", categoryRow.id, category);
-        if (error) return detailsFailed(category.name, error);
-      }
-      for (const task of category.tasks) {
-        const costs = importResourceTotals(task);
-
-        const { data: taskRow, error: taskError } = await supabase
-          .from("estimate_tasks")
-          .insert({
-            project_id: projectId,
-            category_id: categoryRow.id,
-            task_name: task.name,
-            ...initialSchedule,
-            estimated_quantity: parseNumber(task.quantity),
-            unit: task.unit.trim() || null,
-            material_direct_amount: directMaterial(task),
-            material_estimate: costs.material,
-            labor_estimate: costs.labor,
-            equipment_estimate: costs.equipment,
-            other_cost_estimate: costs.other,
-            total_estimate_cost: costs.total,
-            priority: "medium",
-          })
-          .select("id")
-          .single();
-
-        if (taskError || !taskRow) {
-          if (taskError) {
-            logSupabaseError("[applyBomImport] Supabase task insert failed", taskError);
-          }
-          await recordGanttCheckpoint(supabase, projectId, profile.id);
-          revalidateProjectPaths(projectId);
-          return {
-            error: `Could not create "${task.name}" under "${category.name}" — the import stopped partway through; whatever was already created is still saved. Please try again for the rest.`,
-          };
-        }
-
-        const error = await saveResources("task", taskRow.id, task);
-        if (error) return detailsFailed(task.name, error);
-      }
-    }
-
-    await recordGanttCheckpoint(supabase, projectId, profile.id);
     revalidateProjectPaths(projectId);
     return { success: true };
   });
@@ -1204,6 +1123,13 @@ export async function updateSubtask(
     const successorTaskId = parseOptionalId(formData.get("successorTaskId"));
 
     const supabase = await createClient();
+    if (formData.has("dependenciesField")) {
+      const result = await saveMultipleDependencies(supabase, projectId, "task", taskId, formData);
+      if (result.error) return result;
+      await recordGanttCheckpoint(supabase, projectId, profile.id);
+      revalidateProjectPaths(projectId);
+      return result;
+    }
     if (formData.has("predecessorRowKey")) {
       const result = await saveProjectLinks(supabase, projectId, "task", taskId, formData);
       if (result.error) return result;

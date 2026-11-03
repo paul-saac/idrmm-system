@@ -1,11 +1,13 @@
 "use client";
 
 import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, useProjectCanEdit } from "@/components/projects/project-access-context";
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ComponentProps, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ComponentProps, type ComponentType, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Gantt, ViewMode, type Task as GanttTask } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
+import { GanttNonWorkingLayer, type CalendarLayerGeometry } from "./gantt-non-working-layer";
+const CalendarGantt = Gantt as ComponentType<ComponentProps<typeof Gantt> & { renderNonWorkingDays: (geometry: CalendarLayerGeometry) => ReactNode }>;
 import {
   CalendarDays,
   ChartGantt,
@@ -29,9 +31,11 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { CategoryForm } from "@/components/projects/cost-estimate/category-form";
 import { SubtaskForm } from "@/components/projects/progress/subtask-form";
 import { applyScheduleModalEdits, scheduleModalEdit, unconfirmedScheduleModalEdits, type PendingScheduleModalEdit, type ScheduleModalEdit } from "./schedule-modal-edits";
+import { scheduleDeleteSelection } from "./schedule-delete-selection";
 import { useEstimateSync } from "@/components/projects/cost-estimate/estimate-sync-context";
 import { applyEstimateChanges, withSavedEstimateProgress, type EstimateChange } from "@/lib/cost-estimate/live-estimate";
 import { computeWeights } from "@/lib/cost-estimate/weights";
+import { rowPredecessors, withPredecessors, type DependencyFields } from "@/lib/cost-estimate/dependency-model";
 import { canNest, applyPendingNests, unconfirmedNests, type NestMove, type PendingNest, canOutdent, applyPendingOutdents, unconfirmedOutdents, type OutdentMove, type PendingOutdent } from "@/lib/cost-estimate/nesting";
 import { moveScheduleRow, nestScheduleRow, outdentScheduleRow } from "@/lib/cost-estimate/reorder-actions";
 import { applyPendingScheduleMoves, scheduleOrderForMove, unconfirmedScheduleMoves, type PendingScheduleMove, type ScheduleRowMove } from "@/lib/cost-estimate/schedule-order";
@@ -81,6 +85,8 @@ import { barDragDays, selectedBarChanges } from "./gantt-bar-selection";
 import { createDependencyDragPreview } from "./gantt-dependency-preview";
 import { createScheduleMoveQueue } from "./schedule-move-queue";
 import { ganttBarColors } from "./gantt-bar-colors";
+import { assessProjectSchedule, type ScheduleAssessment } from "@/lib/projects/schedule-assessment";
+import { manilaToday } from "@/components/admin/dashboard/calendar-model";
 import { createGanttOperationQueue } from "./gantt-operation-queue";
 import { createGanttPreviewHistory } from "./gantt-preview-history";
 import { setTaskWorkers, setCategoryWorkers } from "@/lib/workers/actions";
@@ -305,6 +311,8 @@ const WorkScheduleContext = createContext<{
   holidays: ReadonlySet<string>;
 }>({ workingDays: [1, 2, 3, 4, 5, 6], holidays: new Set() });
 
+const TaskForecastContext = createContext<Pick<ScheduleAssessment, "taskForecasts" | "reason">>({ taskForecasts: {}, reason: "Save dated progress logs to calculate a forecast." });
+
 // Mirrors gantt-task-react's own default hover tooltip (StandardTooltipContent)
 // pixel-for-pixel — same date format, same CSS-module classes (_3T42e/_29NTg,
 // confirmed directly by reading the compiled bundle, the same technique
@@ -324,6 +332,12 @@ function GanttTooltipContent({
   fontFamily: string;
 }) {
   const { workingDays, holidays } = useContext(WorkScheduleContext);
+  const assessment = useContext(TaskForecastContext);
+  const forecastKey = task.id.startsWith("phase-") ? `category:${task.id.slice(6)}` : `task:${task.id}`;
+  const forecast = assessment.taskForecasts[forecastKey];
+  const formatDate = (date: Date) => date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const difference = forecast?.differenceDays ?? 0;
+  const differenceLabel = difference === 0 ? "on schedule" : `${Math.abs(difference)} ${Math.abs(difference) === 1 ? "day" : "days"} ${difference > 0 ? "behind" : "ahead"}`;
   const isMilestone = task.type === "milestone";
   const displayEnd = trueEndDate(task);
   const durationDays = isMilestone
@@ -346,6 +360,17 @@ function GanttTooltipContent({
         <p className="_29NTg">Duration: {durationDays} day(s)</p>
       )}
       <p className="_29NTg">Progress: {formatPercent(task.progress)}%</p>
+      <div className="mt-2 grid grid-cols-[auto_auto] gap-x-3 gap-y-1 text-xs">
+        <span>Planned Start:</span><span>{formatDate(task.start)}</span>
+        <span>Planned Completion:</span><span>{formatDate(displayEnd)}</span>
+        <span>{forecast?.firstRecordedDate ? "First Recorded Work Date:" : "Forecasted Start:"}</span>
+        <span title={forecast ? undefined : assessment.reason}>{forecast?.firstRecordedDate || forecast?.forecastStartDate
+          ? formatDate(toDate(forecast.firstRecordedDate ?? forecast.forecastStartDate!)) : "Not available"}</span>
+        <span>Forecasted Completion:</span>
+        <span title={forecast ? "Based on saved progress, dependencies, and the project work calendar. Difference is in calendar days." : assessment.reason}>
+          {forecast ? <>{formatDate(toDate(forecast.forecastDate))} <span className={difference > 0 ? "text-red-600" : difference < 0 ? "text-emerald-700" : "text-zinc-500"}>({differenceLabel})</span></> : "Not available"}
+        </span>
+      </div>
     </div>
   );
 }
@@ -727,6 +752,7 @@ export function GanttChartView({
   events: serverEvents,
   canUndo,
   canRedo,
+  importHistoryRevision = 0,
   workers,
   workerAssignments,
   memberGroups,
@@ -775,6 +801,7 @@ export function GanttChartView({
    * mutation already triggers, no separate polling needed. */
   canUndo: boolean;
   canRedo: boolean;
+  importHistoryRevision?: number;
   /** The company Team (the admin's Team page) and each task's current
    * assignments from it — see lib/workers/data.ts. Fetched alongside
    * categories/progress, same revalidatePath-driven refresh as
@@ -918,6 +945,20 @@ export function GanttChartView({
   function markHistoryEdit() {
     setHistoryAvailability({ categoriesAtSet: categoriesRef.current, canUndo: true, canRedo: false });
   }
+  useEffect(() => {
+    if (!importHistoryRevision) return;
+    let cancelled = false;
+    // Import is saved outside this chart's gesture queue. Wait for its pending
+    // edits before invalidating previews and reading server import checkpoints.
+    operationQueue.whenIdle(() => {
+      if (cancelled) return;
+      previewHistory.invalidate();
+      gestureVersion.current++;
+      setHistoryPreview(null);
+      setHistoryAvailability({ categoriesAtSet: categoriesRef.current, canUndo: true, canRedo: false });
+    });
+    return () => { cancelled = true; };
+  }, [importHistoryRevision, previewHistory, operationQueue]);
   function queueEdit<T>(operation: () => Promise<T>, after?: CostCategory[]) {
     previewHistory.edit(after);
     const version = ++gestureVersion.current;
@@ -1374,9 +1415,12 @@ export function GanttChartView({
   useEffect(() => {
     if (!canEdit) return;
     let cancelled = false;
-    operationQueue.run(() => resetGanttHistory(projectId)).then(() => {
+    operationQueue.run(() => resetGanttHistory(projectId)).then(state => {
       if (!cancelled) {
-        if (gestureVersion.current === 0) setHistoryAvailability({ categoriesAtSet: categoriesRef.current, canUndo: false, canRedo: false });
+        if (gestureVersion.current === 0) {
+          previewHistory.invalidate();
+          setHistoryAvailability({ categoriesAtSet: categoriesRef.current, ...state });
+        }
         setHistoryReady(true);
       }
     }).catch(() => {
@@ -1555,6 +1599,7 @@ export function GanttChartView({
   // phase rollups below) counts working days only — the project's own
   // Working days, holidays left out — same as Expected progress does.
   const holidaySet = useMemo(() => new Set(holidays), [holidays]);
+  const renderNonWorkingDays = useCallback((geometry: CalendarLayerGeometry) => <GanttNonWorkingLayer {...geometry} workingDays={workingDays} holidays={holidays} events={events} />, [workingDays, holidays, events]);
   const workSchedule = useMemo(
     () => ({ workingDays, holidays: holidaySet }),
     [workingDays, holidaySet]
@@ -1782,19 +1827,7 @@ export function GanttChartView({
   // The ticked rows that still exist (and can still be ticked — a phase
   // that's since gained tasks can't), split the way deleteScheduleItems
   // takes them.
-  const selectedTaskIds: number[] = [];
-  const selectedCategoryIds: number[] = [];
-  for (const rowId of selectedRowIds) {
-    const task = taskById.get(rowId);
-    if (task) {
-      if (task.id > 0 && !task.isMilestone) selectedTaskIds.push(task.id);
-      continue;
-    }
-    const category = categoryById.get(rowId);
-    if (category && category.id > 0 && !category.hasTasks && !category.isMilestone) {
-      selectedCategoryIds.push(category.id);
-    }
-  }
+  const { taskIds: selectedTaskIds, categoryIds: selectedCategoryIds } = scheduleDeleteSelection(categoriesForDisplay, selectedRowIds);
   const selectedCount = selectedTaskIds.length + selectedCategoryIds.length;
 
   function deleteSelected() {
@@ -1802,7 +1835,7 @@ export function GanttChartView({
     const categoryIds = selectedCategoryIds;
     confirmAndDelete(
       "selection",
-      `${selectedCount} ${selectedCount === 1 ? "task" : "tasks"}`,
+      `${selectedCount} ${selectedCount === 1 ? "task" : "tasks"}${categoryIds.some(id => categoriesForDisplay.some(category => category.id === id && category.tasks.length)) ? " (including their main tasks)" : ""}`,
       () => queueEdit(() => deleteScheduleItems(projectId, { taskIds, categoryIds })),
       () => setSelectedRowIds(new Set()),
       { taskIds, categoryIds }
@@ -1939,9 +1972,7 @@ export function GanttChartView({
           : nextDay(new Date(Math.max(...childDates.map((d) => d.end.getTime())))),
         progress: percentCompleteByCategoryId.get(category.id) ?? 0,
         hideChildren: collapsedPhaseIds.has(phaseRowId(category.id)),
-        dependencies: category.predecessorCategoryId
-          ? [phaseRowId(category.predecessorCategoryId)]
-          : category.predecessorTaskId ? [String(category.predecessorTaskId)] : undefined,
+        dependencies: rowPredecessors(category).map(ref => ref.kind === "category" ? phaseRowId(ref.id) : String(ref.id)),
       });
 
       category.tasks.forEach((task, i) => {
@@ -1965,9 +1996,7 @@ export function GanttChartView({
           end: task.isMilestone ? milestoneDate : nextDay(childDates[i].end),
           progress: task.percentComplete,
           project: phaseRowId(category.id),
-          dependencies: task.predecessorTaskId
-            ? [String(task.predecessorTaskId)]
-            : task.predecessorCategoryId ? [phaseRowId(task.predecessorCategoryId)] : undefined,
+          dependencies: rowPredecessors(task).map(ref => ref.kind === "category" ? phaseRowId(ref.id) : String(ref.id)),
         });
       });
     }
@@ -2154,6 +2183,21 @@ export function GanttChartView({
     taskProgressToday,
     categoryProgressToday,
   ]);
+
+  const forecastToday = manilaToday();
+  const tooltipForecast = useMemo(() => {
+    const forecastCategories = categoriesForDisplay.map(category => {
+      const ownDates = pendingCategoryScheduleOverrides.get(category.id);
+      return { ...category, ...(ownDates ? { plannedStartDate: ownDates.start, plannedEndDate: ownDates.end } : {}),
+        tasks: category.tasks.map(task => {
+          const dates = pendingScheduleOverrides.get(task.id);
+          return dates ? { ...task, plannedStartDate: dates.start, plannedEndDate: dates.end } : task;
+        }),
+      };
+    });
+    return assessProjectSchedule({ project: { startDate: projectStartDate, targetEndDate: projectEndDate, actualEndDate: null, workingDays, holidays },
+      categories: forecastCategories, taskRecords: taskProgressToday, categoryRecords: categoryProgressToday, today: forecastToday });
+  }, [categoriesForDisplay, pendingCategoryScheduleOverrides, pendingScheduleOverrides, projectStartDate, projectEndDate, workingDays, holidays, taskProgressToday, categoryProgressToday, forecastToday]);
 
   const totalColumnsWidth = RESIZABLE_COLUMN_IDS.reduce(
     (sum, id) => sum + columnWidths[id],
@@ -3089,10 +3133,12 @@ export function GanttChartView({
   // next thing that happens is the admin typing over it.
   function settleCreatedRow(kind: "category" | "task", temporaryId: number, savedId: number) {
     clientRowKeys.current.set(`${kind}:${savedId}`, `${kind}:${temporaryId}`);
+    const remapDependencies = <T extends DependencyFields>(row: T): T => withPredecessors(row, rowPredecessors(row).map(ref =>
+      ref.kind === kind && ref.id === temporaryId ? { ...ref, id: savedId } : ref));
     const remap = (items: CostCategory[]) => items.map(category => ({
-      ...category,
+      ...remapDependencies(category),
       id: kind === "category" && category.id === temporaryId ? savedId : category.id,
-      tasks: category.tasks.map(task => ({ ...task,
+      tasks: category.tasks.map(task => ({ ...remapDependencies(task),
         id: kind === "task" && task.id === temporaryId ? savedId : task.id,
         categoryId: kind === "category" && task.categoryId === temporaryId ? savedId : task.categoryId,
       })),
@@ -4781,8 +4827,10 @@ export function GanttChartView({
                   }
                 }}>
                 <WorkScheduleContext.Provider value={workSchedule}>
+                <TaskForecastContext.Provider value={tooltipForecast}>
                 <TaskListRenderContext.Provider value={{ table: CustomTaskListTable, header: CustomTaskListHeader }}>
-                <Gantt
+                <CalendarGantt
+                  renderNonWorkingDays={renderNonWorkingDays}
                   tasks={chartTasks}
                   viewMode={VIEW_MODE[view]}
                   rowHeight={ROW_HEIGHT}
@@ -4819,6 +4867,7 @@ export function GanttChartView({
                   }}
                 />
                 </TaskListRenderContext.Provider>
+                </TaskForecastContext.Provider>
                 </WorkScheduleContext.Provider>
                 {/* The whole task-list panel's own resize handle — see
                     handlePanelResizeMouseDown's own doc comment. Height

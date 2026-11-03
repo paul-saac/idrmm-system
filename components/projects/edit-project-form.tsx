@@ -9,6 +9,7 @@ import type { AccountRow } from "@/lib/accounts/data";
 import { projectElsewhere } from "@/lib/accounts/availability";
 import { DatePicker } from "@/components/ui/date-picker";
 import { AllocatedBudgetInput } from "./allocated-budget-input";
+import { ModalFooter } from "@/components/ui/modal";
 
 const initialState: ProjectActionState = {};
 
@@ -267,7 +268,7 @@ export function EditProjectForm({
         </p>
       )}
 
-      <div className="mt-auto flex items-center justify-end gap-3">
+      <ModalFooter>
         <button
           type="submit"
           form={formId}
@@ -276,7 +277,7 @@ export function EditProjectForm({
         >
           {pending ? "Saving..." : "Save changes"}
         </button>
-      </div>
+      </ModalFooter>
     </div>
   );
 }

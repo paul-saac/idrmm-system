@@ -1,3 +1,4 @@
+import { parseDependencyKey, type DependencyRef } from "./dependency-model";
 import { createClient } from "@/lib/supabase/server";
 import { listTaskProgressAnchors } from "@/lib/task-progress/data";
 import { listCategoryProgressAnchors } from "@/lib/category-progress/data";
@@ -83,6 +84,7 @@ export type CostTask = {
    * 0029_estimate_task_predecessor.sql) — draws as a dependency arrow
    * in the Gantt Chart. Null means no predecessor set. */
   predecessorTaskId: number | null;
+  predecessors?: DependencyRef[];
   predecessorCategoryId?: number | null;
   /** Manually flagged by the admin (see
    * 0030_estimate_task_milestone.sql) — a real point-in-time event
@@ -148,6 +150,7 @@ export type CostCategory = {
   isMilestone: boolean;
   predecessorCategoryId?: number | null;
   predecessorTaskId?: number | null;
+  predecessors?: DependencyRef[];
   /** This category's own direct labor cost — same "only meaningful
    * while it has no tasks yet" rule as plannedStartDate/plannedEndDate
    * above, one level up from CostTask's own laborEstimate. See
@@ -215,7 +218,7 @@ export type CostEstimate = {
 export async function getCostEstimate(projectId: number, strict = false): Promise<CostEstimate> {
   const supabase = await createClient();
 
-  const [{ data: categoryRows, error: categoryError }, { data: taskRows, error: taskError }, { data: projectRow, error: projectError }] =
+  const [{ data: categoryRows, error: categoryError }, { data: taskRows, error: taskError }, { data: projectRow, error: projectError }, { data: dependencyRows, error: dependencyError }] =
     await Promise.all([
       // "*" rather than a column list, so a DB that hasn't run
       // 0056_category_equipment_other.sql yet still loads (those two
@@ -238,6 +241,7 @@ export async function getCostEstimate(projectId: number, strict = false): Promis
         .select("*")
         .eq("id", projectId)
         .maybeSingle(),
+      supabase.from("estimate_dependencies").select("predecessor_key,successor_key").eq("project_id", projectId).order("id"),
     ]);
 
   if (strict && (categoryError || taskError || projectError || !projectRow)) {
@@ -255,6 +259,12 @@ export async function getCostEstimate(projectId: number, strict = false): Promis
   // to — projectRow can come back null only if the project row itself
   // somehow doesn't exist, in which case there's nothing to compute
   // progress for anyway.
+  if (dependencyError) throw new Error("Could not load task dependencies. Please retry.");
+  const dependenciesByRow = new Map<string, DependencyRef[]>();
+  for (const link of dependencyRows ?? []) {
+    const refs = dependenciesByRow.get(link.successor_key) ?? [];
+    refs.push(parseDependencyKey(link.predecessor_key)); dependenciesByRow.set(link.successor_key, refs);
+  }
   const workingDays: readonly number[] = projectRow?.working_days ?? [
     1, 2, 3, 4, 5, 6,
   ];
@@ -447,6 +457,7 @@ export async function getCostEstimate(projectId: number, strict = false): Promis
       plannedStartDate: row.planned_start_date,
       plannedEndDate: row.planned_end_date,
       predecessorTaskId: row.predecessor_task_id,
+      predecessors: dependenciesByRow.get(`task:${row.id}`) ?? [],
       predecessorCategoryId: row.predecessor_category_id ?? null,
       isMilestone: row.is_milestone ?? false,
       priority: toTaskPriority(row.priority),
@@ -512,6 +523,7 @@ export async function getCostEstimate(projectId: number, strict = false): Promis
       isMilestone: row.is_milestone ?? false,
       predecessorCategoryId: row.predecessor_category_id ?? null,
       predecessorTaskId: row.predecessor_task_id ?? null,
+      predecessors: dependenciesByRow.get(`category:${row.id}`) ?? [],
       categoryLaborEstimate: row.category_labor_estimate ?? 0,
       categoryEquipmentEstimate: row.category_equipment_estimate ?? 0,
       categoryOtherEstimate: row.category_other_estimate ?? 0,

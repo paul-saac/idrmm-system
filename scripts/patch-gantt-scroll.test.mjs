@@ -325,3 +325,64 @@ test("patched arrows expose their own endpoint IDs and geometry for cached drag 
   assert.equal(arrow.props['data-gantt-from-y'],20);assert.equal(arrow.props['data-gantt-to-y'],54);
   assert.equal(arrow.props['data-gantt-row-offset'],17);assert.equal(arrow.props['data-gantt-indent'],12);
 });
+
+
+function milestoneGeometry() {
+ const exports={};
+ runInNewContext(patchGanttScroll(installed)+"\nexports.convertMilestone = convertToMilestone;exports.moveMilestone = handleTaskBySVGMouseEventForMilestone;",{
+  exports,Date,console,require:()=>({createElement(){return null;}}),
+ });
+ return exports;
+}
+
+test('milestone diamonds align with the inclusive end-date boundary, including the first calendar column',()=>{
+ const {convertMilestone}=milestoneGeometry();
+ const dates=[10,11,12,13].map(day=>new Date(2026,10,day));
+ for(const day of [10,11,12]){
+  const date=new Date(2026,10,day),task={id:'phase-1',name:'Phase done',type:'milestone',start:date,end:date,styles:{}};
+  const before=date.getTime();
+  const bar=convertMilestone(task,0,dates,60,34,20,3,8,'blue','blue');
+  assert.ok(Math.abs((bar.x1+bar.x2)/2-((day-10+1)*60))<0.001);
+  assert.equal(bar.start.getTime(),before);assert.equal(bar.end.getTime(),before);
+  assert.equal(task.start.getTime(),before);
+ }
+});
+
+test('month-scale milestones align to their scheduled day end, not the middle of a month',()=>{
+ const {convertMilestone}=milestoneGeometry();
+ const dates=[new Date(2026,10,1),new Date(2026,11,1),new Date(2027,0,1)];
+ const day=new Date(2026,10,11),task={id:'11',type:'milestone',start:day,end:day,styles:{}};
+ const bar=convertMilestone(task,1,dates,240,34,20,3,8,'blue','blue');
+ assert.ok(Math.abs((bar.x1+bar.x2)/2-88)<0.001);
+ assert.equal(bar.start.getDate(),11);assert.equal(bar.end.getDate(),11);
+});
+
+
+test('end-aligning a milestone does not change drag dates or turn a click into a move',()=>{
+ const {convertMilestone,moveMilestone}=milestoneGeometry();
+ const dates=[10,11,12,13,14].map(day=>new Date(2026,10,day));
+ const date=new Date(2026,10,11),task={id:'11',type:'milestone',start:date,end:date,styles:{}};
+ const bar=convertMilestone(task,1,dates,60,34,20,3,8,'blue','blue');
+ assert.equal(moveMilestone(bar.x1,'move',bar,60,86400000,0).isChanged,false);
+ const moved=moveMilestone(bar.x1+60,'move',bar,60,86400000,0);
+ assert.equal(moved.isChanged,true);assert.equal(moved.changedTask.start.getDate(),12);
+ assert.equal(moved.changedTask.start.getHours(),0);
+ assert.equal(moved.changedTask.end.getTime(),moved.changedTask.start.getTime());
+ assert.equal(task.start.getDate(),11);
+});
+
+
+test('calendar shading renders behind today and shares exact grid/header dates and dimensions',()=>{
+ const exports={},calls=[],layer={type:'non-working-layer'};
+ runInNewContext(patchGanttScroll(installed)+'\nexports.gridBody=GridBody;exports.calendar=Calendar;',{
+  exports,Date,console,require:()=>({createElement:(type,props,...children)=>({type,props,children})}),
+ });
+ const dates=[new Date(2026,10,7),new Date(2026,10,8),new Date(2026,10,9)];
+ const renderNonWorkingDays=geometry=>{calls.push(geometry);return layer;};
+ const body=exports.gridBody({tasks:[{id:'1'}],dates,columnWidth:60,svgWidth:180,rowHeight:34,todayColor:'yellow',rtl:false,viewMode:'Day',renderNonWorkingDays});
+ assert.equal(calls[0].dates,dates);assert.equal(calls[0].height,34);assert.equal(calls[0].header,false);
+ assert.equal(body.children[1],layer);assert.equal(body.children.at(-1).props.className,'today');
+ const header=exports.calendar({dateSetup:{dates,viewMode:'Day'},viewMode:'Day',locale:'en-US',headerHeight:50,columnWidth:60,fontFamily:'sans-serif',fontSize:'12px',rtl:false,renderNonWorkingDays});
+ assert.equal(calls[1].dates,dates);assert.equal(calls[1].header,true);assert.equal(calls[1].height,50);
+ assert.equal(header.children[1],layer);
+});

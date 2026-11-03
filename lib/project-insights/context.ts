@@ -1,6 +1,8 @@
+import { rowPredecessors } from "@/lib/cost-estimate/dependency-model";
 import type { CostEstimate } from "@/lib/cost-estimate/data";
 import { computeExpectedProgress, countWorkingDays, toLocalDate, sumCosts, scheduleStatusFor } from "@/lib/task-progress/calculate";
 import { deriveProjectStatusFromProgress } from "@/lib/projects/status";
+import { assessProjectSchedule } from "@/lib/projects/schedule-assessment";
 import type { InsightFact, ProjectInsightDestination } from "./types";
 
 export type InsightProject = {
@@ -36,9 +38,13 @@ export function buildInsightContext(source: InsightSources, now = new Date()) {
   const workingDays = project.working_days ?? [1, 2, 3, 4, 5, 6];
   const holidays = project.holidays ?? [];
   const items = estimate.categories.flatMap(category => category.tasks.length
-    ? category.tasks.map(task => ({ key: `task-${task.id}`, name: clean(task.name), start: task.plannedStartDate, end: task.plannedEndDate, actual: task.percentComplete, weight: task.weight, milestone: task.isMilestone, predecessor: task.predecessorTaskId ? `task-${task.predecessorTaskId}` : task.predecessorCategoryId ? `category-${task.predecessorCategoryId}` : null }))
-    : [{ key: `category-${category.id}`, name: clean(category.name), start: category.plannedStartDate, end: category.plannedEndDate, actual: category.percentComplete, weight: category.weight, milestone: category.isMilestone, predecessor: category.predecessorCategoryId ? `category-${category.predecessorCategoryId}` : category.predecessorTaskId ? `task-${category.predecessorTaskId}` : null }]);
+    ? category.tasks.map(task => ({ key: `task-${task.id}`, name: clean(task.name), start: task.plannedStartDate, end: task.plannedEndDate, actual: task.percentComplete, weight: task.weight, milestone: task.isMilestone, predecessors: rowPredecessors(task).map(ref => `${ref.kind}-${ref.id}`) }))
+    : [{ key: `category-${category.id}`, name: clean(category.name), start: category.plannedStartDate, end: category.plannedEndDate, actual: category.percentComplete, weight: category.weight, milestone: category.isMilestone, predecessors: rowPredecessors(category).map(ref => `${ref.kind}-${ref.id}`) }]);
   const byKey = new Map(items.map(item => [item.key, item]));
+  for (const category of estimate.categories.filter(row => row.tasks.length > 0)) byKey.set(`category-${category.id}`, {
+    key: `category-${category.id}`, name: clean(category.name), start: category.plannedStartDate, end: category.plannedEndDate,
+    actual: category.percentComplete, weight: category.weight, milestone: false, predecessors: rowPredecessors(category).map(ref => `${ref.kind}-${ref.id}`),
+  });
   const facts: InsightFact[] = [];
   const add = (destination: ProjectInsightDestination, id: string, title: string, evidence: string, recommendedAction?: string) => {
     if (facts.filter(fact => fact.destination === destination).length < 5) facts.push({ id, title, evidence, destination, ...(recommendedAction ? { recommendedAction } : {}) });
@@ -49,6 +55,26 @@ export function buildInsightContext(source: InsightSources, now = new Date()) {
   const validLogs = source.logs.filter(log => byKey.has(log.itemKey) && log.entryDate <= asOfDate);
   const loggedItems = new Set(validLogs.map(log => log.itemKey));
   const latestLogDate = validLogs.map(log => log.entryDate).sort().at(-1) ?? null;
+  const records = (prefix: string) => Object.fromEntries(items.filter(item => item.key.startsWith(prefix)).map(item => [Number(item.key.slice(prefix.length)), {
+    loggedDates: source.logs.filter(log => log.itemKey === item.key).map(log => log.entryDate),
+  }]));
+  const assessment = assessProjectSchedule({ project: { startDate: project.start_date, targetEndDate: project.target_end_date,
+    actualEndDate: project.actual_end_date, workingDays, holidays }, categories: estimate.categories,
+    taskRecords: records("task-"), categoryRecords: records("category-"), today: asOfDate });
+  const schedule = { risk: assessment.risk, reason: assessment.reason, targetDate: project.target_end_date,
+    forecastDate: assessment.forecastDate, differenceDays: assessment.differenceDays, delayedTasks: assessment.delayedTasks };
+  const forecastEvidence = assessment.forecastDate
+    ? `The system-calculated completion is ${assessment.forecastDate}, compared with the official target ${project.target_end_date}: ${Math.abs(assessment.differenceDays ?? 0)} calendar days ${(assessment.differenceDays ?? 0) > 0 ? "beyond" : (assessment.differenceDays ?? 0) < 0 ? "before" : "from"} the target. Delay risk is ${assessment.risk}.`
+    : `The system cannot provide a completion forecast or delay-risk rating: ${assessment.reason}`;
+  if (assessment.risk === "unassessed") add("schedule", "forecast-readiness", "Complete the records needed for forecasting", forecastEvidence,
+    "Review the stated assessment limitation, confirm task dates and dependencies, and update verified daily accomplishments before relying on a forecast.");
+  else if (assessment.risk === "high" || assessment.risk === "medium") {
+    const affected = items.map(item => ({ item, forecast: assessment.taskForecasts[item.key.replace("task-", "task:").replace("category-", "category:")] }))
+      .filter(row => row.forecast && row.forecast.differenceDays > 0).sort((a,b) => b.forecast.differenceDays - a.forecast.differenceDays).slice(0,3);
+    add("schedule", "completion-forecast", "Review the projected finish and deadline", `${forecastEvidence} ${assessment.reason}${affected.length ? ` Tasks projected beyond their planned finish include ${affected.map(row => `${row.item.name} (${row.forecast.forecastDate}, ${row.forecast.differenceDays} calendar days behind its plan)`).join("; ")}. These are review candidates, not a verified critical-path ranking.` : ""}`,
+      assessment.risk === "high" ? "Review the delayed task forecasts and their predecessor links with the foreman, confirm the remaining work and available resources, and agree on a recovery plan against the official deadline. Forecasts do not change planned dates."
+        : "Verify the tasks behind their planned progress, review their remaining work and dependencies, and protect the remaining time before the official deadline. Do not treat available time as proof that no recovery action is needed.");
+  }
   const examples = (rows: typeof items) => rows.slice(0, 3).map(item => item.name).join(", ");
   const undated = items.filter(item => !item.start || !item.end || item.start > item.end);
   // This is a review heuristic, not proof of an imported/default schedule.
@@ -71,10 +97,11 @@ export function buildInsightContext(source: InsightSources, now = new Date()) {
     const behind = scheduled.filter(item => !reviewKeys.has(item.key) && (loggedItems.has(item.key) || item.actual > 0) && item.actual < 100 && scheduleStatusFor(item.actual, expected.get(item.key) ?? 0) === "behind")
       .sort((a, b) => ((expected.get(b.key) ?? 0) - b.actual) - ((expected.get(a.key) ?? 0) - a.actual));
     if (behind.length) add("schedule", "recorded-progress-gap", "Recorded progress is below the planned schedule",
-      `${behind.length} work items with saved accomplishment evidence are below their date-based comparison as of ${asOfDate}. ${behind.slice(0,3).map(item => `${item.name}: ${round(item.actual)}% saved versus ${round(expected.get(item.key) ?? 0)}% expected (${item.start} to ${item.end})`).join("; ")}. Verify that records and dates are current before concluding that site work is delayed.`);
-    const dependency = items.find(item => item.predecessor && item.actual < 100 && !reviewKeys.has(item.key) &&
-      (item.actual > 0 || (loggedItems.has(item.key) && !!item.start && item.start <= asOfDate)) && (byKey.get(item.predecessor)?.actual ?? 100) < 100);
-    if (dependency) add("schedule", "unfinished-predecessor", "Review a task dependency", `${dependency.name} has saved accomplishment evidence and is scheduled to start by ${asOfDate} or has positive saved progress, while its recorded predecessor ${byKey.get(dependency.predecessor!)!.name} is still below 100% saved completion. Verify the records and dependency; this does not prove work is blocked or that the task is on a critical path.`);
+      `${behind.length} work items with saved accomplishment evidence are below their date-based comparison as of ${asOfDate}. ${behind.slice(0,3).map(item => `${item.name}: ${round(item.actual)}% saved versus ${round(expected.get(item.key) ?? 0)}% expected (${item.start} to ${item.end})`).join("; ")}.`,
+      "Confirm the latest site accomplishments and planned dates with the foreman. Review the remaining work and dependency links before agreeing on recovery actions.");
+    const dependency = items.find(item => item.predecessors.length > 0 && item.actual < 100 && !reviewKeys.has(item.key) &&
+      (item.actual > 0 || (loggedItems.has(item.key) && !!item.start && item.start <= asOfDate)) && item.predecessors.some(key => (byKey.get(key)?.actual ?? 100) < 100));
+    if (dependency) add("schedule", "unfinished-predecessor", "Review a task dependency", `${dependency.name} has saved accomplishment evidence and is scheduled to start by ${asOfDate} or has positive saved progress, while its recorded predecessor ${dependency.predecessors.map(key => byKey.get(key)).filter(row => row && row.actual < 100).map(row => row!.name).join(", ")} is still below 100% saved completion. Verify the records and dependency; this does not prove work is blocked or that the task is on a critical path.`);
   }
 
   const actualCosts = estimate.summary.costsToDate;
@@ -132,21 +159,23 @@ export function buildInsightContext(source: InsightSources, now = new Date()) {
   if (changes) add("documents", "document-changes", "Documents need changes", `${changes} current project documents have changes requested or were rejected. Superseded document versions are excluded.`);
 
   // Record setup issues appear first; verified spending and project reviews follow.
-  const readinessOrder: Record<string,number> = { "missing-dates": 0, "schedule-readiness": 1, "no-planned-cost": 2, "missing-progress": 3 };
+  const readinessOrder: Record<string,number> = { "missing-dates": 0, "schedule-readiness": 1, "no-planned-cost": 2, "missing-progress": 3, "forecast-readiness": 4, "completion-forecast": 4 };
   facts.sort((a,b) => (readinessOrder[a.id] ?? 10) - (readinessOrder[b.id] ?? 10));
   const status = deriveProjectStatusFromProgress(estimate.lifecycle);
   const completedCount = items.filter(item => item.actual >= 100).length;
   const executiveSummary = [
     `${clean(project.project_name)} is ${project.archived_at ? "archived with recorded status" : "marked"} ${status}, with ${items.length} work items and ${completedCount} at 100% saved completion.`,
-    validLogs.length ? `${validLogs.length} saved progress entries are available, most recently dated ${latestLogDate}.` : "No saved progress logs are available; confirm site accomplishments before drawing conclusions about work performed.",
+    validLogs.length ? `${validLogs.length} saved progress ${validLogs.length === 1 ? "entry is" : "entries are"} available, most recently dated ${latestLogDate}.` : "No saved progress logs are available; confirm site accomplishments before drawing conclusions about work performed.",
     datesNeedReview ? `${sameDay.length} work items share single-day dates at the project start and need schedule verification.` : undated.length ? `${undated.length} work items need complete planned dates.` : "",
     plannedTotal > 0 ? `Planned cost is ${money(plannedTotal)} and saved actual cost is ${money(actualTotal)}.` : `Total Planned cost is zero; complete or confirm the estimates before using cost-weighted progress or cost comparisons. Saved actual cost is ${money(actualTotal)}.`,
+    forecastEvidence,
   ].filter(Boolean).join(" ");
 
   return {
     projectId: project.id,
     asOfDate,
     executiveSummary,
+    schedule,
     readiness: { datesNeedReview, undatedWorkItemCount: undated.length, startedWithoutLogsCount: dueWithoutLogs.length, hasSavedLogs: validLogs.length > 0, hasPlannedCosts: plannedTotal > 0 },
     project: { name: clean(project.project_name), status, archived: !!project.archived_at, startDate: project.start_date, targetEndDate: project.target_end_date, recordedEndDate: project.actual_end_date },
     summary: {

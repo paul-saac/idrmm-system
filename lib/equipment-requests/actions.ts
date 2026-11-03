@@ -322,7 +322,8 @@ export async function cancelEquipmentRequest(
   const { error } = await supabase
     .from("equipment_requests")
     .update({ status: "canceled" })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("project_id", projectId);
 
   if (error) {
     console.error("[cancelEquipmentRequest] Supabase update failed:", error.message);

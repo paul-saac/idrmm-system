@@ -919,3 +919,8 @@ select[data-calendar-dropdown]::-webkit-scrollbar {
 dialog .empty-state-illustration {
   display: none;
 }
+
+/* Let non-working date-header backgrounds expose their native date descriptions. */
+.gantt-task-react-root .calendar text {
+  pointer-events: none;
+}

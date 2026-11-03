@@ -1,6 +1,7 @@
 "use server";
 
 import { requireAdminOrForeman } from "@/lib/auth/project-access";
+import { aiRetryDelay } from "@/lib/ai/retry";
 import type { ImportResources } from "./estimate-resources";
 import { readPdfForImport, PdfImportError } from "./pdf-text";
 import { getAIProvider, aiModel, aiChatRequest, aiResponseFormat, nextAIResponseMode, isAIJsonFormatError, type AIProvider, type AIResponseMode } from "@/lib/ai/provider";
@@ -155,15 +156,8 @@ async function excelToText(file: File): Promise<string> {
   return sheetTexts.join("\n\n");
 }
 
-// A 503 from Groq means its own servers are temporarily unavailable, not that
-// anything about this request was wrong — confirmed directly the first
-// time this ran end-to-end against a real key ("This model is currently
-// experiencing high demand..."). That kind of spike is near-always gone
-// within a few seconds, so retrying here beats surfacing a scary error
-// for something that would usually already be resolved by the time an
-// admin re-clicked "Process with AI" themselves. Only 503 gets this
-// treatment — 429 (this project's own quota, not provider capacity) and
-// 4xx (a real request problem) retrying blindly wouldn't help either.
+// Bound temporary-capacity retries and honor Azure/provider cooldown headers.
+// Permanent quota/billing and authentication errors are never retried.
 const MAX_ATTEMPTS = 3;
 
 // A busy model can also just never answer — Node's own fetch then waits 5
@@ -543,8 +537,12 @@ export async function extractBomFromFile(
       }
     }
 
-    if (response.status !== 503 || attempt === MAX_ATTEMPTS) break;
-    await sleep(1_000 * attempt);
+    if (attempt === MAX_ATTEMPTS) break;
+    const errorBody = response.status === 429 ? await response.clone().json().catch(() => null) : null;
+    const retryDelay = aiRetryDelay(response, attempt, TOTAL_BUDGET_MS - (Date.now() - startedAt),
+      String(errorBody?.error?.code ?? ""));
+    if (retryDelay === null) break;
+    await sleep(retryDelay);
   }
 
   if (!response) return { error: BUSY_MESSAGE };
@@ -554,7 +552,7 @@ export async function extractBomFromFile(
     }
     if (response.status === 401 || response.status === 403) return {error:"AI import is unavailable. Please contact your system administrator."};
     if (response.status === 404) return {error:"The configured AI deployment was not found. Ask your system administrator to check its endpoint and deployment name."};
-    if (response.status === 503) return { error: BUSY_MESSAGE };
+    if ([502, 503, 504].includes(response.status)) return { error: BUSY_MESSAGE };
     return {
       error: `The AI service couldn't process this document (HTTP ${response.status}). Please try again.`,
     };

@@ -14,7 +14,6 @@ import {
 } from "@/lib/cost-estimate/actions";
 import type { CostCategory, TaskMaterialAssignment } from "@/lib/cost-estimate/data";
 import { TaskDependenciesFields } from "@/components/projects/progress/task-dependencies-fields";
-import { currentProjectSuccessor, projectSuccessorOptions, projectPredecessorOptions, scheduleRowKey } from "@/lib/cost-estimate/successor-options";
 
 const initialState: CostEstimateActionState = {};
 
@@ -48,20 +47,10 @@ const initialState: CostEstimateActionState = {};
  * name/milestone/successor here can never silently wipe out a
  * schedule, priority, or assignment list someone set elsewhere.
  *
- * The one relationship field means two different things depending on
- * mode, both labeled "Successor," but backed by two different server
- * actions:
- *  - Creating a task: nothing else could already point *at* a task that
- *    doesn't exist yet, so the only relationship settable here is the
- *    new task's own predecessor (createTask's existing predecessorTaskId
- *    field) — "this new task starts after X."
- *  - Editing an existing task: the field instead manages the *inverse*
- *    relationship (updateSubtask's own successorTaskId) — "X starts
- *    after this task" — pre-filled with whichever sibling (if any)
- *    already has its own predecessor pointing here (see
- *    applyPredecessor in lib/cost-estimate/actions.ts).
- * Normal tasks retain sibling choices. Milestones may select any saved
- * main task or subtask in this project through the typed project picker.
+ * Edit mode manages multiple incoming and outgoing finish-to-start links in
+ * the Dependencies checklist. Grouped main tasks are predecessor candidates;
+ * only subtasks (including subtask milestones) are successor candidates. Circular links are
+ * rejected in both the checklist and the atomic database save.
  *
  * Deleting an existing task is in this modal's own ⋮ menu (see
  * gantt-chart-view.tsx's Edit Task modal), not a control on the task
@@ -103,17 +92,7 @@ export function SubtaskForm({
   onSave?: (form: FormData) => void;
 }) {
   const isEdit = task !== undefined;
-  const projectLinkMode = isEdit && projectCategories !== undefined;
   const [milestone, setMilestone] = useState(task?.isMilestone ?? false);
-  const [successorSelection, setSuccessorSelection] = useState(() => task && projectCategories
-    ? currentProjectSuccessor(projectCategories, { kind: "task", id: task.id }) : (() => { const next = (siblingTasks ?? []).find(row => row.predecessorTaskId === task?.id); return next ? `task:${next.id}` : ""; })());
-  const [predecessorSelection, setPredecessorSelection] = useState(() => {
-    const row = projectCategories?.flatMap(category => category.tasks).find(row => row.id === task?.id) ?? task;
-    return row?.predecessorTaskId ? `task:${row.predecessorTaskId}` : row?.predecessorCategoryId ? `category:${row.predecessorCategoryId}` : "";
-  });
-  const predecessorOptions = task && projectCategories ? projectPredecessorOptions(projectCategories, { kind: "task", id: task.id })
-    : (siblingTasks ?? []).filter(row => row.id !== task?.id).map(row => ({ kind: "task" as const, id: row.id, name: row.name }));
-  const projectOptions = task && projectCategories ? projectSuccessorOptions(projectCategories, { kind: "task", id: task.id }, milestone) : [];
   const boundAction = isEdit
     ? updateSubtask.bind(null, task.id, projectId)
     : createTask.bind(null, projectId);
@@ -143,12 +122,6 @@ export function SubtaskForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
 
-  // The sibling (if any) that already treats this task as its own
-  // predecessor — i.e. this task's current successor. Always undefined
-  // on create: nothing can point at a task before it exists.
-  const currentSuccessor = task
-    ? siblingTasks.find((t) => t.predecessorTaskId === task.id)
-    : undefined;
   const relationshipOptions = siblingTasks.filter((t) => t.id !== task?.id);
 
   return (
@@ -190,8 +163,7 @@ export function SubtaskForm({
               onChange={event => {
                 const checked = event.target.checked;
                 setMilestone(checked);
-                if (task && projectCategories && !projectSuccessorOptions(projectCategories, { kind: "task", id: task.id }, checked)
-                  .some(option => scheduleRowKey(option) === successorSelection)) setSuccessorSelection("");
+
               }}
               className="peer size-4 cursor-pointer appearance-none rounded-sm border border-zinc-300 bg-zinc-100 transition checked:border-zinc-900 checked:bg-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-300 focus-visible:outline-none"
             />
@@ -208,9 +180,7 @@ export function SubtaskForm({
           </label>
         </div>
 
-        {isEdit ? <TaskDependenciesFields id={formId} predecessor={predecessorSelection} successor={successorSelection}
-          predecessorOptions={predecessorOptions} successorOptions={projectCategories ? [ ...projectOptions, ...predecessorOptions.filter(option => scheduleRowKey(option) === successorSelection && !projectOptions.some(existing => scheduleRowKey(existing) === successorSelection)) ] : predecessorOptions}
-          onPredecessor={setPredecessorSelection} onSuccessor={setSuccessorSelection} /> : <div className="flex flex-col gap-1.5">
+        {isEdit ? <TaskDependenciesFields id={formId} source={{ kind: "task", id: task.id }} categories={projectCategories ?? []} /> : <div className="flex flex-col gap-1.5">
           <label
             htmlFor={`${formId}-relationship`}
             className="text-sm font-medium text-zinc-900"
@@ -220,18 +190,14 @@ export function SubtaskForm({
           <div className="relative">
             <select
               id={`${formId}-relationship`}
-              name={projectLinkMode ? "successorRowKey" : isEdit ? "successorTaskId" : "predecessorTaskId"}
-              value={projectLinkMode ? successorSelection : undefined}
-              defaultValue={projectLinkMode ? undefined : isEdit ? (currentSuccessor?.id ?? "") : ""}
-              onChange={projectLinkMode ? event => setSuccessorSelection(event.target.value) : undefined}
+              name="predecessorTaskId"
+              defaultValue=""
               className="flex h-[38px] w-full min-w-0 cursor-pointer appearance-none items-center rounded-md border border-zinc-200 bg-white px-3 py-2 pr-8 text-left text-sm leading-5 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
             >
               <option value="" hidden>
                 {isEdit ? "Select a successor task" : "None — starts independently"}
               </option>
-              {projectLinkMode ? projectOptions.map(option => (
-                <option key={scheduleRowKey(option)} value={scheduleRowKey(option)}>{option.name}</option>
-              )) : relationshipOptions.map((t) => (
+              {relationshipOptions.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}
                 </option>
@@ -242,8 +208,8 @@ export function SubtaskForm({
         </div>}
 
         {isEdit && (
-          <div className="-mx-6 flex flex-col gap-2 border-t border-zinc-200 px-6 pt-4">
-            <div className="flex items-center justify-between">
+          <div className="-mx-6 flex flex-col gap-3 border-t border-zinc-200 px-6">
+            <div className="-mx-6 flex items-center justify-between border-b border-zinc-200 px-6 py-4">
               <h3 className="text-sm font-medium text-zinc-900">
                 Assigned Resources
               </h3>

@@ -206,6 +206,7 @@ export function ImportBomModalContent({
   projectId,
   onClose,
   onStepChange,
+  onImported,
 }: {
   projectId: number;
   onClose: () => void;
@@ -216,8 +217,11 @@ export function ImportBomModalContent({
    * is a small, centered piece of content that looks lost at that
    * width. See Modal's own `size` prop. */
   onStepChange?: (step: ImportBomStep) => void;
+  onImported?: () => void;
 }) {
   const router = useRouter();
+  const processLock = useRef(false);
+  const confirmLock = useRef(false);
   const [step, setStep] = useState<ImportBomStep>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -306,48 +310,66 @@ export function ImportBomModalContent({
   }
 
   async function handleProcess() {
-    if (!file) return;
-    setProcessError(null);
-    setStep("processing");
-    const formData = new FormData();
-    formData.set("file", file);
-    const result = await extractBomFromFile(formData);
-    if (!result.categories) {
-      setProcessError(result.error ?? "Something went wrong. Please try again.");
+    if (!file || processLock.current) return;
+    processLock.current = true;
+    try {
+      setProcessError(null);
+      setStep("processing");
+      const formData = new FormData();
+      formData.set("file", file);
+      const result = await extractBomFromFile(formData);
+      if (!result.categories) {
+        setProcessError(result.error ?? "Something went wrong. Please try again.");
+        setStep("upload");
+        return;
+      }
+      const importedCategories = toDraftCategories(result.categories);
+      const importedAt = new Date().toISOString();
+      const draft: RecentImportDraft = {
+        id: nextId(),
+        sourceName: file.name,
+        createdAt: importedAt,
+        updatedAt: importedAt,
+        categories: importedCategories,
+      };
+      setCategories(importedCategories);
+      setCurrentDraftId(draft.id);
+      storeRecentDrafts([draft, ...recentDrafts]);
+      setStep("review");
+    } catch {
+      setProcessError("Could not reach the AI service. Your file is still selected; try again shortly.");
       setStep("upload");
-      return;
+    } finally {
+      processLock.current = false;
     }
-    const importedCategories = toDraftCategories(result.categories);
-    const importedAt = new Date().toISOString();
-    const draft: RecentImportDraft = {
-      id: nextId(),
-      sourceName: file.name,
-      createdAt: importedAt,
-      updatedAt: importedAt,
-      categories: importedCategories,
-    };
-    setCategories(importedCategories);
-    setCurrentDraftId(draft.id);
-    storeRecentDrafts([draft, ...recentDrafts]);
-    setStep("review");
   }
 
   async function handleConfirm() {
-    setConfirmError(null);
-    setStep("confirming");
-    // Sends exactly what's currently in the draft (whatever the admin
-    // has corrected by hand) — the id fields on DraftCategory/DraftTask/
-    // DraftMaterialLine are harmless excess properties here, applyBomImport
-    // reads the reviewed task and planned cost fields.
-    const result = await applyBomImport(projectId, categories);
-    if (result.error) {
-      setConfirmError(result.error);
+    if (confirmLock.current) return;
+    confirmLock.current = true;
+    try {
+      setConfirmError(null);
+      setStep("confirming");
+      // Sends exactly what's currently in the draft (whatever the admin
+      // has corrected by hand) — the id fields on DraftCategory/DraftTask/
+      // DraftMaterialLine are harmless excess properties here, applyBomImport
+      // reads the reviewed task and planned cost fields.
+      const result = await applyBomImport(projectId, categories);
+      if (result.error) {
+        setConfirmError(result.error);
+        setStep("review");
+        return;
+      }
+      onImported?.();
+      if (currentDraftId) removeDraft(currentDraftId);
+      router.refresh();
+      setStep("done");
+    } catch {
+      setConfirmError("Could not confirm the save. Check the project before retrying; your draft is still available.");
       setStep("review");
-      return;
+    } finally {
+      confirmLock.current = false;
     }
-    if (currentDraftId) removeDraft(currentDraftId);
-    router.refresh();
-    setStep("done");
   }
 
   const taskCount = categories.reduce((sum, c) => sum + c.tasks.length, 0);

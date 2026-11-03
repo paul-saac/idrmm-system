@@ -5,11 +5,13 @@ import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { isAdminRole } from "@/lib/auth/roles";
 import { deriveMaterialRequestStatus } from "@/lib/material-requests/status";
-import type { MaterialRequestPriority } from "@/lib/material-requests/data";
+import type { MaterialRequestPriority, MaterialRequestDetail } from "@/lib/material-requests/data";
+import { materialRequestIssue } from "./validation";
 
 export type MaterialRequestActionState = {
   error?: string;
   success?: boolean;
+  request?: MaterialRequestDetail;
 };
 
 type RequestItemInput = {
@@ -49,7 +51,7 @@ function readItems(formData: FormData): RequestItemInput[] {
       const record = item as Record<string, unknown>;
       return {
         id:
-          typeof record.id === "number"
+          record.id == null ? null : typeof record.id === "number"
             ? record.id
             : Number.isFinite(Number(record.id))
               ? Number(record.id)
@@ -61,8 +63,7 @@ function readItems(formData: FormData): RequestItemInput[] {
         purpose: String(record.purpose ?? "").trim(),
         quantityFulfilled: parseNumber(record.quantityFulfilled),
       };
-    })
-    .filter((item) => item.materialName.length > 0);
+    });
 }
 
 function parsePriority(value: FormDataEntryValue | null): MaterialRequestPriority {
@@ -113,6 +114,8 @@ export async function createMaterialRequest(
   const dateRequiredRaw = String(formData.get("dateRequired") ?? "").trim();
   const priority = parsePriority(formData.get("priority"));
   const remarks = String(formData.get("remarks") ?? "").trim();
+  const issue = materialRequestIssue(dateRequiredRaw, items);
+  if (issue) return { error: issue.message };
 
   const supabase = await createClient();
   const mrNo = await nextMrNo(supabase, projectId);
@@ -127,7 +130,7 @@ export async function createMaterialRequest(
       priority,
       remarks: remarks || null,
     })
-    .select("id")
+    .select("id, request_date")
     .single();
 
   if (error || !request) {
@@ -135,7 +138,7 @@ export async function createMaterialRequest(
     return { error: "Could not submit the material request. Please try again." };
   }
 
-  const { error: itemsError } = await supabase.from("material_request_items").insert(
+  const { data: savedItems, error: itemsError } = await supabase.from("material_request_items").insert(
     items.map((item) => ({
       material_request_id: request.id,
       material_name: item.materialName,
@@ -144,7 +147,7 @@ export async function createMaterialRequest(
       uom: item.uom || null,
       purpose: item.purpose || null,
     }))
-  );
+  ).select("id");
 
   if (itemsError) {
     console.error(
@@ -155,7 +158,15 @@ export async function createMaterialRequest(
   }
 
   revalidateProjectPaths(projectId);
-  return { success: true };
+  return { success: true, request: {
+    id: request.id, projectId, mrNo, requestDate: request.request_date,
+    dateRequired: dateRequiredRaw || null, priority, remarks: remarks || null, status: "submitted",
+    requestedByName: `${profile.firstName} ${profile.lastName}`.trim() || profile.email?.split("@")[0] || "You",
+    approvedByName: null, approvedAt: null,
+    items: items.map((item, index) => ({ id: savedItems![index].id, materialName: item.materialName,
+      specification: item.specification || null, quantityNeeded: item.quantityNeeded, uom: item.uom,
+      purpose: item.purpose, quantityFulfilled: 0, quantityRemaining: item.quantityNeeded, fulfilment: "not_fulfilled" })),
+  } };
 }
 
 export async function updateMaterialRequest(
@@ -177,6 +188,8 @@ export async function updateMaterialRequest(
   const dateRequiredRaw = String(formData.get("dateRequired") ?? "").trim();
   const priority = parsePriority(formData.get("priority"));
   const remarks = String(formData.get("remarks") ?? "").trim();
+  const issue = materialRequestIssue(dateRequiredRaw, items);
+  if (issue) return { error: issue.message };
 
   const supabase = await createClient();
 
@@ -325,7 +338,8 @@ export async function cancelMaterialRequest(
   const { error } = await supabase
     .from("material_requests")
     .update({ status: "canceled" })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .eq("project_id", projectId);
 
   if (error) {
     console.error("[cancelMaterialRequest] Supabase update failed:", error.message);

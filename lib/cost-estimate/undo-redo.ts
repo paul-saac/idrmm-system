@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
 type RawRow = Record<string, unknown> & { id: number };
 export type GanttSnapshot = {
+  dependencies?: RawRow[];
   categories: RawRow[];
   tasks: RawRow[];
   otherCosts: RawRow[];
@@ -10,7 +11,7 @@ export type GanttSnapshot = {
   categoryMaterialAssignments?: RawRow[];
 };
 
-/** One consistent database snapshot, rather than five independent HTTP reads. */
+/** One consistent database snapshot, including every dependency link. */
 export async function captureGanttSnapshot(client: SupabaseClient, projectId: number): Promise<GanttSnapshot> {
   const { data, error } = await client.rpc("gantt_snapshot", { p_project_id: projectId });
   if (error || !data) throw new Error("Could not read the schedule history.");

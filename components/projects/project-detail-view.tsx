@@ -17,6 +17,7 @@ import { useProjectCanEdit } from "@/components/projects/project-access-context"
 import { updateProject } from "@/lib/projects/actions";
 import { projectEditPreview } from "@/lib/projects/edit-preview";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
+import { RequestSyncProvider, useRequestSync } from "@/components/projects/request-sync-context";
 import { ProjectHeader } from "@/components/projects/project-header";
 import { CostEstimateView } from "@/components/projects/cost-estimate/cost-estimate-view";
 import { EstimateSyncProvider, useEstimateSync } from "@/components/projects/cost-estimate/estimate-sync-context";
@@ -201,13 +202,17 @@ function ArchiveProjectModalContent({
 
 export function ProjectDetailView(props: Parameters<typeof ProjectDetailContent>[0]) {
   return <ProgressLogSyncProvider key={props.project.id} task={props.taskProgressToday} category={props.categoryProgressToday} history={props.overrideHistory}>
-    <LiveProjectDetailView {...props} />
+    <RequestSyncProvider><LiveProjectDetailView {...props} /></RequestSyncProvider>
   </ProgressLogSyncProvider>;
 }
 
 function LiveProjectDetailView(serverProps: Parameters<typeof ProjectDetailContent>[0]) {
   const logSync = useProgressLogSync()!;
-  const props = { ...serverProps, taskProgressToday: logSync.task, categoryProgressToday: logSync.category, overrideHistory: logSync.history };
+  const requestSync = useRequestSync()!;
+  const materialRequests = [...requestSync.materials.filter(row => !serverProps.materialRequests.some(saved => saved.id === row.id)), ...serverProps.materialRequests]
+    .map(row => requestSync.canceled.has(`material:${row.id}`) ? { ...row, status: "canceled" as const } : row);
+  const equipmentRequests = serverProps.equipmentRequests.map(row => requestSync.canceled.has(`equipment:${row.id}`) ? { ...row, status: "canceled" as const } : row);
+  const props = { ...serverProps, materialRequests, equipmentRequests, taskProgressToday: logSync.task, categoryProgressToday: logSync.category, overrideHistory: logSync.history };
   const [localProject, setLocalProject] = useState<{ source: ProjectRow; value: ProjectRow } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -242,6 +247,7 @@ function LiveProjectDetailView(serverProps: Parameters<typeof ProjectDetailConte
     workingDays: project.workingDays, holidays: project.holidays }),
   [props.taskProgressToday, props.categoryProgressToday, project.workingDays, project.holidays]);
   return <EstimateSyncProvider key={project.id} estimate={props.costEstimate} progress={progress}>
+    {requestSync.error && <p role="alert" className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">{requestSync.error}</p>}
     {saveError && <p role="alert" className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-700">{saveError}</p>}
     {saving && <p role="status" className="px-6 py-1 text-xs text-zinc-500">Saving project changes...</p>}
     <ProjectDetailContent {...props} project={project} savingProject={saving} onSaveProject={saveProject} />
@@ -618,6 +624,7 @@ function ProjectDetailContent({
   // user sees — a Bill of Materials just happens to be the first
   // document shape this was built for, not the only one it accepts.
   const [importBomModalOpen, setImportBomModalOpen] = useState(false);
+  const [importHistoryRevision, setImportHistoryRevision] = useState(0);
   // Which step ImportBomModalContent is currently showing — reported up
   // via its own onStepChange so this Modal can widen itself (size=
   // "large") only for "review" (a spreadsheet-sized draft genuinely
@@ -983,6 +990,7 @@ function ProjectDetailContent({
               holidays={project.holidays}
               canUndo={ganttCanUndo}
               canRedo={ganttCanRedo}
+              importHistoryRevision={importHistoryRevision}
               workers={workers}
               workerAssignments={workerAssignments}
               memberGroups={memberGroups}
@@ -1029,6 +1037,7 @@ function ProjectDetailContent({
             projectId={project.id}
             onClose={() => setImportBomModalOpen(false)}
             onStepChange={setImportBomStep}
+            onImported={() => setImportHistoryRevision(revision => revision + 1)}
           />
         </Modal>
         </div>

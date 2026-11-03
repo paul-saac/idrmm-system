@@ -1,3 +1,4 @@
+import { dependencyKey, rowPredecessors, type DependencyFields } from "@/lib/cost-estimate/dependency-model";
 import type { CostCategory } from "@/lib/cost-estimate/data";
 import type { ProjectRow } from "@/lib/projects/data";
 
@@ -6,6 +7,7 @@ export type ScheduleAssessment = {
   risk: "low" | "medium" | "high" | "unassessed" | "completed";
   reason: string;
   forecastDate: string | null;
+  taskForecasts: Record<string, { forecastStartDate: string | null; firstRecordedDate: string | null; forecastDate: string; differenceDays: number }>;
   differenceDays: number | null;
   delayedTasks: number;
   lastRecordedDate: string | null;
@@ -29,7 +31,7 @@ export function assessProjectSchedule({ project, categories, taskRecords, catego
   project: Pick<ProjectRow, "startDate" | "targetEndDate" | "actualEndDate" | "workingDays" | "holidays">;
   categories: CostCategory[]; taskRecords: Records; categoryRecords: Records; today: string;
 }): ScheduleAssessment {
-  const result: ScheduleAssessment = { risk: "unassessed", reason: "Add a project schedule and task dates.", forecastDate: null,
+  const result: ScheduleAssessment = { risk: "unassessed", reason: "Add a project schedule and task dates.", forecastDate: null, taskForecasts: {},
     differenceDays: null, delayedTasks: 0, lastRecordedDate: null,
     method: "Recorded progress per elapsed working day; unstarted work uses its planned duration. Finish-to-start dependencies and the project work calendar apply. Dates are estimates; the official schedule is unchanged." };
   if (!validDate(today) || !validDate(project.startDate) || !validDate(project.targetEndDate)
@@ -62,9 +64,7 @@ export function assessProjectSchedule({ project, categories, taskRecords, catego
   };
   const nodes = new Map<string, Node>();
   let invalid = false;
-  const dependency = (row: { predecessorTaskId?: number | null; predecessorCategoryId?: number | null }) =>
-    row.predecessorTaskId != null ? [`task:${row.predecessorTaskId}`]
-      : row.predecessorCategoryId != null ? [`category:${row.predecessorCategoryId}`] : [];
+  const dependency = (row: DependencyFields) => rowPredecessors(row).map(dependencyKey);
   function leaf(key: string, row: CostCategory | CostCategory["tasks"][number], records: Records, extra: string[] = []) {
     if (!validDate(row.plannedStartDate) || !validDate(row.plannedEndDate) || row.plannedEndDate < row.plannedStartDate
       || !Number.isFinite(row.percentComplete) || row.percentComplete < 0 || row.percentComplete > 100) { invalid = true; return; }
@@ -115,12 +115,26 @@ export function assessProjectSchedule({ project, categories, taskRecords, catego
   result.lastRecordedDate = loggedDates.at(-1) ?? null;
   if (!result.lastRecordedDate) return { ...result, reason: "Insufficient data — save a progress log first." };
   if (leaves.some(node => node.percent > 0 && !node.dates.length)) return { ...result, reason: "Recorded progress needs dated logs for each started task." };
+  function taskForecasts(finishes: Map<string, string>, starts = new Map<string, string>()): ScheduleAssessment["taskForecasts"] {
+    const forecasts: ScheduleAssessment["taskForecasts"] = {};
+    for (const node of nodes.values()) {
+      if (node.key.endsWith(":start")) continue;
+      const plannedEnd = node.virtual ? node.dependencies.map(key => nodes.get(key)!.end).sort().at(-1)! : node.end;
+      const finish = finishes.get(node.key) ?? (node.virtual ? node.dependencies.map(key => finishes.get(key)).filter((date): date is string => !!date).sort().at(-1) : undefined);
+      const firstRecordedDate = (node.virtual ? node.dependencies.flatMap(key => nodes.get(key)!.dates) : node.dates).slice().sort()[0] ?? null;
+      const forecastStartDate = firstRecordedDate ? null : starts.get(node.key) ?? (node.virtual
+        ? node.dependencies.map(key => starts.get(key)).filter((date): date is string => !!date).sort()[0] ?? null : null);
+      if (finish) forecasts[node.key] = { forecastStartDate, firstRecordedDate, forecastDate: finish, differenceDays: ordinal(finish) - ordinal(plannedEnd) };
+    }
+    return forecasts;
+  }
   const allCompleted = leaves.every(node => node.percent >= 100);
   if (allCompleted) {
     if (leaves.some(node => !node.dates.length)) return { ...result, reason: "Completion needs saved progress records for every task." };
     const finish = validDate(project.actualEndDate) && project.actualEndDate <= today ? project.actualEndDate : result.lastRecordedDate;
     return { ...result, risk: "completed", reason: "All tasks are complete based on saved progress.", forecastDate: finish,
-      differenceDays: ordinal(finish) - ordinal(project.targetEndDate) };
+      differenceDays: ordinal(finish) - ordinal(project.targetEndDate),
+      taskForecasts: taskForecasts(new Map(leaves.map(node => [node.key, node.dates.at(-1)!]))) };
   }
   if (count(result.lastRecordedDate, today) - Number(working(ordinal(result.lastRecordedDate))) > 2)
     return { ...result, reason: "Progress records are more than two working days old. Update the logs." };
@@ -132,6 +146,7 @@ export function assessProjectSchedule({ project, categories, taskRecords, catego
     if (expected - node.percent > 5) result.delayedTasks++;
   }
   const finishes = new Map<string, string>();
+  const starts = new Map<string, string>();
   try {
     for (const node of order) {
       const predecessorFinish = node.dependencies.map(key => finishes.get(key)!).sort().at(-1);
@@ -150,12 +165,15 @@ export function assessProjectSchedule({ project, categories, taskRecords, catego
         ? Math.max(1, Math.ceil((100 - node.percent) / (node.percent / elapsed)))
         : Math.max(1, duration);
       if (node.milestone) {
-        finishes.set(node.key, [node.end, today, predecessorFinish ?? node.start].sort().at(-1)!);
+        const date = [node.end, today, predecessorFinish ?? node.start].sort().at(-1)!;
+        starts.set(node.key, date);
+        finishes.set(node.key, date);
       } else {
         const afterLog = lastLog === today ? nextWorking(today, true) : nextWorking(today);
         const dependencyStart = node.dependencies.map(key => key.endsWith(":start")
           ? finishes.get(key)! : nextWorking(finishes.get(key)!, true)).sort().at(-1) ?? node.start;
         const start = nextWorking([node.start, afterLog, dependencyStart].sort().at(-1)!);
+        starts.set(node.key, start);
         finishes.set(node.key, finishAfter(start, remainingDays));
       }
     }
@@ -165,7 +183,7 @@ export function assessProjectSchedule({ project, categories, taskRecords, catego
   const finish = leaves.map(node => finishes.get(node.key)!).sort().at(-1)!;
   const difference = ordinal(finish) - ordinal(project.targetEndDate);
   const risk = difference > 0 ? "high" : result.delayedTasks ? "medium" : "low";
-  return { ...result, risk, forecastDate: finish, differenceDays: difference,
+  return { ...result, risk, forecastDate: finish, differenceDays: difference, taskForecasts: taskForecasts(finishes, starts),
     reason: risk === "high" ? "The current projection extends beyond the official target."
       : risk === "medium" ? "Some tasks are behind; the projected finish still fits the target."
         : "Recorded progress and remaining work fit within the target." };

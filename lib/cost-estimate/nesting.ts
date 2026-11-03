@@ -1,3 +1,4 @@
+import { rowPredecessors, withPredecessors, type DependencyFields } from "./dependency-model";
 import type { CostCategory, CostTask } from "./data";
 
 export type NestMove = { kind: "category" | "task"; id: number; categoryId: number; beforeTaskId: number | null };
@@ -26,8 +27,7 @@ export function applyNest(categories: CostCategory[], entry: PendingNest): CostC
     : categories.flatMap(row => row.tasks).find(row => row.id === taskId);
   const task = sourceCategory ? categoryAsTask(sourceCategory, move.categoryId, taskId) : sourceTask ? { ...sourceTask, categoryId: move.categoryId } : undefined;
   if (!task || !categories.some(row => row.id === move.categoryId)) return categories;
-  const rewire = <T extends { predecessorCategoryId?: number | null; predecessorTaskId?: number | null }>(row: T): T =>
-    move.kind === "category" && row.predecessorCategoryId === move.id ? { ...row, predecessorCategoryId: null, predecessorTaskId: taskId } : row;
+  const rewire = <T extends DependencyFields>(row: T): T => move.kind === "category" ? withPredecessors(row, rowPredecessors(row).map(ref => ref.kind === "category" && ref.id === move.id ? { kind: "task", id: taskId } : ref)) : row;
   return categories.filter(row => move.kind !== "category" || row.id !== move.id).map(row => {
     const tasks = row.tasks.filter(item => item.id !== taskId && !(move.kind === "task" && item.id === move.id)).map(rewire);
     if (row.id === move.categoryId) {
@@ -65,8 +65,7 @@ export function applyOutdent(categories: CostCategory[], entry: PendingOutdent):
   const standalone: CostCategory = existing ?? { ...task!, id: categoryId, tasks: [],
     categoryLaborEstimate: task!.laborEstimate, categoryMaterialEstimate: task!.materialEstimate,
     categoryEquipmentEstimate: task!.equipmentEstimate, categoryOtherEstimate: task!.otherCostEstimate };
-  const rewire = <T extends { predecessorTaskId?: number | null; predecessorCategoryId?: number | null }>(row: T): T =>
-    row.predecessorTaskId === move.id ? { ...row, predecessorTaskId: null, predecessorCategoryId: categoryId } : row;
+  const rewire = <T extends DependencyFields>(row: T): T => withPredecessors(row, rowPredecessors(row).map(ref => ref.kind === "task" && ref.id === move.id ? { kind: "category", id: categoryId } : ref));
   const result = categories.filter(row => row.id !== categoryId).map(row => ({ ...rewire(row),
     tasks: row.tasks.filter(child => child.id !== move.id).map(rewire) }));
   const index = result.findIndex(row => row.id === move.targetCategoryId);
