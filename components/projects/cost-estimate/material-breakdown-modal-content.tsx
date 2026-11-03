@@ -3,8 +3,7 @@
 import { ProjectWriteInput, ProjectWriteButton, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
-import { RowMenu } from "./estimate-row-menu";
+import { Plus, X } from "lucide-react";
 import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import {
   updateTaskMaterialAssignments,
@@ -737,8 +736,16 @@ export function MaterialBreakdownModalContent({
           />
         </td>
         <td className="px-1">
-          <RowMenu name={line.materialName || "material"} disabled={!canEdit || pending}
-            actions={[{ label: "Delete material", destructive: true, run: () => removeLine(owner, line.key) }]} />
+          <ProjectWriteButton
+            type="button"
+            disabled={!canEdit || pending}
+            aria-label={`Delete ${line.materialName || "material"}`}
+            title="Delete material"
+            onClick={() => removeLine(owner, line.key)}
+            className="flex size-7 cursor-pointer items-center justify-center rounded text-zinc-400 transition hover:bg-red-50 hover:text-red-600 focus-visible:outline-2 focus-visible:outline-zinc-400 disabled:opacity-50"
+          >
+            <X aria-hidden className="size-4" />
+          </ProjectWriteButton>
         </td>
       </tr>
     );
@@ -809,7 +816,7 @@ export function MaterialBreakdownModalContent({
                       colSpan={5}
                       className={`${DIVIDER} px-4`}
                     >
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
                         <GroupLabel label={category.name} />
                         {tasks.length === 0 && (
                           <ProjectWriteButton
@@ -888,7 +895,7 @@ export function MaterialBreakdownModalContent({
                             <TreeLine branch end={lastTask} />
                           </td>
                           <td colSpan={4} className={SUBTASK_NAME_CELL}>
-                            <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
                               <GroupLabel label={task.name} />
                               <ProjectWriteButton
                                 type="button"

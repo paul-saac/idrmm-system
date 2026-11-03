@@ -2,9 +2,8 @@
 
 import { ProjectWriteInput, ProjectWriteButton, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { RowMenu } from "./estimate-row-menu";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { saveOtherCostBreakdown, saveEquipmentCostBreakdown } from "@/lib/cost-estimate/actions";
 import type { CostCategory, OtherCostItem } from "@/lib/cost-estimate/data";
 import { useEstimateSync } from "./estimate-sync-context";
@@ -198,11 +197,16 @@ export function OtherBreakdownModalContent({
               />
             </td>
             <td className="px-1">
-              <RowMenu name={line.costName || `${label.toLowerCase()} cost`} disabled={!canEdit || pending}
-                actions={[{ label: `Delete ${label.toLowerCase()} cost`, destructive: true, run: () =>
+              <ProjectWriteButton type="button" disabled={!canEdit || pending}
+                aria-label={`Delete ${line.costName || `${label.toLowerCase()} cost`}`}
+                title={`Delete ${label.toLowerCase()} cost`}
+                onClick={() =>
                   setDrafts(previous => ({ ...previous, [ownerKey(owner)]:
                     (previous[ownerKey(owner)] ?? initialLines(owner, label)).filter(item => item.key !== line.key) }))
-                }]} />
+                }
+                className="flex size-7 cursor-pointer items-center justify-center rounded text-zinc-400 transition hover:bg-red-50 hover:text-red-600 focus-visible:outline-2 focus-visible:outline-zinc-400 disabled:opacity-50">
+                <X aria-hidden className="size-4" />
+              </ProjectWriteButton>
             </td>
           </tr>
         );
@@ -235,7 +239,7 @@ export function OtherBreakdownModalContent({
                   : ""
               }`}
             >
-              <td colSpan={2} className={`${DIVIDER} px-4`}><div className="flex h-9 items-center justify-between gap-2"><GroupLabel label={category.name} />{!category.tasks.length && addButton(categoryOwners[0])}</div></td>
+              <td colSpan={2} className={`${DIVIDER} px-4`}><div className="flex h-9 items-center gap-2"><GroupLabel label={category.name} />{!category.tasks.length && addButton(categoryOwners[0])}</div></td>
               <td className={`${DIVIDER} h-9 px-4 text-right font-medium`}>{currency(categoryOwners.reduce((sum, owner) => sum + total(owner), 0))}</td><td />
             </tr>
             {category.tasks.length ? visibleOwners.map((owner, index) => <Fragment key={owner.id}>
@@ -251,7 +255,7 @@ export function OtherBreakdownModalContent({
                 }`}
               >
                 <td className={TREE_CELL}><TreeLine branch end={index === visibleOwners.length - 1} /></td>
-                <td className={SUBTASK_NAME_CELL}><div className="flex h-9 items-center justify-between gap-2"><GroupLabel label={owner.name} />{addButton(owner)}</div></td>
+                <td className={SUBTASK_NAME_CELL}><div className="flex h-9 items-center gap-2"><GroupLabel label={owner.name} />{addButton(owner)}</div></td>
                 <td className={`${DIVIDER} h-9 px-4 text-right font-medium`}>{currency(total(owner))}</td><td />
               </tr>
               {detailRows(owner, true, index === visibleOwners.length - 1)}

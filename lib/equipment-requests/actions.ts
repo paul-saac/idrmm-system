@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { isAdminRole } from "@/lib/auth/roles";
 import { deriveEquipmentRequestStatus } from "@/lib/equipment-requests/status";
+import { equipmentRequestIssue } from "@/lib/equipment-requests/validation";
 import type { EquipmentRequestPriority } from "@/lib/equipment-requests/data";
 
 export type EquipmentRequestActionState = {
@@ -48,7 +49,7 @@ function readItems(formData: FormData): RequestItemInput[] {
       const record = item as Record<string, unknown>;
       return {
         id:
-          typeof record.id === "number"
+          record.id == null ? null : typeof record.id === "number"
             ? record.id
             : Number.isFinite(Number(record.id))
               ? Number(record.id)
@@ -60,8 +61,7 @@ function readItems(formData: FormData): RequestItemInput[] {
         purpose: String(record.purpose ?? "").trim(),
         quantityFulfilled: parseNumber(record.quantityFulfilled),
       };
-    })
-    .filter((item) => item.equipmentName.length > 0);
+    });
 }
 
 function parsePriority(value: FormDataEntryValue | null): EquipmentRequestPriority {
@@ -108,6 +108,8 @@ export async function createEquipmentRequest(
   }
 
   const dateRequiredRaw = String(formData.get("dateRequired") ?? "").trim();
+  const issue = equipmentRequestIssue(dateRequiredRaw, items);
+  if (issue) return { error: issue.message };
   const priority = parsePriority(formData.get("priority"));
   const remarks = String(formData.get("remarks") ?? "").trim();
 
@@ -172,6 +174,8 @@ export async function updateEquipmentRequest(
   }
 
   const dateRequiredRaw = String(formData.get("dateRequired") ?? "").trim();
+  const issue = equipmentRequestIssue(dateRequiredRaw, items);
+  if (issue) return { error: issue.message };
   const priority = parsePriority(formData.get("priority"));
   const remarks = String(formData.get("remarks") ?? "").trim();
 
