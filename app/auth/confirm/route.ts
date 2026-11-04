@@ -4,8 +4,8 @@ import { emailLinkDestination, isEmailLinkType } from "@/lib/auth/email-link";
 import { readSessionState } from "@/lib/auth/session-state";
 
 /**
- * Exchanges the token_hash from a Supabase auth email link (password
- * recovery, invite, etc.) for a session, then redirects to `next`.
+ * Exchanges a token_hash from the server-side email template, or a PKCE
+ * code returned by Supabase's default ConfirmationURL, for a session.
  */
 export async function GET(request: NextRequest) {
   let origin = request.nextUrl.origin;
@@ -24,11 +24,20 @@ export async function GET(request: NextRequest) {
   const token_hash = searchParams.get("token_hash");
   const type = searchParams.get("type");
   const next = emailLinkDestination(type, searchParams.get("next"));
+  const code = searchParams.get("code");
+  const failurePath = type === "invite" || next === "/accept-invite"
+    ? "/accept-invite"
+    : type === "recovery" || next === "/reset-password" ? "/reset-password" : "/";
 
-  if (token_hash && isEmailLinkType(type)) {
+  // Supabase may return an error instead of credentials for a used/expired
+  // email link. Never treat the browser's existing session as verification.
+  if (!searchParams.has("error") && !searchParams.has("error_code") &&
+    ((token_hash && isEmailLinkType(type)) || (!token_hash && code && (!type || isEmailLinkType(type))))) {
     const supabase = await createClient();
 
-    const { error } = await supabase.auth.verifyOtp({ type, token_hash });
+    const { error } = token_hash && isEmailLinkType(type)
+      ? await supabase.auth.verifyOtp({ type, token_hash })
+      : await supabase.auth.exchangeCodeForSession(code!);
 
     if (!error && (await readSessionState(supabase))?.active) {
       return NextResponse.redirect(new URL(next, origin));
@@ -36,7 +45,7 @@ export async function GET(request: NextRequest) {
     if (!error) await supabase.auth.signOut({ scope: "local" });
   }
 
-  const url = new URL(type === "invite" ? "/accept-invite" : "/", origin);
+  const url = new URL(failurePath, origin);
   url.searchParams.set("error", "invalid_link");
   return NextResponse.redirect(url);
 }

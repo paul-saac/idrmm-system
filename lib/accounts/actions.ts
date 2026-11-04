@@ -563,7 +563,7 @@ export async function sendPasswordReset(targetId: string): Promise<AccountAction
 
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(target.email, {
-    redirectTo: `${siteURL()}/auth/confirm?next=/reset-password`,
+    redirectTo: `${siteURL()}/auth/confirm?type=recovery&next=/reset-password`,
   });
   if (error) {
     console.error("[sendPasswordReset] Failed:", error);

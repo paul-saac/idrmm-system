@@ -90,7 +90,7 @@ export async function requestPasswordReset(
   const supabase = await createClient();
 
   await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${getSiteURL()}/auth/confirm?next=/reset-password`,
+    redirectTo: `${getSiteURL()}/auth/confirm?type=recovery&next=/reset-password`,
   });
 
   // Always return a generic success message, whether or not the email
