@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import type { ProgressExpense } from "@/lib/expenses/progress";
 import { listMaterialPurchases } from "@/lib/materials/purchases";
+import { equipmentTaskUseStatus, type EquipmentTaskUseStatus } from "@/lib/equipment/usage-status";
+import { getCostEstimate } from "@/lib/cost-estimate/data";
 
 export type EquipmentStatus = "available" | "assigned" | "maintenance" | "retired";
 
@@ -15,14 +17,16 @@ export type EquipmentRow = {
   currentProjectId: number | null;
   currentProjectName: string | null;
   lastAssignedAt: string | null;
+  lastTaskAssignedAt?: string | null;
   lastReturnedAt: string | null;
   createdAt: string;
-  taskAssignments?: { projectId: number; projectName: string; itemKey: string; taskName: string; kind: "planned" | "in_use" }[];
+  taskAssignments?: { projectId: number; projectName: string; itemKey: string; taskName: string; kind: "planned" | "in_use";
+    startDate: string | null; endDate: string | null; useStatus: EquipmentTaskUseStatus }[];
   assignmentLoadError?: boolean;
 };
 
 const EQUIPMENT_COLUMNS =
-  "id, asset_tag, name, category, description, serial_number, status, current_project_id, last_assigned_at, last_returned_at, created_at";
+  "id, asset_tag, name, category, description, serial_number, status, current_project_id, last_assigned_at, last_task_assigned_at, last_returned_at, created_at";
 
 function toEquipmentRow(
   row: {
@@ -35,6 +39,7 @@ function toEquipmentRow(
     status: EquipmentStatus;
     current_project_id: number | null;
     last_assigned_at: string | null;
+    last_task_assigned_at?: string | null;
     last_returned_at: string | null;
     created_at: string;
   },
@@ -54,6 +59,7 @@ function toEquipmentRow(
         ? (projectNameById.get(row.current_project_id) ?? null)
         : null,
     lastAssignedAt: row.last_assigned_at,
+    lastTaskAssignedAt: row.last_task_assigned_at ?? null,
     lastReturnedAt: row.last_returned_at,
     createdAt: row.created_at,
   };
@@ -85,27 +91,46 @@ export async function listEquipment(): Promise<EquipmentRow[]> {
     ...(plans.data ?? []).map(row => row.project_id),
     ...(assignments.data ?? []).map(row => row.project_id),
   ])];
-  const taskIds = (plans.data ?? []).flatMap(row => /^task-([1-9]\d*)$/.test(row.item_key) ? [Number(row.item_key.slice(5))] : []);
-  const categoryIds = (plans.data ?? []).flatMap(row => /^category-([1-9]\d*)$/.test(row.item_key) ? [Number(row.item_key.slice(9))] : []);
   const assignmentIds = (assignments.data ?? []).map(row => row.id);
-  const [projects, tasks, categories, placements] = await Promise.all([
+  const [projects, placements] = await Promise.all([
     projectIds.length ? supabase.from("projects").select("id,project_name").in("id", projectIds) : Promise.resolve({data: [], error: null}),
-    taskIds.length ? supabase.from("estimate_tasks").select("id,project_id,task_name").in("id", taskIds) : Promise.resolve({data: [], error: null}),
-    categoryIds.length ? supabase.from("estimate_categories").select("id,project_id,category_name").in("id", categoryIds) : Promise.resolve({data: [], error: null}),
     assignmentIds.length ? supabase.from("equipment_task_assignments").select("equipment_assignment_id,project_id,task_id,task_name").in("equipment_assignment_id", assignmentIds).is("released_at", null) : Promise.resolve({data: [], error: null}),
   ]);
   const projectNameById = new Map((projects.data ?? []).map(row => [row.id, row.project_name]));
-  const nameByKey = new Map<string, string>([
-    ...(tasks.data ?? []).map(row => [`${row.project_id}:task-${row.id}`, row.task_name] as const),
-    ...(categories.data ?? []).map(row => [`${row.project_id}:category-${row.id}`, row.category_name] as const),
-  ]);
+  // Only load work details for projects visible through the caller's RLS policy.
+  const estimates = await Promise.all([...projectNameById.keys()].map(async projectId => {
+    try { return { projectId, estimate: await getCostEstimate(projectId, true), error: false }; }
+    catch { return { projectId, estimate: null, error: true }; }
+  }));
+  const asOf = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
+  const workByKey = new Map<string, { taskName: string; startDate: string | null; endDate: string | null;
+    progress: { started: boolean; completed: boolean } }>();
+  for (const { projectId, estimate } of estimates) {
+    if (!projectNameById.has(projectId) || !estimate) continue;
+    for (const category of estimate.categories) {
+      const children = category.tasks;
+      const starts = children.flatMap(task => task.plannedStartDate ? [task.plannedStartDate] : []).sort();
+      const ends = children.flatMap(task => task.plannedEndDate ? [task.plannedEndDate] : []).sort();
+      workByKey.set(`${projectId}:category-${category.id}`, { taskName: category.name,
+        startDate: children.length ? starts[0] ?? null : category.plannedStartDate,
+        endDate: children.length ? ends.at(-1) ?? null : category.plannedEndDate,
+        progress: { started: children.length ? children.some(task => task.percentComplete > 0) : category.percentComplete > 0,
+          completed: children.length ? children.every(task => task.percentComplete >= 100) : category.percentComplete >= 100 } });
+      for (const task of children) {
+        workByKey.set(`${projectId}:task-${task.id}`, { taskName: task.name,
+          startDate: task.plannedStartDate, endDate: task.plannedEndDate,
+          progress: { started: task.percentComplete > 0, completed: task.percentComplete >= 100 } });
+      }
+    }
+  }
   const workByEquipment = new Map<number, NonNullable<EquipmentRow["taskAssignments"]>>();
   for (const plan of plans.data ?? []) {
-    const taskName = nameByKey.get(`${plan.project_id}:${plan.item_key}`);
+    const work = workByKey.get(`${plan.project_id}:${plan.item_key}`);
     const projectName = projectNameById.get(plan.project_id);
-    if (!taskName || !projectName) continue;
+    if (!work || !projectName) continue;
     const list = workByEquipment.get(plan.equipment_id) ?? [];
-    list.push({projectId: plan.project_id, projectName, itemKey: plan.item_key, taskName, kind: "planned"});
+    list.push({projectId: plan.project_id, projectName, itemKey: plan.item_key, ...work, kind: "planned",
+      useStatus: equipmentTaskUseStatus(work.startDate, work.endDate, asOf, work.progress)});
     workByEquipment.set(plan.equipment_id, list);
   }
   const assignmentById = new Map((assignments.data ?? []).map(row => [row.id, row]));
@@ -117,12 +142,27 @@ export async function listEquipment(): Promise<EquipmentRow[]> {
     const itemKey = placement.task_id ? `task-${placement.task_id}` : `assignment-${assignment.id}`;
     const planned = list.find(row => row.projectId === placement.project_id && (row.itemKey === itemKey || row.taskName === placement.task_name));
     if (planned) planned.kind = "in_use";
-    else list.push({projectId: placement.project_id, projectName, itemKey, taskName: placement.task_name, kind: "in_use"});
+    else {
+      const work = workByKey.get(`${placement.project_id}:${itemKey}`);
+      const startDate = work?.startDate ?? null;
+      const endDate = work?.endDate ?? null;
+      list.push({projectId: placement.project_id, projectName, itemKey, taskName: work?.taskName ?? placement.task_name,
+        startDate, endDate, useStatus: equipmentTaskUseStatus(startDate, endDate, asOf, work?.progress ?? null), kind: "in_use"});
+    }
     workByEquipment.set(assignment.equipment_id, list);
   }
-  const assignmentLoadError = Boolean(plans.error || assignments.error || projects.error || tasks.error || categories.error || placements.error);
-  return data.map(row => ({...toEquipmentRow(row, projectNameById),
-    taskAssignments: workByEquipment.get(row.id) ?? [], assignmentLoadError}));
+  const failedProjectIds = new Set(estimates.filter(result => result.error).map(result => result.projectId));
+  return data.map(row => {
+    const relevantProjectIds = [
+      ...((plans.data ?? []).filter(plan => plan.equipment_id === row.id).map(plan => plan.project_id)),
+      ...((assignments.data ?? []).filter(assignment => assignment.equipment_id === row.id).map(assignment => assignment.project_id)),
+    ];
+    const assignmentLoadError = Boolean(plans.error || assignments.error || projects.error
+      || relevantProjectIds.some(projectId => failedProjectIds.has(projectId))
+      || (placements.error && (assignments.data ?? []).some(assignment => assignment.equipment_id === row.id)));
+    return {...toEquipmentRow(row, projectNameById),
+      taskAssignments: row.status === "maintenance" ? [] : workByEquipment.get(row.id) ?? [], assignmentLoadError};
+  });
 }
 
 export type EquipmentAssignmentRow = {
@@ -163,7 +203,7 @@ export type EquipmentTaskOption = {
  * Inventory's live current-state view, this is a history, the same way
  * Material Usage History is a history rather than a live snapshot).
  * Each row is one equipment_assignments record, set by assignEquipment
- * and closed out by returnEquipment/updateEquipmentAssignment (see
+ * and closed automatically after actual task completion (see
  * lib/equipment/actions.ts).
  */
 export async function listProjectEquipmentAssignments(
@@ -367,12 +407,12 @@ async function fetchAttendanceEntries(
 ) {
   if (entryIds.length === 0) return [];
   const chunkSize = 200;
-  const allRows: { progress_entry_id: number; worker_name: string; hours: number; hourly_rate: number }[] = [];
+  const allRows: { progress_entry_id: number; worker_name: string; hours: number; hourly_rate: number; fixed_amount?: number | null }[] = [];
   for (let i = 0; i < entryIds.length; i += chunkSize) {
     const chunk = entryIds.slice(i, i + chunkSize);
     const { data, error } = await supabase
       .from(tableName)
-      .select("progress_entry_id, worker_name, hours, hourly_rate")
+      .select("*")
       .in("progress_entry_id", chunk);
     if (error && error.code !== "PGRST205" && error.code !== "42P01") {
       console.error(`[listProgressExpenses] ${tableName} query failed:`, error.message);
@@ -463,10 +503,11 @@ export async function listProgressExpenses(
   const categoryOtherMap = makeCostMap(categoryOtherRows);
 
   const makeAttendanceMap = (rows: typeof taskAttendanceRows) => {
-    const map = new Map<number, { name: string; hours: number; rate: number }[]>();
+    const map = new Map<number, { name: string; hours: number; rate: number; amount?: number }[]>();
     for (const row of rows) {
       const list = map.get(row.progress_entry_id) ?? [];
-      list.push({ name: row.worker_name, hours: Number(row.hours) || 0, rate: Number(row.hourly_rate) || 0 });
+      list.push({ name: row.worker_name, hours: Number(row.hours) || 0, rate: Number(row.hourly_rate) || 0,
+        ...(row.fixed_amount != null ? {amount: Number(row.fixed_amount)} : {}) });
       map.set(row.progress_entry_id, list);
     }
     return map;

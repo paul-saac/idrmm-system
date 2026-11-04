@@ -3,19 +3,19 @@ import type { createClient } from "@/lib/supabase/server";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
-/** Who worked on a task or phase that day, as the progress window sends
- * it — the hours each one put in; anyone absent isn't listed. */
-export type AttendanceInput = { workerId: number; hours: number }[];
+/** Hourly work or a subcontractor's fixed daily amount; unused rows are omitted. */
+export type AttendanceInput = { workerId: number; hours: number; amount?: number }[];
 
 type AttendanceRow = {
   worker_id: number;
   worker_name: string;
   hours: number;
   hourly_rate: number;
+  fixed_amount?: number;
 };
 
 export type ResolvedAttendance = {
-  /** The day's labor cost: each person's hours × their hourly rate. */
+  /** Hourly costs plus subcontractors' fixed daily amounts. */
   laborCost: number;
   rows: AttendanceRow[];
 };
@@ -36,8 +36,8 @@ function formatHours(hours: number) {
 /**
  * Checks a day's attendance (0068/0069) and prices it from each member's
  * own Default Rate — read here, never taken from the browser — at the
- * hours each one worked. Employees only (a subcontractor's billed per
- * contract, under Other cost), and nobody past 24 hours that day: what
+ * hours each employee worked, or a subcontractor's entered daily amount.
+ * Nobody is counted past 24 hourly hours that day: what
  * they're already counted on every other task and phase, any project, is
  * added in.
  */
@@ -49,20 +49,26 @@ export async function resolveAttendance(
 ): Promise<{ error: string } | ResolvedAttendance> {
   const marks: unknown[] = Array.isArray(attendance) ? attendance : [];
   const hoursByWorker = new Map<number, number>();
+  const amountsByWorker = new Map<number, number>();
   for (const mark of marks) {
-    const { workerId, hours } = (mark ?? {}) as { workerId?: unknown; hours?: unknown };
+    const { workerId, hours, amount } = (mark ?? {}) as { workerId?: unknown; hours?: unknown; amount?: unknown };
     const id = Number(workerId);
     const worked = Math.round(Number(hours) * 100) / 100;
     if (!Number.isInteger(id) || id <= 0) {
       return { error: "Someone on the list isn't on the team." };
     }
-    if (!Number.isFinite(worked) || worked <= 0 || worked > MAX_HOURS_A_DAY) {
+    const fixed = amount !== undefined;
+    if (fixed && (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount >= 1e12 || Number(hours) !== 0)) {
+      return { error: "Enter a valid daily subcontractor amount with no hourly time." };
+    }
+    if (!fixed && (!Number.isFinite(worked) || worked <= 0 || worked > MAX_HOURS_A_DAY)) {
       return { error: "Hours worked must be more than 0 and at most 24." };
     }
     if (hoursByWorker.has(id)) {
       return { error: "Someone's listed twice." };
     }
     hoursByWorker.set(id, worked);
+    if (fixed) amountsByWorker.set(id, Math.round((amount as number) * 100) / 100);
   }
   if (hoursByWorker.size === 0) return { laborCost: 0, rows: [] };
 
@@ -80,10 +86,10 @@ export async function resolveAttendance(
       return { error: "Someone on the list is no longer on the team." };
     }
     if (worker.employment_type === "subcontractor") {
-      return {
-        error: `${worker.full_name} is a subcontractor — their billing goes under Other cost.`,
-      };
+      if (!amountsByWorker.has(id)) return { error: `Enter ${worker.full_name}'s daily subcontractor amount instead of hours.` };
+      continue;
     }
+    if (amountsByWorker.has(id)) return { error: `${worker.full_name}'s labor must be calculated from hours and their saved rate.` };
     if (worker.category !== "skilled") {
       return {
         error: `Only skilled workers are counted by the hour — ${worker.full_name} isn't one.`,
@@ -91,17 +97,18 @@ export async function resolveAttendance(
     }
   }
 
-  const { data: elsewhere, error: elsewhereError } = await supabase.rpc("attendance_elsewhere", {
+  const hourlyIds = ids.filter(id => !amountsByWorker.has(id));
+  const { data: elsewhere, error: elsewhereError } = hourlyIds.length ? await supabase.rpc("attendance_elsewhere", {
     p_date: entryDate,
-    p_worker_ids: ids,
+    p_worker_ids: hourlyIds,
     p_task_id: "taskId" in item ? item.taskId : null,
     p_category_id: "categoryId" in item ? item.categoryId : null,
-  });
+  }) : { data: [], error: null };
   if (elsewhereError && !isMissing(elsewhereError)) {
     console.error("[attendance] Elsewhere check failed:", elsewhereError.message);
     return { error: "Could not check today's attendance. Please try again." };
   }
-  for (const id of ids) {
+  for (const id of hourlyIds) {
     const others = (elsewhere ?? []).filter((row) => row.worker_id === id);
     const counted = others.reduce((sum, row) => sum + Number(row.hours), 0);
     if (counted + (hoursByWorker.get(id) ?? 0) > MAX_HOURS_A_DAY) {
@@ -119,11 +126,12 @@ export async function resolveAttendance(
       worker_id: id,
       worker_name: worker.full_name,
       hours: hoursByWorker.get(id)!,
-      hourly_rate: Number(worker.hourly_rate) || 0,
+      hourly_rate: amountsByWorker.has(id) ? 0 : Number(worker.hourly_rate) || 0,
+      ...(amountsByWorker.has(id) ? { fixed_amount: amountsByWorker.get(id)! } : {}),
     };
   });
   const laborCost =
-    Math.round(rows.reduce((sum, row) => sum + row.hourly_rate * row.hours, 0) * 100) / 100;
+    Math.round(rows.reduce((sum, row) => sum + (row.fixed_amount ?? row.hourly_rate * row.hours), 0) * 100) / 100;
   return { laborCost, rows };
 }
 

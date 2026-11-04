@@ -28,6 +28,7 @@ export type ProgressExpense = {
     name: string;
     hours: number;
     rate: number;
+    amount?: number;
   }[];
   isUnplanned?: boolean;
   equipmentName?: string;

@@ -117,7 +117,7 @@ export function ProjectHeader({
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold text-zinc-100">{project.name}</h1>
               <span
-                className={`inline-flex h-6 shrink-0 items-center justify-center rounded-xs px-2.5 text-center text-xs leading-none font-medium whitespace-nowrap ${projectStatusBadgeClasses(project.status, "workspace")}`}
+                className={`inline-flex h-6 shrink-0 items-center justify-center rounded-xs px-2.5 text-center text-xs leading-none font-medium whitespace-nowrap ${projectStatusBadgeClasses(project.status)}`}
               >
                 {projectStatusLabel(project.status)}
               </span>

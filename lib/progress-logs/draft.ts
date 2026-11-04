@@ -15,6 +15,6 @@ export function progressLogDraftKey(draft: ProgressLogDraft) {
     unplannedEquipment: costs(draft.unplannedEquipmentCosts),
     other: costs(draft.otherCostsUsed),
     unplannedOther: costs(draft.unplannedOtherCosts),
-    attendance: sorted((draft.attendance ?? []).filter(row=>row.hours!==0).map(row=>[row.workerId,row.hours])),
+    attendance: sorted((draft.attendance ?? []).filter(row=>row.hours!==0 || (row.amount ?? 0)!==0).map(row=>[row.workerId,row.hours,...(row.amount != null ? [row.amount] : [])])),
   });
 }

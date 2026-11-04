@@ -9,6 +9,8 @@ const PORTAL_BASES = ["/admin", "/foreman", "/project-manager"] as const;
 export function revalidateProjectPaths(projectId: number, subPath = "") {
   for (const base of PORTAL_BASES) {
     revalidatePath(`${base}/projects/${projectId}${subPath}`);
+    // Equipment task dates and completion badges are drawn from project records.
+    revalidatePath(`${base}/inventory`);
   }
 }
 

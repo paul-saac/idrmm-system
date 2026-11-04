@@ -62,6 +62,7 @@ export type AttendanceMark = {
   workerId: number | null;
   workerName: string;
   hours: number;
+  amount?: number;
 };
 
 /** Saved attendance for these progress entries, by entry id — empty
@@ -77,11 +78,11 @@ export async function attendanceByEntry(
     kind === "task"
       ? await supabase
           .from("task_progress_attendance")
-          .select("progress_entry_id, worker_id, worker_name, hours")
+          .select("*")
           .in("progress_entry_id", entryIds)
       : await supabase
           .from("category_progress_attendance")
-          .select("progress_entry_id, worker_id, worker_name, hours")
+          .select("*")
           .in("progress_entry_id", entryIds);
   for (const row of data ?? []) {
     const list = byEntry.get(row.progress_entry_id) ?? [];
@@ -89,6 +90,7 @@ export async function attendanceByEntry(
       workerId: row.worker_id,
       workerName: row.worker_name,
       hours: Number(row.hours),
+      ...(row.fixed_amount != null ? { amount: Number(row.fixed_amount) } : {}),
     });
     byEntry.set(row.progress_entry_id, list);
   }

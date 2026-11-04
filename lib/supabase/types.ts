@@ -505,6 +505,7 @@ export interface Database {
           worker_name: string;
           hours: number;
           hourly_rate: number;
+          fixed_amount?: number | null;
         };
         Insert: {
           progress_entry_id: number;
@@ -512,6 +513,7 @@ export interface Database {
           worker_name: string;
           hours: number;
           hourly_rate: number;
+          fixed_amount?: number | null;
         };
         Update: Record<string, never>;
         Relationships: [];
@@ -524,6 +526,7 @@ export interface Database {
           worker_name: string;
           hours: number;
           hourly_rate: number;
+          fixed_amount?: number | null;
         };
         Insert: {
           progress_entry_id: number;
@@ -531,6 +534,7 @@ export interface Database {
           worker_name: string;
           hours: number;
           hourly_rate: number;
+          fixed_amount?: number | null;
         };
         Update: Record<string, never>;
         Relationships: [];
@@ -1491,6 +1495,7 @@ export interface Database {
           status: "available" | "assigned" | "maintenance" | "retired";
           current_project_id: number | null;
           last_assigned_at: string | null;
+          last_task_assigned_at: string | null;
           last_returned_at: string | null;
           created_by: string | null;
           created_at: string;
@@ -1685,6 +1690,14 @@ export interface Database {
       equipment_tracking_data: {
         Args: { p_project_id: number };
         Returns: unknown;
+      };
+      set_equipment_service_status: {
+        Args: { p_equipment_id: number; p_expected_status: string; p_status: string };
+        Returns: { projectIds: number[] };
+      };
+      assign_available_equipment: {
+        Args: { p_equipment_id: number; p_project_id: number; p_notes?: string | null };
+        Returns: undefined;
       };
       save_equipment_cost_breakdown: {
         Args: { p_project_id: number; p_changes: unknown };

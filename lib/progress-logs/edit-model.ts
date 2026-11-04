@@ -8,7 +8,7 @@ export function logEditor(log: OverrideLog, team: Worker[], assigned: Worker[] =
   const workers = attendance.map(row => {
     const person = team.find(worker => worker.id === row.workerId);
     return {...person,id:row.workerId,fullName:row.name,hourlyRate:row.rate,
-      title:person?.title ?? "Recorded worker",category:"skilled",employmentType:"employee",
+      title:person?.title ?? "Recorded worker",category:"skilled",employmentType:row.amount != null ? "subcontractor" : "employee",
       contactNumber:person?.contactNumber ?? null,dateHired:person?.dateHired ?? null,
       subcontractorCompany:null,profileId:person?.profileId ?? null,workHours:person?.workHours ?? [0,0,0,0,0,0,0]} satisfies Worker;
   });

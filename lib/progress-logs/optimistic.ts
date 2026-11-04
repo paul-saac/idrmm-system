@@ -51,7 +51,7 @@ export function projectProgressLog(before: TaskProgressToday | undefined, logs: 
     cumulativeOtherCostSpend: deltaMap(current.cumulativeOtherCostSpend, old?.otherCostSpend, added?.otherCostSpend),
     loggedDates: [...new Set([...current.loggedDates.filter(day => day !== date), ...(next ? [date] : [])])].sort(),
     today: date === today ? added : current.today,
-    todayAttendance: date === today ? (next?.attendance.map(row => ({ workerId: row.workerId ?? null, workerName: row.name, hours: row.hours })) ?? []) : current.todayAttendance,
+    todayAttendance: date === today ? (next?.attendance.map(row => ({ workerId: row.workerId ?? null, workerName: row.name, hours: row.hours, ...(row.amount != null ? { amount: row.amount } : {}) })) ?? []) : current.todayAttendance,
     latest: latest ? { ...dayEntry(latest), entryDate: latest.entryDate, savedByName: latest.savedByName } : null,
   };
   return { progress, history };

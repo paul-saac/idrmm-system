@@ -422,6 +422,7 @@ export async function recordTaskProgress(
         name: row.worker_name,
         hours: row.hours,
         rate: row.hourly_rate,
+        ...(row.fixed_amount != null ? { amount: row.fixed_amount } : {}),
       })),
     });
 

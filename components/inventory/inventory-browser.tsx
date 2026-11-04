@@ -2,38 +2,37 @@
 
 import { EmptyState } from "@/components/ui/empty-state";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2, Wrench, FolderCheck, CircleCheck, Settings2 } from "lucide-react";
 import { FilterSelect } from "@/components/ui/filter-select";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { StatCard } from "@/components/admin/dashboard/stat-card";
 import { EquipmentForm } from "@/components/inventory/equipment-form";
-import { AssignEquipmentForm } from "@/components/inventory/assign-equipment-form";
 import { EquipmentTable } from "@/components/inventory/equipment-table";
 import { usePortal } from "@/components/portal/portal-context";
 import { deleteEquipmentItems } from "@/lib/equipment/actions";
-import type { EquipmentRow, EquipmentStatus } from "@/lib/equipment/data";
+import type { EquipmentRow } from "@/lib/equipment/data";
+import { equipmentUseStatus, EQUIPMENT_USE_LABELS, type EquipmentUseStatus } from "@/lib/equipment/usage-status";
 
-const STATUS_FILTERS: { value: EquipmentStatus; label: string }[] = [
-  { value: "available", label: "Available" },
-  { value: "assigned", label: "Assigned" },
-  { value: "maintenance", label: "Maintenance" },
-  { value: "retired", label: "Retired" },
-];
+const STATUS_FILTERS = (["available", "assigned", "maintenance"] as EquipmentUseStatus[])
+  .map(value => ({ value, label: EQUIPMENT_USE_LABELS[value] }));
 
 export function InventoryBrowser({
   equipment,
-  projects,
 }: {
   equipment: EquipmentRow[];
   projects: { id: number; name: string }[];
 }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<EquipmentStatus | "all">("all");
+  const [statusFilter, setStatusFilter] = useState<EquipmentUseStatus | "all">("all");
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => new Set());
   const [deleting, setDeleting] = useState(false);
+  const [removedIds, setRemovedIds] = useState<ReadonlySet<number>>(() => new Set());
+  const pendingDeletes = useRef(new Set<number>());
+  const visibleEquipment = useMemo(() => equipment.filter(item => !removedIds.has(item.id)), [equipment, removedIds]);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<
     | { kind: "single"; item: EquipmentRow }
@@ -43,15 +42,14 @@ export function InventoryBrowser({
   const [formModal, setFormModal] = useState<
     { mode: "add" } | { mode: "edit"; equipment: EquipmentRow } | null
   >(null);
-  const [assignTarget, setAssignTarget] = useState<EquipmentRow | null>(null);
   const { basePath, isAdmin } = usePortal();
 
   // By name.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return equipment
+    return visibleEquipment
       .filter((item) => {
-        const matchesStatus = statusFilter === "all" || item.status === statusFilter;
+        const matchesStatus = statusFilter === "all" || equipmentUseStatus(item) === statusFilter;
         const matchesQuery =
           !q ||
           item.name.toLowerCase().includes(q) ||
@@ -61,7 +59,7 @@ export function InventoryBrowser({
         return matchesStatus && matchesQuery;
       })
       .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-  }, [equipment, query, statusFilter]);
+  }, [visibleEquipment, query, statusFilter]);
 
   // Only what's on screen counts — a checked item the search or filter
   // hides isn't touched.
@@ -83,32 +81,38 @@ export function InventoryBrowser({
   }
 
   async function handleConfirmDelete() {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !isAdmin) return;
+    const ids = (deleteTarget.kind === "single" ? [deleteTarget.item.id] : deleteTarget.items.map(item => item.id))
+      .filter(id => !pendingDeletes.current.has(id));
+    if (!ids.length) return;
+    ids.forEach(id => pendingDeletes.current.add(id));
     setDeleteError(null);
     setDeleting(true);
-    const ids =
-      deleteTarget.kind === "single"
-        ? [deleteTarget.item.id]
-        : deleteTarget.items.map((item) => item.id);
-    const result = await deleteEquipmentItems(ids);
-    setDeleting(false);
-    if (result.error) {
-      setDeleteError(result.error);
-      return;
-    }
-    if (deleteTarget.kind === "single") {
-      if (formModal?.mode === "edit" && formModal.equipment.id === deleteTarget.item.id) {
-        setFormModal(null);
-      }
-    } else {
-      setSelected(new Set());
-    }
+    setRemovedIds(previous => new Set([...previous, ...ids]));
+    setSelected(previous => new Set([...previous].filter(id => !ids.includes(id))));
     setDeleteTarget(null);
-    router.refresh();
+    if (formModal?.mode === "edit" && ids.includes(formModal.equipment.id)) setFormModal(null);
+    try {
+      const result = await deleteEquipmentItems(ids);
+      if (result.error) throw new Error(result.error);
+      router.refresh();
+    } catch (error) {
+      setRemovedIds(previous => new Set([...previous].filter(id => !ids.includes(id))));
+      setDeleteError(error instanceof Error ? error.message : "Could not delete equipment. Please try again.");
+    } finally {
+      ids.forEach(id => pendingDeletes.current.delete(id));
+      setDeleting(pendingDeletes.current.size > 0);
+    }
   }
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Total Tools & Equipments" value={visibleEquipment.length} icon={Wrench} />
+        <StatCard label="Assigned" value={visibleEquipment.filter(item => equipmentUseStatus(item) === "assigned").length} icon={FolderCheck} />
+        <StatCard label="Available" value={visibleEquipment.filter(item => equipmentUseStatus(item) === "available").length} icon={CircleCheck} />
+        <StatCard label="Maintenance" value={visibleEquipment.filter(item => equipmentUseStatus(item) === "maintenance").length} icon={Settings2} />
+      </div>
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative min-w-55 max-w-sm flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-400" />
@@ -174,7 +178,7 @@ export function InventoryBrowser({
 
       {filtered.length === 0 ? (
         <EmptyState className="rounded-lg border border-zinc-200 bg-white py-12">
-          {equipment.length === 0 ? "No equipment recorded yet." : "No equipment matches."}
+          {visibleEquipment.length === 0 ? "No equipment recorded yet." : "No equipment matches."}
         </EmptyState>
       ) : (
         <EquipmentTable
@@ -182,7 +186,6 @@ export function InventoryBrowser({
           selected={selected}
           onCheck={setChecked}
           onEdit={(item) => setFormModal({ mode: "edit", equipment: item })}
-          onAssign={(item) => setAssignTarget(item)}
           onDelete={(item) => setDeleteTarget({ kind: "single", item })}
           basePath={basePath}
           readOnly={!isAdmin}
@@ -210,20 +213,7 @@ export function InventoryBrowser({
             />}
           </Modal>
 
-          {isAdmin && <Modal
-            open={assignTarget !== null}
-            onClose={() => setAssignTarget(null)}
-            title="Assign Equipment"
-          >
-            {assignTarget && (
-              <AssignEquipmentForm
-                key={assignTarget.id}
-                equipment={assignTarget}
-                projects={projects}
-                onSuccess={() => setAssignTarget(null)}
-              />
-            )}
-          </Modal>}
+
 
           {isAdmin && <ConfirmDialog
             open={deleteTarget !== null}

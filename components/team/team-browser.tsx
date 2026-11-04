@@ -5,8 +5,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowDown,
-  ArrowUp,
   ChevronDown,
   Folder,
   MoreHorizontal,
@@ -551,9 +549,9 @@ export function TeamBrowser({
                         >
                           Name
                           {ascending ? (
-                            <ArrowDown aria-label="A to Z" className="size-3.5" />
+                            <ChevronDown aria-label="A to Z" className="size-3.5" />
                           ) : (
-                            <ArrowUp aria-label="Z to A" className="size-3.5" />
+                            <ChevronDown aria-label="Z to A" className="size-3.5 rotate-180" />
                           )}
                         </button>
                       </th>

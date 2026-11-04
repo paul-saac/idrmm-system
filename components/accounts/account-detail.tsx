@@ -81,8 +81,8 @@ type Section = "details" | "role" | "password" | "access";
  * One account's own window (a row on Manage Accounts): edit their name
  * and email, change their role, reset their password or set one, sign
  * them out everywhere, see their projects and recent activity, deactivate
- * them (handing over any project they still run first) — and, for a super
- * admin, deleting it for good when it has no history.
+ * them (handing over any project they still run first), cancel unused
+ * invitations, or let a super admin delete an unused completed account.
  */
 export function AccountDetail({
   account,
@@ -179,6 +179,7 @@ export function AccountDetail({
 
   const name = `${account.firstName} ${account.lastName}`.trim() || account.email;
   const active = account.status === "active";
+  const canDeleteAccount = isSuperAdmin || (account.invitationPending === true && roleOptions.includes(account.role));
   // Unfinished projects they still run — each needs a replacement before
   // they're deactivated.
   const running = detail.projects.filter((project) => project.status !== "completed");
@@ -260,7 +261,7 @@ export function AccountDetail({
   }
 
   async function handlePermanentDelete() {
-    if (!isSuperAdmin || detail.hasHistory || busy !== null) return;
+    if (!canDeleteAccount || detail.hasHistory || busy !== null) return;
     setBusy("delete"); setDeleteError(null);
     try {
       const result = await deleteAccount(account.id);
@@ -277,6 +278,16 @@ export function AccountDetail({
         <div className={`flex size-12 shrink-0 items-center justify-center rounded-[1px] text-sm font-medium ${avatarColor(name || account.email)}`}>
           {userInitial}
         </div>
+        {!active && (
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => run("access", "activate", () => setAccountsStatus([account.id], "active"))}
+            className={`${PRIMARY} shrink-0`}
+          >
+            {busy === "activate" ? "Activating..." : "Activate"}
+          </button>
+        )}
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-lg font-semibold text-zinc-900">{name}</h3>
@@ -306,7 +317,7 @@ export function AccountDetail({
             {busy === "deactivate" ? "Deactivating..." : "Deactivate"}
           </button>
         )}
-        {isSuperAdmin && (
+        {canDeleteAccount && (
           <button type="button" disabled={detail.hasHistory || busy !== null}
             title={detail.hasHistory ? "This account has records. Deactivate it to preserve its history." : undefined}
             onClick={() => { setDeleteError(null); setDeleteOpen(true); }} className={DANGER}>
@@ -552,18 +563,6 @@ export function AccountDetail({
           />
         ) : (
           <p className="text-xs text-zinc-500">Administrators have access to all projects.</p>
-        )}
-        {!active && (
-          <div>
-            <button
-              type="button"
-              disabled={busy !== null}
-              onClick={() => run("access", "activate", () => setAccountsStatus([account.id], "active"))}
-              className={PRIMARY}
-            >
-              {busy === "activate" ? "Activating..." : "Activate"}
-            </button>
-          </div>
         )}
 
         {note("access")}

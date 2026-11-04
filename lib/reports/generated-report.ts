@@ -1,4 +1,5 @@
-﻿import type { CloseoutReportData } from "./closeout-data";
+﻿import { laborEntryCost } from "@/lib/task-progress/labor";
+import type { CloseoutReportData } from "./closeout-data";
 import { dayVariance, isDateOnly } from "./closeout-model";
 import { ISSUE_TYPE_LABELS, PUNCH_STATUS_LABELS } from "./punch-list-model";
 import { QUALITY_INSPECTION_TYPE_LABELS, QUALITY_RESULT_LABELS } from "./quality-inspection-model";
@@ -247,7 +248,7 @@ export function generateFinancialReport(
     if (entry.attendance?.length) {
       return entry.attendance.map(worker => [
         formatReportDate(entry.entryDate), worker.name, entry.itemName || "Project work",
-        worker.hours, fmtPhp(worker.rate), fmtPhp(worker.hours * worker.rate),
+        worker.amount != null ? "—" : worker.hours, worker.amount != null ? "—" : fmtPhp(worker.rate), fmtPhp(laborEntryCost(worker)),
       ]);
     }
     return [[formatReportDate(entry.entryDate), "Aggregate labor cost", entry.itemName || "Project work", "Not recorded", "Not recorded", fmtPhp(entry.costs.labor)]];

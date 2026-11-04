@@ -71,16 +71,28 @@ export type CategoryWorkerAssignments = Record<number, number[]>;
 
 export async function listWorkers(): Promise<Worker[]> {
   const supabase = await createClient();
-  // "*" so columns a migration hasn't added yet read as empty.
-  const { data } = await supabase
-    .from("workers")
-    .select("*")
-    .order("full_name", { ascending: true });
+  // Keep the current roster account-backed. Deleted accounts leave their
+  // worker record intact for history, but that record is no longer staff.
+  const [{ data }, { data: accounts }] = await Promise.all([
+    supabase.from("workers").select("*").order("full_name", { ascending: true }),
+    supabase.from("profiles")
+      .select("id, first_name, last_name, role")
+      .in("role", ["project_manager", "foreman"])
+      .eq("status", "active")
+      .eq("invitation_pending", false),
+  ]);
+  const accountById = new Map((accounts ?? []).map(account => [account.id, account]));
 
-  return (data ?? []).map((row) => ({
+  return (data ?? []).filter(row => {
+    const category = memberCategory(row.trade, isMemberCategory(row.category ?? "")
+      ? row.category : (categoryForTitle(row.trade ?? "") ?? "skilled"), row.profile_id);
+    return category !== "management" || (row.profile_id != null && accountById.has(row.profile_id));
+  }).map((row) => {
+    const account = row.profile_id ? accountById.get(row.profile_id) : undefined;
+    return {
     id: row.id,
-    fullName: row.full_name,
-    title: row.trade,
+    fullName: account ? `${account.first_name} ${account.last_name}`.trim() || row.full_name : row.full_name,
+    title: account ? (account.role === "foreman" ? "Foreman" : "Project Manager") : row.trade,
     contactNumber: row.contact_number ?? null,
     dateHired: row.date_hired ?? null,
     // Before 0063 has run: a category from the title, an employee. A
@@ -96,7 +108,8 @@ export async function listWorkers(): Promise<Worker[]> {
       Array.isArray(row.work_hours) && row.work_hours.length === 7
         ? row.work_hours.map((hours) => Number(hours) || 0)
         : DEFAULT_WORK_HOURS,
-  }));
+    };
+  }).sort((a,b) => a.fullName.localeCompare(b.fullName));
 }
 
 /** A member's hours on one project, from their recorded attendance. */

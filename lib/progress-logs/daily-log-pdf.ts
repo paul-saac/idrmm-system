@@ -1,3 +1,4 @@
+import { laborEntryCost } from "@/lib/task-progress/labor";
 import type { Incident } from "@/lib/incidents/model";
 import { INCIDENT_SEVERITIES, INCIDENT_TYPES } from "@/lib/incidents/model";
 import type { OverrideLog } from "./types";
@@ -116,7 +117,7 @@ export async function downloadDailyLogPdf(input: DailyLogPdfInput) {
   }
   if (input.log.attendance.length) {
     section("LABOR");
-    for (const worker of input.log.attendance) row(worker.name, `${quantity(worker.hours)} hours | ${peso(worker.hours * worker.rate)}`);
+    for (const worker of input.log.attendance) row(worker.name, `${worker.amount != null ? "Daily amount" : `${quantity(worker.hours)} hours`} | ${peso(laborEntryCost(worker))}`);
   }
   if (input.log.equipmentCosts?.length) {
     section("EQUIPMENT COSTS");

@@ -3,6 +3,7 @@
 import { useProgressLogSync } from "./progress-log-sync";
 import type { OverrideLog } from "@/lib/progress-logs/types";
 import { useMemo, useState } from "react";
+import { laborEntryCost } from "@/lib/task-progress/labor";
 import { logEditor } from "@/lib/progress-logs/edit-model";
 import { editProgressLog } from "@/lib/progress-logs/edit-actions";
 import { Modal } from "@/components/ui/modal";
@@ -208,14 +209,14 @@ export function ProgressTrackingModal({
             const date = editingLog?.entryDate ?? new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
             const attendance = input.attendance.map(mark => {
               const worker = editorTeam.find(worker=>worker.id===mark.workerId) ?? workerById.get(mark.workerId);
-              return { workerId: mark.workerId, name: worker?.fullName ?? "Team member", hours: mark.hours, rate: worker?.hourlyRate ?? 0 };
+              return { workerId: mark.workerId, name: worker?.fullName ?? "Team member", hours: mark.hours, ...(mark.amount != null ? { amount: mark.amount } : {}), rate: worker?.hourlyRate ?? 0 };
             });
             const sum = (rows: { amount: number }[] = []) => rows.reduce((total, row) => total + row.amount, 0);
             const round = (amount: number) => Math.round(amount * 100) / 100;
             const log: OverrideLog = {
               id: -Date.now(), action: "saved", entryDate: date, createdAt: new Date().toISOString(),
               savedByName: user.name, savedByRole: user.roleLabel, quantityCompleted: input.quantityCompletedToday,
-              costs: { material: editingLog?.costs.material ?? 0, labor: attendance.length ? round(attendance.reduce((total, mark) => total + mark.hours * mark.rate, 0)) : input.costs.labor,
+              costs: { material: editingLog?.costs.material ?? 0, labor: attendance.length ? round(attendance.reduce((total, mark) => total + laborEntryCost(mark), 0)) : input.costs.labor,
                 equipment: round(input.costs.equipment + sum(input.equipmentCostsUsed) + sum(input.unplannedEquipmentCosts)),
                 other: round(input.costs.other + sum(input.otherCostsUsed) + sum(input.unplannedOtherCosts)) },
               materialsUsed: [...input.materialsUsed, ...input.unplannedMaterials,...(editingLog?.materialsUsed.filter(row=>row.unitCost==null&&!groupPlannedMaterials(item.materialAssignments).some(planned=>planned.key===materialKey(row.name,row.unit))) ?? [])], attendance,

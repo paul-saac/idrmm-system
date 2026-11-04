@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPasswordError } from "@/lib/auth/password-policy";
+import { getInvitationEmailDomainError, invitationSendError } from "@/lib/accounts/invitation-email";
 import { MANAGED_ROLES, roleLabel, type UserRole } from "@/lib/auth/roles";
 import type { AccountEventAction } from "@/lib/supabase/types";
 import type {
@@ -210,7 +211,9 @@ export async function createAccount(
 
   const { data: existing, error: lookupError } = await admin.from("profiles").select("id").ilike("email", email).maybeSingle();
   if (lookupError) return { error: "Could not check this email. Please try again." };
-  if (existing) return { error: "An account already uses this email. Open that account to send a password setup/reset link." };
+  if (existing) return { error: "An account already uses this email." };
+  const emailError = await getInvitationEmailDomainError(email);
+  if (emailError) return { error: emailError };
   await admin.from("account_invitations").delete().eq("email", email)
     .lt("created_at", new Date(Date.now() - 60 * 60 * 1000).toISOString());
   const { data: invitation, error: invitationError } = await admin.from("account_invitations").insert({
@@ -229,9 +232,7 @@ export async function createAccount(
   if (error) {
     console.error("[createAccount] Supabase Admin API failed:", error);
     return {
-      error: error.message.toLowerCase().includes("already")
-        ? "An account with that email already exists."
-        : "Could not send the invitation. Check the email delivery configuration and try again.",
+      error: invitationSendError(error),
     };
   }
 
@@ -728,9 +729,9 @@ export async function deactivateWithHandover(
   return { success: "Account deactivated." };
 }
 
-/** Deletes an account for good — a super admin's call, and only for one
- * nothing in the app points at (made by mistake, never used). Anyone else
- * is deactivated instead, so their records stay theirs. */
+/** Delete unused accounts: administrators may cancel their managed invitations;
+ * only super administrators may delete accounts that completed setup.
+ * Existing operational history always prevents permanent deletion. */
 export async function deleteAccount(targetId: string): Promise<AccountActionState> {
   let manager;
   let target;
@@ -740,8 +741,8 @@ export async function deleteAccount(targetId: string): Promise<AccountActionStat
   } catch (e) {
     return failure(e);
   }
-  if (manager.role !== "super_admin") {
-    return { error: "Only a super admin can delete an account." };
+  if (manager.role !== "super_admin" && !target.invitationPending) {
+    return { error: "Only a super admin can delete an account that has completed setup." };
   }
 
   const supabase = await createClient();
@@ -901,14 +902,14 @@ export async function getAccountDetail(
 
   let log: AccountLogEntry[] = [];
   let hasHistory = true;
-  if (manager.role === "super_admin") {
+  if (manager.role === "super_admin" || target.invitationPending) {
     const [events, history] = await Promise.all([
-      supabase
+      manager.role === "super_admin" ? supabase
         .from("account_events")
         .select("id, actor_name, action, details, created_at")
         .eq("target_id", id)
         .order("created_at", { ascending: false })
-        .limit(30),
+        .limit(30) : Promise.resolve({ data: [] }),
       supabase.rpc("account_has_history", { p_profile_id: id }),
     ]);
     log = (events.data ?? []).map((event) => ({

@@ -19,8 +19,7 @@ export default async function AdminAccountsPage() {
     <>
       <AdminPageHeader title="Manage Accounts" />
       <main className="flex-1 overflow-y-auto px-8 py-6">
-        {/* A super admin's own overview of every account they manage. */}
-        {profile?.role === "super_admin" && (
+        {(profile?.role === "super_admin" || profile?.role === "admin") && (
           <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="Total Users" value={accounts.length} icon={Users} />
             <StatCard
@@ -34,8 +33,8 @@ export default async function AdminAccountsPage() {
               icon={HardHat}
             />
             <StatCard
-              label="Administrators"
-              value={accounts.filter((account) => account.role === "admin").length}
+              label={profile.role === "super_admin" ? "Administrators" : "Active Accounts"}
+              value={accounts.filter((account) => profile.role === "super_admin" ? account.role === "admin" : account.status === "active" && !account.invitationPending).length}
               icon={ShieldCheck}
             />
           </div>

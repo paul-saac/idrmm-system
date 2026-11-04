@@ -1,14 +1,13 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { ArrowRightLeft, Trash2, Undo2 } from "lucide-react";
+import { ArrowRightLeft, Trash2 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal } from "@/components/ui/modal";
 import { EquipmentAssignmentForm } from "@/components/projects/equipment/equipment-assignment-form";
 import { EquipmentTaskAssignmentForm } from "@/components/projects/equipment/equipment-task-assignment-form";
 import {
   deleteEquipmentAssignment,
-  returnEquipment,
   type EquipmentActionState,
 } from "@/lib/equipment/actions";
 import type {
@@ -98,54 +97,13 @@ function DeleteAssignmentButton({
   );
 }
 
-const returnInitialState: EquipmentActionState = {};
-
-function ReturnAssignmentButton({
-  equipmentId,
-  projectId,
-}: {
-  equipmentId: number;
-  projectId: number;
-}) {
-  const boundAction = returnEquipment.bind(null, equipmentId, projectId);
-  const [state, formAction, pending] = useActionState(
-    boundAction,
-    returnInitialState
-  );
-
-  return (
-    <span className="relative inline-flex">
-      <form action={formAction}>
-        <button
-          type="submit"
-          disabled={pending}
-          aria-label="Return equipment"
-          title="Mark as returned"
-          className="cursor-pointer rounded p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <Undo2 className="size-3.5" />
-        </button>
-      </form>
-      {state?.error && (
-        <span
-          role="alert"
-          className="absolute top-full right-0 z-10 mt-1 w-48 rounded-md border border-red-200 bg-white px-2 py-1 text-right text-xs font-normal text-red-600 shadow-sm"
-        >
-          {state.error}
-        </span>
-      )}
-    </span>
-  );
-}
-
 /**
  * The Equipment record's Assigned equipment view — every piece of the
  * Inventory's equipment this project has had, on site or returned, what an
  * admin's Assign on the Inventory page puts here (see
  * listProjectEquipmentAssignments): its asset tag, what it's for, when it
- * came and left, and how many days it's been on site. Marking it returned,
- * editing or deleting a row here writes the same equipment_assignments
- * record Inventory's own Assign/Return do, so the two stay in sync.
+ * came and left, and how many days it has been on site. Past assignment
+ * periods remain visible for accountability.
  * Listed as given.
  */
 export function AssignedEquipmentTable({
@@ -234,12 +192,6 @@ export function AssignedEquipmentTable({
                       >
                         <ArrowRightLeft className="size-3.5" />
                       </button>
-                    )}
-                    {onSite && (
-                      <ReturnAssignmentButton
-                        equipmentId={assignment.equipmentId}
-                        projectId={projectId}
-                      />
                     )}
                     <button
                       type="button"

@@ -1,9 +1,11 @@
 "use client";
 
 import { RequiredMark } from "@/components/ui/required-mark";
-import { useActionState, useEffect, useId } from "react";
+import { useActionState, useEffect, useId, useState } from "react";
 import { moveEquipmentToTask, type EquipmentActionState } from "@/lib/equipment/actions";
 import type { EquipmentAssignmentRow, EquipmentTaskOption } from "@/lib/equipment/data";
+
+import { EquipmentConflictDialog } from "@/components/inventory/equipment-conflict-dialog";
 
 const initialState: EquipmentActionState = {};
 
@@ -21,6 +23,7 @@ export function EquipmentTaskAssignmentForm({
   const action = moveEquipmentToTask.bind(null, assignment.id, projectId);
   const [state, formAction, pending] = useActionState(action, initialState);
   const formId = useId();
+  const [dismissedConflict, setDismissedConflict] = useState<EquipmentActionState | null>(null);
 
   useEffect(() => {
     if (state.success) onSuccess();
@@ -30,6 +33,7 @@ export function EquipmentTaskAssignmentForm({
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
+      <EquipmentConflictDialog conflict={state !== dismissedConflict ? state.conflict ?? null : null} onClose={() => setDismissedConflict(state)} />
       <div className="rounded border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm">
         <p className="font-medium text-zinc-900">{assignment.equipmentName}</p>
         <p className="text-xs text-zinc-400">{assignment.equipmentAssetTag}</p>

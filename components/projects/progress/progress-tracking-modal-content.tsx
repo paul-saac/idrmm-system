@@ -47,6 +47,7 @@ import { remainingQuantity, exceedsQuantity } from "@/lib/progress-logs/quantity
 import type { OverrideLog } from "@/lib/progress-logs/types";
 import { dayEntry, latestDailyLogs } from "@/lib/progress-logs/optimistic";
 import { progressLogDraftKey } from "@/lib/progress-logs/draft";
+import { laborEntryCost } from "@/lib/task-progress/labor";
 import { downloadDailyLogPdf } from "@/lib/progress-logs/daily-log-pdf";
 import type { Worker } from "@/lib/workers/data";
 import { formatHours, weekdayIndex } from "@/lib/workers/schedule";
@@ -207,7 +208,7 @@ function parseHours(value: string): number | null {
 }
 
 /** Paid by the hour: skilled employees (management and engineers are
- * salaried; subcontractors are billed per contract, under Other cost). */
+ * salaried; subcontractors have a direct daily amount). */
 function paidHourly(worker: Worker) {
   return worker.employmentType !== "subcontractor" && worker.category === "skilled";
 }
@@ -223,23 +224,25 @@ function LaborToday({
   team,
   hours,
   onHours,
+  amounts,
+  onAmount,
   onAdd,
   onRemove,
   laborToday,
   laborDetail,
-  subcontractorsAssigned,
 }: {
   rows: { worker: Worker; helper: boolean }[];
-  /** Everyone paid hourly who could be added as a helper. */
+  /** Skilled workers and subcontractors who can be added. */
   team: Worker[];
   /** Hours typed per person, by worker id. */
   hours: Record<number, string>;
   onHours: (workerId: number, value: string) => void;
+  amounts: Record<number, string>;
+  onAmount: (workerId: number, value: string) => void;
   onAdd: (workerId: number) => void;
   onRemove: (workerId: number) => void;
   laborToday: number;
   laborDetail?: ReactNode;
-  subcontractorsAssigned: boolean;
 }) {
   const today = weekdayIndex();
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -251,9 +254,6 @@ function LaborToday({
       (parseHours(hours[row.worker.id] ?? "") ?? 0) > 0 &&
       row.worker.hourlyRate === null
   );
-  const hasSubcontractors =
-    subcontractorsAssigned ||
-    rows.some((row) => row.worker.employmentType === "subcontractor");
 
   return (
     <section className="flex flex-col gap-4">
@@ -277,7 +277,8 @@ function LaborToday({
           <ul className="divide-y divide-zinc-100">
             {rows.map(({ worker, helper }) => {
               const worked = parseHours(hours[worker.id] ?? "");
-              const dayOff = (worker.workHours[today] ?? 0) === 0;
+              const fixed = worker.employmentType === "subcontractor";
+              const dayOff = !fixed && (worker.workHours[today] ?? 0) === 0;
               return (
                 <li key={worker.id} className={`${LABOR_COLUMNS} py-2.5 text-sm`}>
                   <div className="flex min-w-0 items-center gap-2.5">
@@ -304,7 +305,7 @@ function LaborToday({
                     )}
                   </div>
                   <span className="truncate text-xs text-zinc-500 tabular-nums">
-                    {worker.hourlyRate !== null ? (
+                    {!fixed && worker.hourlyRate !== null ? (
                       `${formatPeso(worker.hourlyRate)}/hr`
                     ) : worker.employmentType === "subcontractor" ? (
                       <span className="text-zinc-400">—</span>
@@ -312,7 +313,7 @@ function LaborToday({
                       <span className="text-amber-600">No rate</span>
                     )}
                   </span>
-                  <div
+                  {fixed ? <span aria-label="Hours not applicable" className="text-xs text-zinc-400">—</span> : <div
                     className={`flex items-center rounded-md border bg-white transition focus-within:ring-2 focus-within:ring-zinc-200 ${
                       worked === null ? "border-red-300" : "border-zinc-200 focus-within:border-zinc-400"
                     }`}
@@ -328,8 +329,17 @@ function LaborToday({
                       className="w-full min-w-0 bg-transparent py-1.5 pl-2.5 text-sm text-zinc-700 outline-none tabular-nums"
                     />
                     <span className="shrink-0 pr-2.5 pl-1 text-xs text-zinc-400">hrs</span>
-                  </div>
-                  {/* Worked out, not typed — a grayed, read-only box. */}
+                  </div>}
+                  {fixed ? (
+                    <div className="flex items-center rounded-md border border-zinc-200 bg-white focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200">
+                      <span aria-hidden className="pl-2.5 text-sm text-zinc-400">₱</span>
+                      <input type="text" inputMode="decimal" autoComplete="off"
+                        aria-label={`${worker.fullName}'s daily subcontractor amount`}
+                        value={amounts[worker.id] ?? ""}
+                        onChange={event => onAmount(worker.id, event.target.value)} placeholder="0"
+                        className="w-full min-w-0 bg-transparent px-2 py-1.5 text-sm text-zinc-700 outline-none tabular-nums" />
+                    </div>
+                  ) : (
                   <span
                     aria-label={`${worker.fullName}'s cost today`}
                     className="flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-sm tabular-nums"
@@ -338,6 +348,7 @@ function LaborToday({
                       {formatPeso((worker.hourlyRate ?? 0) * (worked ?? 0))}
                     </span>
                   </span>
+                  )}
                 </li>
               );
             })}
@@ -375,11 +386,6 @@ function LaborToday({
       {missingRate && (
         <p className="text-xs text-amber-600">
           Someone here has no hourly rate yet, so they count as ₱0 — set it on the Team page.
-        </p>
-      )}
-      {hasSubcontractors && (
-        <p className="text-xs text-zinc-500">
-          Subcontractors aren&apos;t counted by the hour — add their billing under Other cost.
         </p>
       )}
     </section>
@@ -543,8 +549,8 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
             title: "Labor",
             empty: "",
             rows: (log.attendance ?? []).map((worker): [string, string] => [
-              `${worker.name} · ${formatHours(worker.hours)}`,
-              formatPeso(worker.hours * worker.rate),
+              `${worker.name} · ${worker.amount != null ? "Daily amount" : formatHours(worker.hours)}`,
+              formatPeso(laborEntryCost(worker)),
             ]),
           },
         ]
@@ -598,7 +604,7 @@ function OverrideLogDetails({ log }: { log: OverrideLog }) {
           {section.title === "Labor" ? (
             <table className="w-full text-left">
               <thead className="border-b border-zinc-100 text-zinc-500"><tr><th className="px-3 py-2 font-medium">Worker</th><th className="px-3 py-2 text-right font-medium">Hours worked</th><th className="px-3 py-2 text-right font-medium">Amount</th></tr></thead>
-              <tbody className="divide-y divide-zinc-100">{log.attendance.map((worker, index) => <tr key={index}><td className="px-3 py-2 text-zinc-600">{worker.name}</td><td className="px-3 py-2 text-right tabular-nums">{formatHours(worker.hours)}</td><td className="px-3 py-2 text-right tabular-nums">{formatPeso(worker.hours * worker.rate)}</td></tr>)}</tbody>
+              <tbody className="divide-y divide-zinc-100">{log.attendance.map((worker, index) => <tr key={index}><td className="px-3 py-2 text-zinc-600">{worker.name}</td><td className="px-3 py-2 text-right tabular-nums">{worker.amount != null ? "—" : formatHours(worker.hours)}</td><td className="px-3 py-2 text-right tabular-nums">{formatPeso(laborEntryCost(worker))}</td></tr>)}</tbody>
             </table>
           ) : section.rows.length === 0 ? (
             <p className="px-3 py-2 text-zinc-400">{section.empty}</p>
@@ -1240,7 +1246,7 @@ export function ProgressTrackingModalContent({
     unplannedEquipmentCosts?: UnplannedOtherCost[];
     otherCostsUsed?: { name: string; amount: number }[];
     unplannedOtherCosts?: UnplannedOtherCost[];
-    attendance: { workerId: number; hours: number }[];
+    attendance: { workerId: number; hours: number; amount?: number }[];
   }) => Promise<ProgressActionResult>;
   /** Deletes a day's override — given for admins and super admins only,
    * who then get its Delete. */
@@ -1502,13 +1508,16 @@ export function ProgressTrackingModalContent({
   );
   const nextUnplannedId = useRef(unplannedRows.length);
 
-  // Labor today: only saved attendance is restored. New logs start blank so
-  // scheduled hours are not mistaken for actual hours worked.
-  const crewHourly = crew.filter(paidHourly);
+  // Only saved labor is restored; new logs start with blank hours and amounts.
+  const laborCrew = crew.filter(worker => paidHourly(worker) || worker.employmentType === "subcontractor");
+  const [subcontractorAmounts, setSubcontractorAmounts] = useState<Record<number, string>>(() => {
+    const saved = editingLog?.attendance ?? progressToday.todayAttendance;
+    return Object.fromEntries(saved.flatMap(row => row.workerId != null && row.amount != null ? [[row.workerId, toInput(row.amount)]] : []));
+  });
   const [hours, setHours] = useState<Record<number, string>>(() => {
     const initial: Record<number, string> = {};
     const saved = editingLog ? editingLog.attendance.map(row=>({workerId:row.workerId ?? null,hours:row.hours})) : progressToday.todayAttendance;
-    for (const worker of crewHourly) {
+    for (const worker of laborCrew) {
       initial[worker.id] = "";
     }
     if (savedToday) {
@@ -1519,10 +1528,10 @@ export function ProgressTrackingModalContent({
     return initial;
   });
   const teamById = new Map(team.map((worker) => [worker.id, worker]));
-  const crewIds = new Set(crewHourly.map((worker) => worker.id));
+  const crewIds = new Set(laborCrew.map((worker) => worker.id));
   const laborRows = [
-    ...crewHourly.map((worker) => ({ worker, helper: false })),
-    ...Object.keys(hours)
+    ...laborCrew.map((worker) => ({ worker, helper: false })),
+    ...Array.from(new Set([...Object.keys(hours), ...Object.keys(subcontractorAmounts)]))
       .map(Number)
       .filter((id) => !crewIds.has(id))
       .flatMap((id) => {
@@ -1531,19 +1540,22 @@ export function ProgressTrackingModalContent({
       })
       .sort((a, b) => a.worker.fullName.localeCompare(b.worker.fullName)),
   ];
-  const hoursWorked = laborRows.map(({ worker }) => ({
+  const hoursWorked = laborRows.filter(({ worker }) => paidHourly(worker)).map(({ worker }) => ({
     workerId: worker.id,
     hours: parseHours(hours[worker.id] ?? ""),
+  }));
+  const subcontractorsWorked = laborRows.filter(({worker}) => worker.employmentType === "subcontractor").map(({worker}) => ({
+    workerId: worker.id, hours: 0, amount: parseAmount(subcontractorAmounts[worker.id] ?? ""),
   }));
   // Labor's priced from hours once anyone's listed; typed otherwise.
   // Preserve a historical lump-sum labor cost until actual worker hours are
   // entered. Merely displaying the assigned crew must not erase saved costs.
   const savedAttendanceCount = editingLog?.attendance.length ?? progressToday.todayAttendance.length;
-  const laborFromHours = laborRows.length > 0 && !(savedToday && savedAttendanceCount===0 && savedToday.costs.labor>0 && !hoursWorked.some(row=>(row.hours ?? 0)>0));
-  const laborToday = laborRows.reduce(
-    (sum, { worker }, index) => sum + (worker.hourlyRate ?? 0) * (hoursWorked[index].hours ?? 0),
+  const laborFromHours = laborRows.length > 0 && !(savedToday && savedAttendanceCount===0 && savedToday.costs.labor>0 && !hoursWorked.some(row=>(row.hours ?? 0)>0) && !subcontractorsWorked.some(row=>(row.amount ?? 0)>0));
+  const laborToday = hoursWorked.reduce(
+    (sum, row) => sum + (laborRows.find(({worker}) => worker.id === row.workerId)?.worker.hourlyRate ?? 0) * (row.hours ?? 0),
     0
-  );
+  ) + subcontractorsWorked.reduce((sum,row) => sum + (row.amount ?? 0), 0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1832,6 +1844,7 @@ export function ProgressTrackingModalContent({
       (v) => Boolean(v.trim()) && (parseAmount(v) ?? 0) > 0
     ) ||
     Object.values(hours).some((v) => (parseHours(v) ?? 0) > 0) ||
+    subcontractorsWorked.some(row => (row.amount ?? 0) > 0) ||
     unplannedRows.some((r) => (parseAmount(r.quantity) ?? 0) > 0) ||
     unplannedEquipmentRows.some((r) => (parseAmount(r.amount) ?? 0) > 0) ||
     unplannedOtherRows.some((r) => (parseAmount(r.amount) ?? 0) > 0);
@@ -1882,7 +1895,7 @@ export function ProgressTrackingModalContent({
 
   // Breakdown sections for the Planned dropdown card.
   const plannedLaborRows: [string, string][] = [
-    ...crewHourly.map((worker): [string, string] => [
+    ...crew.filter(paidHourly).map((worker): [string, string] => [
       worker.title ? `${worker.fullName} · ${worker.title}` : worker.fullName,
       worker.hourlyRate !== null ? `${formatPeso(worker.hourlyRate)}/hr` : "No rate",
     ]),
@@ -1963,22 +1976,22 @@ export function ProgressTrackingModalContent({
     }
   }
 
-  const workerActualMap = new Map<string, { name: string; hours: number; cost: number }>();
+  const workerActualMap = new Map<string, { name: string; hours: number; fixed: boolean; cost: number }>();
   for (const log of activeSavedLogs) {
     for (const att of log.attendance ?? []) {
       const key = att.name.trim().toLowerCase();
       const existing = workerActualMap.get(key);
-      const cost = att.hours * att.rate;
+      const cost = laborEntryCost(att);
       if (existing) {
         existing.hours += att.hours;
         existing.cost += cost;
       } else {
-        workerActualMap.set(key, { name: att.name, hours: att.hours, cost });
+        workerActualMap.set(key, { name: att.name, hours: att.hours, fixed: att.amount != null, cost });
       }
     }
   }
   const actualLaborRows: [string, string][] = Array.from(workerActualMap.values()).map((w) => [
-    `${w.name} · ${formatHours(w.hours)}`,
+    `${w.name} · ${w.fixed ? "Daily amount" : formatHours(w.hours)}`,
     formatPeso(w.cost),
   ]);
   const loggedLaborTotal = Array.from(workerActualMap.values()).reduce((s, w) => s + w.cost, 0);
@@ -2165,9 +2178,10 @@ export function ProgressTrackingModalContent({
         })),
       // Who worked and for how long — the server prices labor from it
       // (each one's own Default Rate). Absent (0 hrs), not sent.
-      attendance: hoursWorked
+      attendance: [...hoursWorked
         .filter((entry) => (entry.hours ?? 0) > 0)
         .map((entry) => ({ workerId: entry.workerId, hours: entry.hours! })),
+        ...subcontractorsWorked.filter(entry => (entry.amount ?? 0) > 0).map(entry => ({workerId: entry.workerId, hours: 0, amount: entry.amount!}))],
   };
   const draftKey = progressLogDraftKey(draft);
   const [savedDraftKey,setSavedDraftKey] = useState<string | null>(()=>savedToday ? draftKey : null);
@@ -2220,6 +2234,10 @@ export function ProgressTrackingModalContent({
     }
     if (hoursWorked.some((entry) => entry.hours === null)) {
       setError("Hours worked must be between 0 and 24.");
+      return;
+    }
+    if (subcontractorsWorked.some(entry => entry.amount === null || entry.amount >= 1e12)) {
+      setError("Enter a valid nonnegative daily amount for each subcontractor.");
       return;
     }
 
@@ -2349,7 +2367,7 @@ export function ProgressTrackingModalContent({
                   >
                     <div
                       id="progress-labor"
-                      title="Hours worked × each worker's hourly rate — from Labor costs below."
+                      title="Hourly worker costs plus subcontractors' daily amounts, from Labor costs below."
                       className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums"
                     >
                       <span className="flex items-center gap-1.5">
@@ -2358,7 +2376,7 @@ export function ProgressTrackingModalContent({
                           {laborToday.toLocaleString("en-PH", { maximumFractionDigits: 2 })}
                         </span>
                       </span>
-                      <span className="text-xs text-zinc-400">From hours</span>
+                      <span className="text-xs text-zinc-400">From labor</span>
                     </div>
                   </Field>
                 );
@@ -2443,19 +2461,22 @@ export function ProgressTrackingModalContent({
               team={team}
               hours={hours}
               onHours={(workerId, value) => setHours((prev) => ({ ...prev, [workerId]: value }))}
+              amounts={subcontractorAmounts}
+              onAmount={(workerId,value) => setSubcontractorAmounts(prev => ({...prev,[workerId]:value}))}
               onAdd={(workerId) =>
                 setHours((prev) => ({
                   ...prev,
                   [workerId]: "",
                 }))
               }
-              onRemove={(workerId) =>
+              onRemove={(workerId) => {
+                setSubcontractorAmounts(prev => {const next={...prev};delete next[workerId];return next;});
                 setHours((prev) => {
                   const next = { ...prev };
                   delete next[workerId];
                   return next;
-                })
-              }
+                });
+              }}
               laborToday={costs.labor ?? 0}
               laborDetail={
                 plannedCosts.labor > 0 ? (
@@ -2470,7 +2491,6 @@ export function ProgressTrackingModalContent({
                   </span>
                 ) : undefined
               }
-              subcontractorsAssigned={crew.some((worker) => worker.employmentType === "subcontractor")}
             />
           </div>
         )}

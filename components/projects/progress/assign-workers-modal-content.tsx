@@ -64,7 +64,7 @@ export function AssignWorkersModalContent({
 }) {
   const { isAdmin } = usePortal();
   const defaults = new Set(defaultWorkerIds);
-  const assignableWorkers = workers.filter(worker => worker.category !== "management" && !defaults.has(worker.id));
+  const assignableWorkers = workers.filter(worker => worker.category !== "management" && worker.category !== "professional" && !defaults.has(worker.id));
   const workerIds = new Set(assignableWorkers.map(worker => worker.id));
   const [selected, setSelected] = useState<Set<number>>(
     () => new Set(assignedWorkerIds.filter(id => workerIds.has(id)))
@@ -97,7 +97,7 @@ export function AssignWorkersModalContent({
     });
   }
 
-  // Group shortcuts use the same eligible list, so management cannot be
+  // Group shortcuts use the same eligible list, so excluded categories cannot be
   // selected indirectly through a mixed group.
   const crews = groups
     .map((group) => ({

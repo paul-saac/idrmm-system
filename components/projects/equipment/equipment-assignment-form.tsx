@@ -94,27 +94,6 @@ export function EquipmentAssignmentForm({
             className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
           />
         </div>
-        <div className="flex flex-col gap-1.5">
-          <label
-            htmlFor={`${formId}-returnedAt`}
-            className="text-sm font-medium text-zinc-900"
-          >
-            Return Date{" "}
-            <span className="font-normal text-zinc-400">(optional)</span>
-          </label>
-          <input
-            id={`${formId}-returnedAt`}
-            name="returnedAt"
-            type="datetime-local"
-            defaultValue={
-              assignment.returnedAt ? toDateTimeLocal(assignment.returnedAt) : ""
-            }
-            className="rounded-md border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200"
-          />
-          <p className="text-xs text-zinc-400">
-            Leave blank if not yet returned.
-          </p>
-        </div>
       </div>
 
       <div className="flex items-center justify-end gap-3">

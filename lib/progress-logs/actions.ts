@@ -121,6 +121,7 @@ function toOverrideLog(row: OverrideLogRow, accounts: SavedByAccounts): Override
       name: String(worker.name ?? ""),
       hours: toNumber(worker.hours),
       rate: toNumber(worker.rate),
+      ...(worker.amount != null ? { amount: toNumber(worker.amount) } : {}),
     })),
   };
 }
