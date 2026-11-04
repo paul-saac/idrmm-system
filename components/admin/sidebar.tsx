@@ -7,9 +7,8 @@ import { LayoutGrid, Folder, HardHat, UserRound, FileText, Wrench } from "lucide
 import type { PortalBasePath } from "@/components/portal/portal-context";
 
 // Paths are relative to the portal's own base path, each item in the
-// portals that have it: a foreman manages the projects assigned to them,
-// not the company's people or users; a project manager's portal so far
-// is the Team (members to view, groups to manage).
+// portals that have it. Foremen view the Team without managing members
+// or groups; project managers can also manage groups.
 const NAV_ITEMS: {
   path: string;
   label: string;
@@ -18,7 +17,7 @@ const NAV_ITEMS: {
 }[] = [
   { path: "", label: "Dashboard", icon: LayoutGrid, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/projects", label: "Projects", icon: Folder, portals: ["/admin", "/foreman", "/project-manager"] },
-  { path: "/team", label: "Team", icon: HardHat, portals: ["/admin", "/project-manager"] },
+  { path: "/team", label: "Team", icon: HardHat, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/accounts", label: "Accounts", icon: UserRound, portals: ["/admin"] },
   { path: "/inventory", label: "Inventory", icon: Wrench, portals: ["/admin", "/foreman", "/project-manager"] },
   { path: "/reports", label: "Reports", icon: FileText, portals: ["/admin", "/foreman", "/project-manager"] },

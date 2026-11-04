@@ -187,6 +187,7 @@ function RowMenu({ label, items }: { label: string; items: ModalMenuItem[] }) {
  * A project manager's copy (canManageMembers false) views members only —
  * a row opens their profile (MemberProfile), with no adding, editing or
  * removing them — but manages groups the same.
+ * Foremen disable both permissions and can only browse members and groups.
  */
 export function TeamBrowser({
   members,
@@ -195,6 +196,7 @@ export function TeamBrowser({
   memberGroups,
   hoursWorked,
   canManageMembers = true,
+  canManageGroups = true,
 }: {
   members: Worker[];
   assignments: WorkerAssignment[];
@@ -204,6 +206,7 @@ export function TeamBrowser({
   /** Everyone's recorded attendance, per project — their profiles. */
   hoursWorked: HoursWorked[];
   canManageMembers?: boolean;
+  canManageGroups?: boolean;
 }) {
   const router = useRouter();
   const { basePath } = usePortal();
@@ -215,6 +218,7 @@ export function TeamBrowser({
   const [panel, setPanel] = useState<Panel | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const canSelectMembers = canManageMembers || canManageGroups;
 
   // Where a member's project opens.
   const projectsHref = `${basePath}/projects`;
@@ -346,6 +350,7 @@ export function TeamBrowser({
   }
 
   async function handleAddToGroup(groupId: number) {
+    if (!canManageGroups) return;
     const group = memberGroups.find((g) => g.id === groupId);
     if (!group) return;
     setDeleteError(null);
@@ -362,6 +367,7 @@ export function TeamBrowser({
   }
 
   async function handleDelete(targets: Worker[]) {
+    if (!canManageMembers) return;
     const open = targets.reduce(
       (sum, member) => sum + (openByWorker.get(member.id)?.length ?? 0),
       0
@@ -390,7 +396,7 @@ export function TeamBrowser({
     // Groups starts at the top; the member toolbar belongs to the table column.
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden p-6 sm:p-8">
       <div className="grid min-h-0 min-w-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,2fr)] items-stretch gap-4 lg:grid-cols-[17rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)]">
-        <GroupsPanel groups={memberGroups} members={members} />
+        <GroupsPanel groups={memberGroups} members={members} canManage={canManageGroups} />
         <div className="flex min-h-0 min-w-0 flex-col gap-3">
         <div className="flex min-h-9 shrink-0 flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-2">
@@ -398,13 +404,13 @@ export function TeamBrowser({
             <span className="text-xs text-zinc-400 tabular-nums">{total}</span>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-3">
-            {selectedMembers.length > 0 && (
+            {canSelectMembers && selectedMembers.length > 0 && (
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-sm font-medium text-zinc-900">{selectedMembers.length} selected</span>
                 <button type="button" onClick={() => setSelected(new Set())} className="cursor-pointer text-sm font-medium text-zinc-500 transition hover:text-zinc-900">
                   Clear
                 </button>
-                {memberGroups.length > 0 && (
+                {canManageGroups && memberGroups.length > 0 && (
                   <div className="relative">
                     <select value="" onChange={(e) => handleAddToGroup(Number(e.target.value))} aria-label="Add to group" className={SELECT}>
                       <option value="" disabled>Add to Group</option>
@@ -519,7 +525,7 @@ export function TeamBrowser({
                 {/* Fixed widths, so the columns stay put from tab to tab. */}
                 <table className="w-full min-w-5xl table-fixed text-left text-[13px] text-zinc-600">
                   <colgroup>
-                    <col className="w-12" />
+                    {canSelectMembers && <col className="w-12" />}
                     <col className="w-64" />
                     <col className="w-48" />
                     <col className="w-40" />
@@ -530,7 +536,7 @@ export function TeamBrowser({
                   </colgroup>
                   <thead>
                     <tr className="text-xs text-zinc-500 [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-zinc-50 [&>th]:shadow-[inset_0_-1px_0_var(--color-zinc-200)]">
-                      <SelectAllCell
+                      {canSelectMembers && <SelectAllCell
                         checked={allChecked}
                         indeterminate={selectedMembers.length > 0 && !allChecked}
                         onChange={() =>
@@ -540,7 +546,7 @@ export function TeamBrowser({
                           )
                         }
                         label={`Select all ${activeGroup.label}`}
-                      />
+                      />}
                       <th className={TH}>
                         <button
                           type="button"
@@ -593,11 +599,11 @@ export function TeamBrowser({
                             checked ? "bg-zinc-100" : "hover:bg-zinc-50"
                           }`}
                         >
-                          <SelectCell
+                          {canSelectMembers && <SelectCell
                             checked={checked}
                             onChange={() => setChecked([member.id], !checked)}
                             label={`Select ${member.fullName}`}
-                          />
+                          />}
                           <td className={TD}>
                             <div className="flex items-center gap-3">
                               <InitialsAvatar name={member.fullName} large />
@@ -734,7 +740,7 @@ export function TeamBrowser({
                 {deleteError}
               </p>
             )}
-            {panel?.mode === "add" && (
+            {canManageMembers && panel?.mode === "add" && (
               <MemberForm
                 key="add"
                 defaults={panel.defaults}
@@ -760,7 +766,7 @@ export function TeamBrowser({
                 }
               />
             )}
-            {panel?.mode === "edit" && panelMember && !isManagementMember(panelMember) && (
+            {canManageMembers && panel?.mode === "edit" && panelMember && !isManagementMember(panelMember) && (
               <MemberForm
                 key={panelMember.id}
                 member={panelMember}

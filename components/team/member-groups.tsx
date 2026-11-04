@@ -40,9 +40,11 @@ type Panel =
 export function GroupsPanel({
   groups,
   members,
+  canManage = true,
 }: {
   groups: MemberGroup[];
   members: Worker[];
+  canManage?: boolean;
 }) {
   const router = useRouter();
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -56,6 +58,7 @@ export function GroupsPanel({
   const open = panel !== null && (panel.mode === "add" || panelGroup !== undefined);
 
   async function handleDelete(group: MemberGroup) {
+    if (!canManage) return;
     if (!window.confirm(`Delete the group "${group.name}"? Its members stay on the team.`)) {
       return;
     }
@@ -75,7 +78,7 @@ export function GroupsPanel({
         <div className="flex shrink-0 items-center gap-2 border-b border-zinc-200 px-6 pb-4">
           <h2 className="text-base font-semibold text-zinc-900">Groups</h2>
           <span className="text-xs text-zinc-500 tabular-nums">{groups.length}</span>
-          <button
+          {canManage && <button
             type="button"
             onClick={() => setPanel({ mode: "add" })}
             title="Add group"
@@ -83,7 +86,7 @@ export function GroupsPanel({
             className="ml-auto flex size-6 cursor-pointer items-center justify-center rounded text-zinc-700 transition hover:bg-zinc-200 hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-400"
           >
             <Plus className="size-4" />
-          </button>
+          </button>}
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-6 py-4">
           {groups.length === 0 && (
@@ -156,9 +159,9 @@ export function GroupsPanel({
                 onClick={() => setPanel(null)}
                 className="cursor-pointer rounded border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50"
               >
-                Cancel
+                {canManage ? "Cancel" : "Close"}
               </button>
-              <button
+              {canManage && <><button
                 type="button"
                 onClick={() => handleDelete(panelGroup)}
                 className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-red-600 transition hover:border-red-600 hover:bg-red-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
@@ -171,11 +174,11 @@ export function GroupsPanel({
                 className="cursor-pointer rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800"
               >
                 Edit
-              </button>
+              </button></>}
             </ModalFooter>
           </>
         )}
-        {panel?.mode === "edit" && panelGroup && (
+        {canManage && panel?.mode === "edit" && panelGroup && (
           <GroupForm
             key={panelGroup.id}
             group={panelGroup}
@@ -183,7 +186,7 @@ export function GroupsPanel({
             onDone={() => setPanel({ mode: "view", groupId: panelGroup.id })}
           />
         )}
-        {panel?.mode === "add" && (
+        {canManage && panel?.mode === "add" && (
           <GroupForm key="new" members={members} onDone={() => setPanel(null)} />
         )}
       </Modal>
