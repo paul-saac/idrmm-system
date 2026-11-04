@@ -194,7 +194,7 @@ export function EquipmentForm({
           <tbody className="divide-y divide-zinc-100">
             {taskAssignments.map((task, index) => <tr key={`${task.projectId}-${task.itemKey}-${task.kind}-${index}`}>
               <td className="py-3 pr-3 pl-6 align-middle"><p className="break-words text-zinc-900">{task.taskName}</p>
-                <Link className="text-xs text-zinc-500 hover:underline" href={`${basePath}/projects/${task.projectId}`}>{task.projectName}</Link></td>
+                {task.canViewProject === false ? <span className="text-xs text-zinc-500">{task.projectName}</span> : <Link className="text-xs text-zinc-500 hover:underline" href={`${basePath}/projects/${task.projectId}`}>{task.projectName}</Link>}</td>
               <td className="px-3 py-3 align-middle text-xs leading-5 text-zinc-500">{equipmentTaskDateRange(task.startDate, task.endDate)}</td>
               <td className="py-3 pr-6 pl-3 text-right align-middle"><EquipmentUsageBadge status={task.useStatus} /></td>
             </tr>)}

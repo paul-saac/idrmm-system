@@ -1687,6 +1687,12 @@ export interface Database {
         Args: { p_project_id: number; p_item_key: string; p_selected: number[]; p_previous: number[] };
         Returns: undefined;
       };
+      equipment_catalog_assignment_summary: {
+        Args: Record<string, never>;
+        Returns: { equipmentId: number; projectId: number; projectName: string; itemKey: string;
+          taskName: string; kind: "planned"; startDate: string | null; endDate: string | null;
+          canViewProject: boolean; useStatus: "ongoing" | "upcoming" | "planned" | "completed" }[];
+      };
       equipment_tracking_data: {
         Args: { p_project_id: number };
         Returns: unknown;

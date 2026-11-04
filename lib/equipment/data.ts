@@ -20,7 +20,7 @@ export type EquipmentRow = {
   lastTaskAssignedAt?: string | null;
   lastReturnedAt: string | null;
   createdAt: string;
-  taskAssignments?: { projectId: number; projectName: string; itemKey: string; taskName: string; kind: "planned" | "in_use";
+  taskAssignments?: { projectId: number; projectName: string; itemKey: string; taskName: string; canViewProject?: boolean; kind: "planned" | "in_use";
     startDate: string | null; endDate: string | null; useStatus: EquipmentTaskUseStatus }[];
   assignmentLoadError?: boolean;
 };
@@ -82,9 +82,10 @@ export async function listEquipment(): Promise<EquipmentRow[]> {
 
   const equipmentIds = data.map(row => row.id);
   if (!equipmentIds.length) return [];
-  const [plans, assignments] = await Promise.all([
+  const [plans, assignments, catalogSummary] = await Promise.all([
     supabase.from("equipment_task_plans").select("project_id,item_key,equipment_id").in("equipment_id", equipmentIds),
     supabase.from("equipment_assignments").select("id,equipment_id,project_id").in("equipment_id", equipmentIds).is("returned_at", null),
+    supabase.rpc("equipment_catalog_assignment_summary"),
   ]);
   const projectIds = [...new Set([
     ...data.flatMap(row => row.current_project_id == null ? [] : [row.current_project_id]),
@@ -150,6 +151,18 @@ export async function listEquipment(): Promise<EquipmentRow[]> {
         startDate, endDate, useStatus: equipmentTaskUseStatus(startDate, endDate, asOf, work?.progress ?? null), kind: "in_use"});
     }
     workByEquipment.set(assignment.equipment_id, list);
+  }
+  // The catalog summary intentionally exposes assignment metadata only, not project records.
+  if (!catalogSummary.error && Array.isArray(catalogSummary.data)) {
+    for (const summary of catalogSummary.data) {
+      const list = workByEquipment.get(summary.equipmentId) ?? [];
+      if (!list.some(work => work.projectId === summary.projectId && work.itemKey === summary.itemKey)) {
+        list.push({projectId: summary.projectId, projectName: summary.projectName, itemKey: summary.itemKey,
+          taskName: summary.taskName, startDate: summary.startDate, endDate: summary.endDate,
+          useStatus: summary.useStatus, kind: "planned", canViewProject: summary.canViewProject});
+      }
+      workByEquipment.set(summary.equipmentId, list);
+    }
   }
   const failedProjectIds = new Set(estimates.filter(result => result.error).map(result => result.projectId));
   return data.map(row => {

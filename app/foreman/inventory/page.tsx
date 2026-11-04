@@ -5,12 +5,7 @@ import { InventoryBrowser } from "@/components/inventory/inventory-browser";
 
 export const metadata: Metadata = { title: "Inventory" };
 
-// View-only (see InventoryBrowser) — foremen can see the whole company
-// tool/equipment list, but checking equipment out, editing, and deleting
-// stay with admins. An item assigned to a project that isn't theirs shows
-// no project name, since row-level security only lets them read their own
-// projects. No project list is passed — it only feeds the admin-only
-// Assign form.
+// Company-wide assignment summaries are view-only; project access remains scoped.
 export default async function ForemanInventoryPage() {
   const equipment = await listEquipment();
 

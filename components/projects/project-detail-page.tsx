@@ -58,16 +58,14 @@ export async function ProjectDetailPage({ projectId }: { projectId: number }) {
     notFound();
   }
 
-  // Resolve only the small project record first. This lets Next.js stream a
-  // useful workspace header and tab frame while the larger project data set
-  // below is still loading.
+  // Validate the project before loading its workspace; keep identity skeletonized until ready.
   const project = await getProjectById(projectId);
   if (!project) {
     notFound();
   }
 
   return (
-    <Suspense fallback={<ProjectWorkspaceLoading project={project} />}>
+    <Suspense fallback={<ProjectWorkspaceLoading />}>
       <ProjectDetailContent projectId={projectId} project={project} />
     </Suspense>
   );
