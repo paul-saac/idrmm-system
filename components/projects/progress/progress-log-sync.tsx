@@ -40,7 +40,9 @@ export function ProgressLogSyncProvider({ task, category, history, children }: S
     for (const change of active) { value[change.item.kind][change.item.id] = change.progress; value.history[change.key] = change.history; }
     return value;
   }, [task, category, history, active]);
-  const value: Sync = { ...visible, pendingKeys:active.map(change=>change.key), run };
+  // Keep confirmed optimistic records visible during the route refresh, but
+  // only the database request itself should keep the Save button busy.
+  const value: Sync = { ...visible, pendingKeys:active.filter(change=>change.pending).map(change=>change.key), run };
   function run(item: OverrideLogItem, date: string, log: OverrideLog | null, action: () => Promise<{ error?: string; success?: boolean }>) {
     const key = `${item.kind}-${item.id}`;
     if (locks.current.has(key)) { setError("This task is still saving. Please wait before changing its log again."); return false; }
