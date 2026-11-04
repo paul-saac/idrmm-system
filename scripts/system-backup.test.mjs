@@ -162,3 +162,25 @@ test('same-schema restore is transactional, preserves recovery controls and sequ
     assert.equal((await db.query("insert into projects(name) values('Next') returning id")).rows[0].id, 2);
   } finally { await db.close(); }
 });
+
+
+test('new dependency and AI insight tables receive backup guards without losing records',async()=>{
+ const db=await setup();try{
+  await db.exec("create table public.estimate_dependencies(id int primary key,value text);create table public.project_ai_insights(id int primary key,value text);insert into estimate_dependencies values(1,'link');insert into project_ai_insights values(1,'insight')");
+  const repair=await readFile(new URL('../supabase/migrations/0143_backup_guards_for_dependencies_and_insights.sql',import.meta.url),'utf8');
+  await db.exec(repair);await db.exec(repair);
+  const description=await describeDatabase({query:(q,p)=>db.query(q,p)});
+  assert.equal(description.tables.filter(t=>t.schema==='public').every(t=>t.guarded),true);
+  for(const table of ['estimate_dependencies','project_ai_insights']){
+   assert.equal((await db.query('select count(*)::int n from '+table)).rows[0].n,1);
+   await db.exec('insert into '+table+" values(2,'normal write');update "+table+" set value='updated' where id=2;delete from "+table+' where id=2');
+  }
+  await db.exec('update system_backup_state set maintenance=true where singleton');
+  for(const table of ['estimate_dependencies','project_ai_insights']){
+   for(const statement of ['insert into '+table+" values(2,'blocked')",'update '+table+" set value='blocked' where id=1",'delete from '+table+' where id=1','truncate '+table]){
+    await assert.rejects(db.exec(statement),/maintenance is active/);
+   }
+   assert.equal((await db.query('select count(*)::int n from '+table)).rows[0].n,1);
+  }
+ }finally{await db.close();}
+});
