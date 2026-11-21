@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#3b3939"><meta name="robots" content="noindex"><title>Offline daily logs | IDR M&amp;M</title>
+<link rel="icon" href="/offline/icon.svg"><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/offline/styles.css">
+<script type="module" src="/offline/workspace.js"></script></head>
+<body><header><a href="/offline/index.html" class="brand">IDR M&amp;M</a><div><span id="connection" role="status">Checking connectionâ€¦</span><a href="/">Open system</a></div></header>
+<main><div class="intro"><div><h1>Offline daily logs</h1><p>Record accomplishments for projects saved on this device.</p></div><button id="sync" type="button">Sync now</button></div>
+<div id="notice" role="status" hidden></div><section id="projects"><p>Loading saved projectsâ€¦</p></section>
+<section id="editor" hidden><div class="section-header"><h2 id="project-title"></h2><span id="downloaded"></span></div>
+<div class="controls"><label>Task<select id="task"></select></label><label>Work date<input id="date" type="date" required></label></div>
+<form id="log-form" autocomplete="off"><div id="form-content"></div><div class="form-footer"><span id="draft-status" role="status"></span><button id="save" type="submit" class="primary">Save entry</button></div></form></section>
+<section id="saved" hidden><div class="section-header"><h2>Saved entries</h2><span id="pending-count"></span></div><div id="outbox"></div></section>
+<p class="footnote">Offline data stays in this browser on this device. Clearing site data removes unsynchronized entries. Sign in online before preparing a project on a new device.</p></main></body></html>

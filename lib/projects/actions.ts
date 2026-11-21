@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { syncProjectStatusFromProgress } from "@/lib/projects/sync";
 import { createClient } from "@/lib/supabase/server";
 import { getSessionProfile } from "@/lib/auth/session";
-import { requireProjectAccess } from "@/lib/auth/project-access";
+import { requireProjectAccess, requireProjectPlanningAccess } from "@/lib/auth/project-access";
 import { isAdminRole } from "@/lib/auth/roles";
 
 export type ProjectActionState = {
@@ -261,7 +261,7 @@ export async function updateProjectDefaultLaborCostPercent(
   projectId: number,
   percent: number | null
 ): Promise<ProjectActionState> {
-  const profile = await requireProjectAccess(projectId);
+  const profile = await requireProjectPlanningAccess(projectId);
 
   if (!profile) {
     return { error: "You are not authorized to edit this project's labor rate." };

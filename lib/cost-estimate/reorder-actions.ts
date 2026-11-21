@@ -1,6 +1,6 @@
 "use server";
 
-import { requireProjectAccess } from "@/lib/auth/project-access";
+import { requireProjectPlanningAccess } from "@/lib/auth/project-access";
 import { createClient } from "@/lib/supabase/server";
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { recordGanttCheckpoint } from "./undo-redo";
@@ -12,7 +12,7 @@ export async function moveScheduleRow(projectId: number, move: ScheduleRowMove):
       !Number.isSafeInteger(move.id) || move.id <= 0 || !Number.isSafeInteger(move.targetId) || move.targetId <= 0 || move.id === move.targetId) {
       return { error: "Choose a saved task and a different position." };
     }
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) return { error: "You do not have permission to reorder this project's tasks." };
     const supabase = await createClient();
     const { data, error } = await supabase.rpc("move_estimate_row", {
@@ -41,7 +41,7 @@ export async function moveScheduleRow(projectId: number, move: ScheduleRowMove):
 /** Cross-category movement and standalone-to-subtask conversion are atomic. */
 export async function nestScheduleRow(projectId: number, move: import("./nesting").NestMove): Promise<{ error?: string; taskId?: number }> {
   try {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) return { error: "You do not have permission to move this project's tasks." };
     if (!move || !["task", "category"].includes(move.kind) || !Number.isSafeInteger(move.id) || move.id <= 0 ||
         !Number.isSafeInteger(move.categoryId) || move.categoryId <= 0 ||
@@ -63,7 +63,7 @@ export async function nestScheduleRow(projectId: number, move: import("./nesting
 /** Outdent a leaf as one undoable transaction; operational records are protected. */
 export async function outdentScheduleRow(projectId: number, move: import("./nesting").OutdentMove): Promise<{ error?: string; categoryId?: number }> {
   try {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) return { error: "You do not have permission to move this project's tasks." };
     if (!move || !Number.isSafeInteger(move.id) || move.id <= 0 || !Number.isSafeInteger(move.targetCategoryId) || move.targetCategoryId <= 0 || typeof move.after !== "boolean")
       return { error: "Choose a saved subtask and a position in this project." };

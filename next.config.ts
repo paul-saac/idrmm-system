@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  async headers() {
+    return [
+      { source: "/offline-sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }, { key: "Service-Worker-Allowed", value: "/" }] },
+      { source: "/offline/:path*", headers: [
+        { key: "Cache-Control", value: "no-cache" }, { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "Content-Security-Policy", value: "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" },
+      ] },
+    ];
+  },
   // PDF.js loads its server worker relative to its own module. Bundling it
   // relocates that module into .next/chunks, where pdf.worker.mjs is absent.
   // Keep native Node resolution on the server; browser previews still bundle.

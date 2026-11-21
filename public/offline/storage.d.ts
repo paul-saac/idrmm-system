@@ -1,0 +1,14 @@
+import type { OfflineProject, OfflineSubmission, OfflineItem, OfflineInput, OfflineState } from "../../lib/offline/types";
+export function subscribeOffline(fn: () => void): () => void;
+export function registerOfflineWorker(): Promise<void>;
+export function prepareOfflineProject(projectId: number): Promise<OfflineProject>;
+export function activateOfflineOwner(id: string): Promise<void>;
+export function lockOfflineWorkspace(): Promise<void>;
+export function activeOfflineOwner(): Promise<{ ownerId: string; locked?: boolean } | undefined>;
+export function localGet(store: string, id: string): Promise<unknown>;
+export function localAll(store: "outbox"): Promise<OfflineSubmission[]>;
+export function localAll(store: "projects"): Promise<(Omit<OfflineProject, "id"> & { id: string; projectId: number })[]>;
+export function synchronizeOfflineLogs(force?: boolean): Promise<void>;
+export function queueOfflineLog(project: OfflineProject, item: OfflineItem, date: string, input: OfflineInput, expectedVersion: string | null): Promise<OfflineSubmission>;
+export function offlineEntryState(project: OfflineProject, item: OfflineItem, date: string): Promise<OfflineState>;
+export function manilaDate(): string;

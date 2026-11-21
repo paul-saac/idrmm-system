@@ -1,14 +1,14 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { requireProjectAccess } from "@/lib/auth/project-access";
+import { requireProjectPlanningAccess } from "@/lib/auth/project-access";
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { recordGanttCheckpoint } from "./undo-redo";
 import { isScheduleDate, type ScheduleDateChange } from "./schedule-dates";
 
 export async function moveSelectedSchedules(projectId: number, changes: ScheduleDateChange[]) {
   try {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) return { error: "You do not have permission to edit this project." };
     if (!Array.isArray(changes) || changes.length === 0 || changes.length > 1000) return { error: "Select between 1 and 1,000 schedule rows." };
     const keys = new Set<string>();

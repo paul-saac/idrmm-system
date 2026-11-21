@@ -1620,6 +1620,15 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      offline_project_progress: {
+        Args: { p_project_id: number; p_date: string };
+        Returns: Record<string, import("@/lib/offline/types").OfflineState>;
+      };
+      synchronize_offline_progress: {
+        Args: { p_id: string; p_owner: string; p_project_id: number; p_kind: string; p_item_id: number;
+          p_work_date: string; p_captured_at: string; p_expected_version: string | null; p_input: unknown };
+        Returns: { id: string; workDate: string; state: import("@/lib/offline/types").OfflineState; replayed?: boolean };
+      };
       edit_saved_progress_log: {
         Args: { p_project_id:number; p_kind:string; p_item_id:number; p_log_id:number; p_input:unknown };
         Returns: undefined;

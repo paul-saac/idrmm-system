@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { requireProjectAccess } from "@/lib/auth/project-access";
+import { requireProjectPlanningAccess } from "@/lib/auth/project-access";
 import { getSessionProfile } from "@/lib/auth/session";
 import { isMemberCategory, categoryForTitle } from "@/lib/workers/presets";
 import { isAdminRole } from "@/lib/auth/roles";
@@ -399,7 +399,7 @@ export async function setTaskWorkers(
   workerIds: number[]
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage task assignments." };
     }
@@ -455,7 +455,7 @@ export async function setCategoryWorkers(
   workerIds: number[]
 ): Promise<WorkerActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage task assignments." };
     }

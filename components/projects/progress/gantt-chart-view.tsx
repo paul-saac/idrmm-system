@@ -1,6 +1,6 @@
 "use client";
 
-import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, useProjectCanEdit } from "@/components/projects/project-access-context";
+import { ProjectAccessProvider, ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ComponentProps, type ComponentType, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -1211,8 +1211,9 @@ export function GanttChartView({
   // Gantt chart vs. Calendar view of the same tasks (the toolbar's
   // view menu, SCHEDULE_VIEWS) — see ProjectCalendarView.
   const [calendarView, setCalendarView] = useState(false);
-  const { isAdmin } = usePortal();
-  const canEdit = useProjectCanEdit();
+  const { isAdmin, basePath } = usePortal();
+  const canRecordProgress = useProjectCanEdit();
+  const canEdit = canRecordProgress && basePath !== "/foreman";
   // The Calendar view's Add event / event chip — a new event on a day,
   // or an existing one to edit. See ProjectEventModalContent.
   const [eventModal, setEventModal] = useState<
@@ -4575,6 +4576,7 @@ export function GanttChartView({
     // Inset in the page's own padding, on the gray content area under
     // the Cost overview card (project-detail-view.tsx).
     <div id="project-schedule-section" className="flex flex-col gap-3">
+      <ProjectAccessProvider canEdit={canEdit}>
       {/* The section's header: its name and counts, and Import with AI. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-baseline gap-3">
@@ -4596,7 +4598,7 @@ export function GanttChartView({
             <AiSparklesIcon variant="white" className="size-5 shrink-0" />
             <span>AI Project Insights</span>
           </button>
-          <ProjectWriteButton
+          {canEdit && <ProjectWriteButton
             type="button"
             onClick={onImportBom}
             title="Import a document with AI"
@@ -4604,7 +4606,7 @@ export function GanttChartView({
           >
             <AiSparklesIcon variant="white" className="size-5 shrink-0" />
             <span>Import with AI</span>
-          </ProjectWriteButton>
+          </ProjectWriteButton>}
         </div>
       </div>
       {scheduleError && <p role="alert" className="text-sm text-red-600">{scheduleError}</p>}
@@ -5106,8 +5108,9 @@ export function GanttChartView({
       <Modal open={equipmentTarget !== null} onClose={() => { if (!equipmentSaving) setEquipmentTarget(null); }} title={equipmentTarget ? `Assign Equipment — ${equipmentTarget.name}` : "Assign Equipment"}>
         {equipmentTarget && <EquipmentTrackingPanel key={equipmentTarget.key} projectId={projectId} itemKey={equipmentTarget.key} initialData={equipmentTracking} onChange={setEquipmentTracking} onClose={() => setEquipmentTarget(null)} onPendingChange={setEquipmentSaving} />}
       </Modal>
+      </ProjectAccessProvider>
       <ProgressTrackingModal
-        readOnly={!canEdit || progressModal?.readOnly === true}
+        readOnly={!canRecordProgress || progressModal?.readOnly === true}
         target={progressModal}
         projectId={projectId}
         projectName={projectName}

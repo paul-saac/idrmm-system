@@ -3,7 +3,8 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { RequiredMark } from "@/components/ui/required-mark";
-import { ProjectWriteButton } from "@/components/projects/project-access-context";
+import { ProjectWriteButton, useProjectCanEdit } from "@/components/projects/project-access-context";
+import { usePortal } from "@/components/portal/portal-context";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -114,6 +115,9 @@ export function MaterialPurchasesView({
 }) {
   const router = useRouter();
   const formId = useId();
+  const { isAdmin } = usePortal();
+  const canEditProject = useProjectCanEdit();
+  const canManagePurchases = isAdmin && canEditProject;
 
   const [rows, setRows] = useState<MaterialPurchase[]>(() => initialPurchases ?? []);
   const [loading, setLoading] = useState(() => !initialPurchases);
@@ -189,6 +193,7 @@ export function MaterialPurchasesView({
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!canManagePurchases || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -229,6 +234,7 @@ export function MaterialPurchasesView({
   }
 
   async function handleDelete(id: number) {
+    if (!canManagePurchases || busyId !== null) return;
     if (!window.confirm("Are you sure you want to delete this purchase record?")) {
       return;
     }
@@ -270,7 +276,7 @@ export function MaterialPurchasesView({
             {view === "purchases" ? `${rows.length} ${rows.length === 1 ? "purchase" : "purchases"}` : `${stocks.length} ${stocks.length === 1 ? "material" : "materials"}`}
           </span>
         </div>
-        <ProjectWriteButton
+        {canManagePurchases && <ProjectWriteButton
           type="button"
           onClick={() => {
             setPurchaseDate(new Date().toISOString().slice(0, 10));
@@ -282,7 +288,7 @@ export function MaterialPurchasesView({
         >
           <Plus className="size-4" />
           Record Purchase
-        </ProjectWriteButton>
+        </ProjectWriteButton>}
       </div>
 
       {error && !openModal && (
@@ -338,7 +344,7 @@ export function MaterialPurchasesView({
                   <th className="px-4 py-3 text-right">Purchased</th>
                   <th className="px-4 py-3">Invoice #</th>
                   <th className="px-4 py-3 text-center">Attachment</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  {canManagePurchases && <th className="px-4 py-3 text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
@@ -391,7 +397,7 @@ export function MaterialPurchasesView({
                           <span className="text-xs text-zinc-400">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 text-right whitespace-nowrap">
+                      {canManagePurchases && <td className="px-4 py-3.5 text-right whitespace-nowrap">
                         <ProjectWriteButton
                           type="button"
                           disabled={busyId === r.id}
@@ -401,7 +407,7 @@ export function MaterialPurchasesView({
                         >
                           <Trash2 className="size-4" />
                         </ProjectWriteButton>
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })}
@@ -437,7 +443,7 @@ export function MaterialPurchasesView({
       </div>
 
       <Modal
-        open={openModal}
+        open={canManagePurchases && openModal}
         title="Record material purchase"
         icon={<FileText className="size-5" />}
         onClose={() => {

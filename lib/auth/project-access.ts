@@ -41,6 +41,18 @@ export async function requireProjectAccess(
   return level === "edit" || (mode === "view" && level === "view") ? profile : null;
 }
 
+/** Baseline tasks, estimates and schedules are managed by project planners. */
+export async function requireProjectPlanningAccess(projectId: number): Promise<SessionProfile | null> {
+  const profile = await requireProjectAccess(projectId);
+  return profile && (isAdminRole(profile.role) || profile.role === "project_manager") ? profile : null;
+}
+
+/** Purchases are recorded centrally by the Owner/Administrator. */
+export async function requireProjectPurchaseAccess(projectId: number): Promise<SessionProfile | null> {
+  const profile = await requireProjectAccess(projectId);
+  return profile && isAdminRole(profile.role) ? profile : null;
+}
+
 /** Actions with no project context (e.g. document extraction) that both
  * portals may use. */
 export async function requireAdminOrForeman(): Promise<SessionProfile | null> {

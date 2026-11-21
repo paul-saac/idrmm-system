@@ -17,6 +17,11 @@ import { sessionLoginError } from "@/lib/auth/session-policy";
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
   const { pathname } = request.nextUrl;
+  // The offline shell contains no private data. Its APIs perform their own
+  // complete session and project checks and must return JSON, never login HTML.
+  if (pathname.startsWith("/api/offline/") ||
+    (["GET", "HEAD"].includes(request.method) && !request.headers.has("next-action") &&
+      (pathname === "/offline-sw.js" || pathname === "/manifest.webmanifest" || pathname.startsWith("/offline/")))) return response;
   // These public, read-only notices must remain available before sign-in and
   // invitation acceptance. Server actions still pass through authentication.
   if (["GET", "HEAD"].includes(request.method) && !request.headers.has("next-action") &&

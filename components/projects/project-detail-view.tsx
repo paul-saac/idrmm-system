@@ -13,7 +13,7 @@ import { Modal } from "@/components/ui/modal";
 import { AiSparklesIcon } from "@/components/ui/ai-sparkles-icon";
 import { HeaderActions } from "@/components/auth/header-actions";
 import { usePortal } from "@/components/portal/portal-context";
-import { useProjectCanEdit } from "@/components/projects/project-access-context";
+import { ProjectAccessProvider, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { updateProject } from "@/lib/projects/actions";
 import { projectEditPreview } from "@/lib/projects/edit-preview";
 import { EditProjectForm } from "@/components/projects/edit-project-form";
@@ -941,11 +941,13 @@ function ProjectDetailContent({
                       removed) — rendered un-boxed, as a direct extension
                       of this dropdown rather than its own nested card;
                       see CostEstimateView's own root element. */}
+                  <ProjectAccessProvider canEdit={canEditProject && basePath !== "/foreman"}>
                   <CostEstimateView
                     projectId={project.id}
                     estimate={costEstimate}
                     defaultLaborCostPercent={project.defaultLaborCostPercent}
                     onImportBom={() => {
+                      if (!canEditProject || basePath === "/foreman") return;
                       // Closes Material Breakdown in the same click that
                       // opens Import with AI — otherwise both dialogs
                       // render at once (two stacked <dialog> backdrops),
@@ -963,6 +965,7 @@ function ProjectDetailContent({
                     onNavigateToCostEstimate={handleNavigateToCostEstimate}
                     costEstimateHighlight={costEstimateHighlight}
                   />
+                  </ProjectAccessProvider>
                 </div>
               )}
             </div>
@@ -1004,6 +1007,7 @@ function ProjectDetailContent({
               events={events}
               onOpenMaterialBreakdown={openMaterialBreakdown}
               onImportBom={() => {
+                if (!canEditProject || basePath === "/foreman") return;
                 setImportBomStep("upload");
                 setImportBomModalOpen(true);
               }}

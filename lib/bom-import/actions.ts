@@ -387,7 +387,7 @@ export async function extractBomFromFile(
   formData: FormData
 ): Promise<BomExtractionState> {
   const profile = await requireAdminOrForeman();
-  if (!profile) return { error: "You are not authorized to use this feature." };
+  if (!profile || profile.role === "foreman") return { error: "You are not authorized to use this feature." };
 
   if (!hasAiImportAcknowledgment(formData)) {
     return { error: "Review the AI privacy notice and confirm that this copy is authorized and checked for unnecessary personal information before processing." };

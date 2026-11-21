@@ -3,6 +3,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { NotificationsProvider } from "@/components/notifications/notifications-provider";
 import { SessionGuard } from "@/components/auth/session-guard";
+import { OfflineManager } from "@/components/offline/offline-manager";
 
 export type PortalBasePath = "/admin" | "/foreman" | "/project-manager";
 
@@ -32,6 +33,7 @@ export function PortalProvider({
   return (
     <PortalContext.Provider value={portal}>
       <SessionGuard />
+      <OfflineManager />
       <NotificationsProvider>{children}</NotificationsProvider>
     </PortalContext.Provider>
   );

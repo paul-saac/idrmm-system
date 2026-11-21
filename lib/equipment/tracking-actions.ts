@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { requireProjectAccess } from "@/lib/auth/project-access";
+import { requireProjectAccess, requireProjectPlanningAccess } from "@/lib/auth/project-access";
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import { equipmentAllocationError } from "./allocation-error";
 import type { EquipmentConflict, EquipmentTracking } from "./tracking-types";
@@ -15,7 +15,7 @@ export async function loadEquipmentTracking(projectId: number): Promise<{ data?:
 }
 
 export async function saveEquipmentPlans(projectId: number, itemKey: string, selected: number[], previous: number[]): Promise<{ error?: string; conflict?: EquipmentConflict }> {
-  if (!await requireProjectAccess(projectId)) return { error: "You cannot manage this project's equipment." };
+  if (!await requireProjectPlanningAccess(projectId)) return { error: "You cannot manage this project's equipment." };
   if (!/^(task|category)-[1-9]\d*$/.test(itemKey) || !Array.isArray(selected) || !Array.isArray(previous)
     || [...selected, ...previous].some((id) => !Number.isSafeInteger(id) || id <= 0)) {
     return { error: "Select valid equipment and a task." };

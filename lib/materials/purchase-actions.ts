@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { requireProjectAccess } from "@/lib/auth/project-access";
+import { requireProjectAccess, requireProjectPurchaseAccess } from "@/lib/auth/project-access";
 import { revalidateProjectPaths, revalidateReports } from "@/lib/projects/revalidate";
 import { listMaterialPurchases } from "./purchases";
 import { validatePurchaseLines } from "./purchases-model";
@@ -13,7 +13,7 @@ export async function loadMaterialPurchases(projectId: number) {
 
 export async function saveMaterialPurchase(projectId: number, form: FormData) {
   try {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPurchaseAccess(projectId);
     if (!profile) return { error: "Project access denied." };
 
     const date = String(form.get("date") ?? "").trim();
@@ -178,7 +178,7 @@ export async function saveMaterialPurchase(projectId: number, form: FormData) {
 
 export async function deleteMaterialPurchase(projectId: number, id: number) {
   try {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPurchaseAccess(projectId);
     if (!profile) return { error: "Project access denied." };
 
     const client = await createClient();
@@ -206,7 +206,7 @@ export async function updateMaterialReceipt(
   received: number,
   previous: number
 ) {
-  if (!(await requireProjectAccess(projectId))) return { error: "Project access denied." };
+  if (!(await requireProjectPurchaseAccess(projectId))) return { error: "Project access denied." };
   if (
     !Number.isFinite(received) ||
     received < 0 ||

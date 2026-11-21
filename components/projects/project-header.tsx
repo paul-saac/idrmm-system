@@ -12,6 +12,7 @@ import type { TaskProgressToday } from "@/lib/task-progress/data";
 import { assessProjectSchedule } from "@/lib/projects/schedule-assessment";
 import { manilaToday } from "@/components/admin/dashboard/calendar-model";
 import { Modal } from "@/components/ui/modal";
+import { OfflineProjectControl } from "@/components/offline/offline-project-control";
 
 // How many crew avatars show before "+N".
 const TEAM_PREVIEW = 4;
@@ -130,7 +131,7 @@ export function ProjectHeader({
             )}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-start gap-2">
           {onArchive && (
             <button
               type="button"
@@ -141,6 +142,7 @@ export function ProjectHeader({
               {project.archivedAt ? "Unarchive project" : "Archive project"}
             </button>
           )}
+          {!project.archivedAt && <OfflineProjectControl projectId={project.id} />}
           {onEdit && (
             <button
               type="button"

@@ -3,7 +3,7 @@
 import { revalidateProjectPaths } from "@/lib/projects/revalidate";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { requireProjectAccess } from "@/lib/auth/project-access";
+import { requireProjectPlanningAccess } from "@/lib/auth/project-access";
 import { validImportResources, type ImportResources } from "@/lib/bom-import/estimate-resources";
 import { validOtherCostChanges, type OtherCostChange } from "./other-cost-lines";
 import { recordGanttCheckpoint } from "@/lib/cost-estimate/undo-redo";
@@ -164,7 +164,7 @@ export async function createCategory(
   formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -268,7 +268,7 @@ export async function updateCategory(
   formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -410,7 +410,7 @@ export async function deleteCategory(
   _formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -563,7 +563,7 @@ export async function createTask(
   formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -747,7 +747,7 @@ export async function applyBomImport(
   categories: BomImportCategoryInput[]
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -820,7 +820,7 @@ export async function updateTaskSchedule(
   plannedEndDate: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -876,7 +876,7 @@ export async function updateCategorySchedule(
   plannedEndDate: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -924,7 +924,7 @@ export async function updateTaskPriority(
   priority: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -960,7 +960,7 @@ export async function updateCategoryPriority(
   priority: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1003,7 +1003,7 @@ export async function renameTask(
   name: string
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1112,7 +1112,7 @@ export async function updateSubtask(
   formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1230,7 +1230,7 @@ export async function deleteTask(
   _formData: FormData
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1262,7 +1262,7 @@ export async function deleteScheduleItems(
   items: { taskIds: number[]; categoryIds: number[] }
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1421,7 +1421,7 @@ export async function updateTaskMaterialAssignments(
   assignments: MaterialLineInput[]
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1523,7 +1523,7 @@ export async function updateTaskLaborEstimate(
   laborEstimate: number
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1609,7 +1609,7 @@ export async function updateTaskCostComponents(
   }
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1730,7 +1730,7 @@ export async function updateCategoryCostComponents(
   }
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1848,7 +1848,7 @@ export async function updateTaskEstimatedQuantity(
   input: { estimatedQuantity: number; unit: string | null }
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1886,7 +1886,7 @@ export async function updateCategoryEstimatedQuantity(
   input: { estimatedQuantity: number; unit: string | null }
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -1941,7 +1941,7 @@ export async function applyLaborRateProjectWide(
   percent: number
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -2070,7 +2070,7 @@ export async function updateCategoryLaborEstimate(
   laborEstimate: number
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -2107,7 +2107,7 @@ export async function updateCategoryMaterialAssignments(
   assignments: MaterialLineInput[]
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) {
       return { error: "You are not authorized to manage cost estimates." };
     }
@@ -2166,7 +2166,7 @@ export async function updateCategoryMaterialAssignments(
  */
 export async function saveEquipmentCostBreakdown(projectId: number, changes: OtherCostChange[]): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) return { error: "You are not authorized to manage cost estimates." };
     if (!validOtherCostChanges(changes)) return { error: "Enter an equipment description and a valid nonnegative amount." };
     const supabase = await createClient();
@@ -2183,7 +2183,7 @@ export async function saveOtherCostBreakdown(
   changes: OtherCostChange[]
 ): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) return { error: "You are not authorized to manage cost estimates." };
     if (!validOtherCostChanges(changes)) {
       return { error: "Enter a cost name and valid nonnegative quantities and costs." };
@@ -2213,7 +2213,7 @@ export async function saveLaborBreakdown(projectId: number, input: {
   categories: { id: number; percent: number }[];
 }): Promise<CostEstimateActionState> {
   return safely(async () => {
-    const profile = await requireProjectAccess(projectId);
+    const profile = await requireProjectPlanningAccess(projectId);
     if (!profile) return { error: "You are not authorized to manage cost estimates." };
     const percentages = [...input.tasks, ...input.categories].map(row => row.percent);
     if (input.rate != null) percentages.push(input.rate);
