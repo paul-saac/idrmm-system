@@ -153,9 +153,7 @@ export function buildInsightContext(source: InsightSources, now = new Date()) {
     if (!previous || document.revision > previous.revision || document.revision === previous.revision && document.id > previous.id) latestDocuments.set(key, document);
   }
   const documents = [...latestDocuments.values()];
-  const submitted = documents.filter(document => document.status === "submitted").length;
   const changes = documents.filter(document => ["changes_requested", "rejected"].includes(document.status)).length;
-  if (submitted) add("documents", "document-review", "Documents awaiting review", `${submitted} current project documents are submitted and awaiting review. This status does not establish authority approval or code compliance.`);
   if (changes) add("documents", "document-changes", "Documents need changes", `${changes} current project documents have changes requested or were rejected. Superseded document versions are excluded.`);
 
   // Record setup issues appear first; verified spending and project reviews follow.

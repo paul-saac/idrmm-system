@@ -51,14 +51,18 @@ function SectionsLegend() {
   );
 }
 
-export function ReportBuilder({ data, projects }: { data: CloseoutReportData; projects: ProjectOption[] }) {
+export function ReportBuilder({ data, projects, type, onTypeChange }: {
+  data: CloseoutReportData;
+  projects: ProjectOption[];
+  type: string;
+  onTypeChange: (type: string) => void;
+}) {
   const router = useRouter();
   const { basePath } = usePortal();
   const [switchingProject, startProjectTransition] = useTransition();
-  const [type, setType] = useState<string>("full");
   const selectedType = types.find(item => item.id === type) ?? types[0];
   const available = type === "full" || type === "as-built" || type === "financial" || (type === "quality" && data.qualityInspectionsAvailable) || (type === "punch" && data.punchListAvailable) || (type === "safety" && data.safetyIncidentsAvailable);
-  const [title, setTitle] = useState("Project closeout report");
+  const [title, setTitle] = useState<string>(selectedType.label);
   const [sections, setSections] = useState<ReportSectionId[]>(REPORT_SECTIONS.map(s => s.id));
   const [columns, setColumns] = useState<string[]>([...MILESTONE_COLUMNS]);
   const [asBuiltSections, setAsBuiltSections] = useState<AsBuiltSectionId[]>(AS_BUILT_SECTIONS.map(s => s.id));
@@ -129,7 +133,7 @@ export function ReportBuilder({ data, projects }: { data: CloseoutReportData; pr
             disabled={busy}
             aria-current={type === item.id ? "page" : undefined}
             onClick={() => {
-              setType(item.id);
+              onTypeChange(item.id);
               setTitle(item.label);
               if (item.id === "full") setSections(REPORT_SECTIONS.map(s => s.id));
               if (item.id === "as-built") setAsBuiltSections(AS_BUILT_SECTIONS.map(s => s.id));

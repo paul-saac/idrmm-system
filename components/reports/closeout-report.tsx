@@ -1,5 +1,7 @@
 ﻿"use client";
 
+import { AttachmentLink } from "@/components/ui/attachment-viewer";
+
 /* eslint-disable @next/next/no-img-element */
 
 import { ProjectWriteButton, useProjectCanEdit } from "@/components/projects/project-access-context";
@@ -161,13 +163,13 @@ export function PunchListDocumentSheet({ report }: { report: GeneratedReport }) 
                   {item.photoUrl ? (
                     <>
                       <div className="flex flex-wrap gap-2.5">
-                        <a href={item.photoUrl} target="_blank" rel="noreferrer" className="block">
+                        <AttachmentLink url={item.photoUrl} name="Punch-list evidence" className="block">
                           <img
                             src={item.photoUrl}
                             alt="Punch-list photo evidence"
                             className="h-20 w-24 rounded border border-zinc-200 object-cover shadow-sm transition hover:opacity-90"
                           />
-                        </a>
+                        </AttachmentLink>
                       </div>
                     </>
                   ) : (
@@ -285,9 +287,9 @@ export function ReportDocumentSheet({ report }: { report: GeneratedReport }) {
                         return evidenceUrl ? (
                           <div key={pIdx} className="flex items-start gap-3 my-2">
                             <span className="font-medium text-xs text-zinc-600">Photo evidence:</span>
-                            <a href={evidenceUrl} target="_blank" rel="noreferrer" className="block">
+                            <AttachmentLink url={evidenceUrl} name="Report evidence" className="block">
                               <img src={evidenceUrl} alt="Evidence" className="h-20 w-24 rounded border border-zinc-200 object-cover shadow-sm" />
-                            </a>
+                            </AttachmentLink>
                           </div>
                         ) : (
                           <p key={pIdx}>{p}</p>

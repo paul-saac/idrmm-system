@@ -6,11 +6,11 @@ import { getSessionProfile } from "@/lib/auth/session";
 /** One notification in the bell — see 0061_notifications.sql. */
 export type AppNotification = {
   id: number;
-  kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident";
+  kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident" | "incident_closed" | "material_out_of_stock";
   actorName: string | null;
   projectId: number;
   projectName: string;
-  itemKind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident";
+  itemKind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident" | "material_stock";
   itemId: number;
   itemName: string;
   /** The day whose progress was overridden, YYYY-MM-DD. */

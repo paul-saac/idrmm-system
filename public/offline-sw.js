@@ -1,7 +1,7 @@
 // Public application shell only. Never cache authenticated pages, API replies,
 // Supabase responses, uploads, or session cookies.
 // Bump this version when releasing changes to the five cached shell assets.
-const CACHE = "idrmm-offline-shell-v11";
+const CACHE = "idrmm-offline-shell-v17";
 const SHELL = ["/offline/index.html", "/offline/workspace.js", "/offline/storage.js", "/offline/styles.css", "/offline/icon.svg"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

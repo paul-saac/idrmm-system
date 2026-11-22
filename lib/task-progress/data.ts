@@ -1,3 +1,4 @@
+import type { ProgressPhoto } from "@/lib/progress-logs/evidence";
 import { createClient } from "@/lib/supabase/server";
 import {
   materialKey,
@@ -19,6 +20,8 @@ export type TaskProgressAnchors = Record<number, ProgressAnchor>;
 
 /** One day's saved Daily Progress Update. */
 export type ProgressDayEntry = {
+  remarks?: string;
+  photos?: ProgressPhoto[];
   quantityCompleted: number;
   costs: CostAmounts;
   /** That day's usage per material, keyed by materialKey. */
@@ -316,6 +319,8 @@ async function fetchEntries(supabase: Supabase, taskIds: number[], strict = fals
     taskId: row.task_id,
     entryDate: row.entry_date,
     quantityCompleted: row.quantity_completed ?? 0,
+    remarks: row.remarks ?? "",
+    photos: (row.photos ?? []) as ProgressPhoto[],
     costs: entryCosts(row),
     materialUsage: materialsByEntry.get(row.id) ?? {},
     unplannedMaterials: unplannedByEntry.get(row.id) ?? [],
@@ -432,6 +437,8 @@ export async function listTaskProgressToday(
     latestByTask.set(entry.taskId, entry);
     if (entry.entryDate === today) {
       progress.today = {
+        remarks: entry.remarks,
+        photos: entry.photos,
         quantityCompleted: entry.quantityCompleted,
         costs: entry.costs,
         materialUsage: entry.materialUsage,

@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 
 /**
@@ -52,8 +53,10 @@ export function ConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={pending}
-            className="cursor-pointer rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-busy={pending}
+            className="inline-flex items-center justify-center gap-2 cursor-pointer rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
+            {pending && <Loader2 aria-hidden className="size-4 animate-spin" />}
             {pending ? pendingLabel : confirmLabel}
           </button>
         </div>

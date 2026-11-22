@@ -28,7 +28,7 @@ export async function saveQualityInspection(projectId: number, form: FormData) {
     if (relatedSheetId != null) {
       const { data: sheet } = await client.from("project_sheets").select("id, status").eq("id", relatedSheetId).eq("project_id", projectId).maybeSingle();
       if (!sheet) return { error: "The selected supporting document does not belong to this project." };
-      if (sheet.status !== "accepted") return { error: "Select a supporting document that has been accepted for project records." };
+      if (!["published", "accepted"].includes(sheet.status)) return { error: "Select a published supporting document." };
     }
     const values = {
       inspection_type: inspectionType,

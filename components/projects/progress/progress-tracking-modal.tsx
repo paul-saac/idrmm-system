@@ -1,5 +1,7 @@
 "use client";
 
+import { uploadProgressPhotos, discardUnattachedPhotos } from "@/lib/progress-logs/photo-upload";
+import { ganttBarColors } from "./gantt-bar-colors";
 import { useProgressLogSync } from "./progress-log-sync";
 import type { OverrideLog } from "@/lib/progress-logs/types";
 import { useMemo, useState } from "react";
@@ -154,7 +156,7 @@ export function ProgressTrackingModal({
   function close() { setSelection(null); setSummaryState(null); onClose(); }
 
   return (
-    <Modal open={target !== null} onClose={close} size="large" bare hideCloseButton={!readOnly} title={item?.name ?? "Progress Tracking"}>
+    <Modal open={target !== null} onClose={close} size={readOnly ? "medium" : "large"} bare hideCloseButton={!readOnly} title={item?.name ?? "Progress Tracking"}>
       {target && item && (
         <ProgressTrackingModalContent
           key={`${itemKey}:${target.highlightEntryDate ?? ""}:${historyVersion}:${editingLog?.id ?? "today"}`}
@@ -170,6 +172,10 @@ export function ProgressTrackingModal({
           incidentContext={{ kind: target.kind, id: item.id, name: item.name }}
           materialStocks={materialStocks}
           readOnly={readOnly}
+          progressColor={ganttBarColors(
+            target.kind === "task" ? target.task.categoryId : item.id,
+            item.isMilestone && (target.kind === "task" || target.category.tasks.length === 0) ? "milestone" : target.kind === "task" ? "subtask" : "standalone"
+          ).backgroundColor}
           estimatedQuantity={item.estimatedQuantity}
           unit={item.unit}
           plannedStartDate={item.plannedStartDate}
@@ -201,11 +207,22 @@ export function ProgressTrackingModal({
           overrideHistory={overrideHistory[itemKey] ?? []}
           backgroundSync={!!logSync}
           saving={logSync?.pendingKeys.includes(itemKey) ?? false}
-          onSave={async (input) => {
+          savingDate={logSync?.pendingDates?.[itemKey]}
+          onSave={async (draft) => {
+            let uploaded: Awaited<ReturnType<typeof uploadProgressPhotos>> = [];
+            try {
+              if (draft.photoFiles?.length) uploaded = await uploadProgressPhotos(projectId, draft.photoFiles);
+            } catch (error) { return { error: error instanceof Error ? error.message : "Could not upload photos." }; }
+            const { photoFiles: _photoFiles, ...fields } = draft;
+            const input = { ...fields, photos: [...(draft.photos ?? []), ...uploaded] };
+            const finish = async (result: {success?:boolean;error?:string}) => {
+              if (!result.success) await discardUnattachedPhotos(uploaded);
+              return { ...result, photos: input.photos };
+            };
             const action = () => editingLog ? editProgressLog(projectId,target.kind,item.id,editingLog.id,{...input,
               retainedMaterials:editingLog.materialsUsed.filter(row=>row.unitCost==null&&!groupPlannedMaterials(item.materialAssignments).some(planned=>planned.key===materialKey(row.name,row.unit))).map(({name,unit})=>({name,unit}))})
               : target.kind === "task" ? recordTaskProgress(target.task.id, projectId, input) : recordCategoryProgress(target.category.id, projectId, input);
-            if (!logSync) return action();
+            if (!logSync) return finish(await action());
             const date = editingLog?.entryDate ?? new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Manila" });
             const attendance = input.attendance.map(mark => {
               const worker = editorTeam.find(worker=>worker.id===mark.workerId) ?? workerById.get(mark.workerId);
@@ -219,12 +236,13 @@ export function ProgressTrackingModal({
               costs: { material: editingLog?.costs.material ?? 0, labor: attendance.length ? round(attendance.reduce((total, mark) => total + laborEntryCost(mark), 0)) : input.costs.labor,
                 equipment: round(input.costs.equipment + sum(input.equipmentCostsUsed) + sum(input.unplannedEquipmentCosts)),
                 other: round(input.costs.other + sum(input.otherCostsUsed) + sum(input.unplannedOtherCosts)) },
+              remarks: input.remarks, photos: input.photos,
               materialsUsed: [...input.materialsUsed, ...input.unplannedMaterials,...(editingLog?.materialsUsed.filter(row=>row.unitCost==null&&!groupPlannedMaterials(item.materialAssignments).some(planned=>planned.key===materialKey(row.name,row.unit))) ?? [])], attendance,
               equipmentCosts: [...(input.equipmentCostsUsed ?? []), ...(input.unplannedEquipmentCosts ?? []).map(row => ({ ...row, unplanned: true }))],
               otherCosts: [...(input.otherCostsUsed ?? []), ...(input.unplannedOtherCosts ?? []).map(row => ({ ...row, unplanned: true }))],
             };
             const operation = logSync.run({ kind: target.kind, id: item.id }, date, log, action);
-            return operation ? operation.completion : { error: "This task is still saving. Please wait and try again." };
+            return finish(operation ? await operation.completion : { error: "This task is still saving. Please wait and try again." });
           }}
           onDeleteOverride={isAdmin && !readOnly ? async (entryDate) => {
             const action = () => target.kind === "task" ? deleteTaskProgressEntry(target.task.id, projectId, entryDate) : deleteCategoryProgressEntry(target.category.id, projectId, entryDate);

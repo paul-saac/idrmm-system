@@ -1,9 +1,10 @@
+import { sheetRecordStatus } from "@/lib/sheets/model";
 ﻿import { laborEntryCost } from "@/lib/task-progress/labor";
 import type { CloseoutReportData } from "./closeout-data";
 import { dayVariance, isDateOnly } from "./closeout-model";
 import { ISSUE_TYPE_LABELS, PUNCH_STATUS_LABELS } from "./punch-list-model";
 import { QUALITY_INSPECTION_TYPE_LABELS, QUALITY_RESULT_LABELS } from "./quality-inspection-model";
-import { INCIDENT_SEVERITIES, INCIDENT_TYPES } from "../incidents/model";
+import { incidentTitle, incidentStatus, INCIDENT_KINDS } from "../incidents/model";
 
 export const REPORT_SECTIONS = [
   { id: "summary", label: "General information & lifecycle summary" },
@@ -26,7 +27,7 @@ export const AS_BUILT_SECTIONS = [
   { id: "as_built_register", label: "Master drawing & document register" },
   { id: "as_built_comparison", label: "Original vs. final as-built comparison" },
   { id: "as_built_changes", label: "Field changes & revision log" },
-  { id: "as_built_approvals", label: "External stakeholder & admin sign-off" },
+  { id: "as_built_approvals", label: "External verification records" },
 ] as const;
 export type AsBuiltSectionId = typeof AS_BUILT_SECTIONS[number]["id"];
 export const AS_BUILT_COLUMNS = [
@@ -39,7 +40,7 @@ export const AS_BUILT_COLUMNS = [
   "Revisions",
   "Status",
   "Stakeholder sign-off",
-  "Submitted by",
+  "Uploaded by",
 ] as const;
 export type AsBuiltReportOptions = { title: string; sections: AsBuiltSectionId[]; columns: string[]; from: string; to: string };
 export type PunchListReportOptions = { title: string; from: string; to: string };
@@ -115,6 +116,7 @@ const DOC_TYPE_LABELS: Record<string, string> = {
   other: "Other Supporting Documents",
 };
 const STATUS_LABELS: Record<string, string> = {
+  published: "Current",
   submitted: "Submitted for review",
   accepted: "Accepted for project records",
   changes_requested: "Changes requested",
@@ -434,42 +436,56 @@ export function generateSafetyReport(data: CloseoutReportData, options: SafetyRe
   const items = data.safetyIncidents.filter(item =>
     (!options.from || item.occurred_on >= options.from) && (!options.to || item.occurred_on <= options.to)
   );
-  const countType = (type: keyof typeof INCIDENT_TYPES) => items.filter(item => item.incident_type === type).length;
-  const countSeverity = (severity: keyof typeof INCIDENT_SEVERITIES) => items.filter(item => item.severity === severity).length;
-  const injuryCount = countType("injury");
-  const seriousCount = countSeverity("serious");
-  const evidenceCount = items.reduce((total, item) => total + item.attachments.length, 0);
+  // Structured answers are authoritative; legacy records retain their original classification.
+  const countType = (type: keyof typeof INCIDENT_KINDS) => items.filter(item =>
+    item.details?.kinds?.length ? item.details.kinds.includes(type) : item.incident_type === type
+  ).length;
+  const injuryCount = items.filter(item => item.details ? item.details.injured : item.incident_type === "injury").length;
+  const firstAidCount = items.filter(item => item.details?.firstAid === true).length;
+  const transportCount = items.filter(item => item.details?.hospitalTransport === true).length;
+  const missingMedicalCount = items.filter(item => !item.details).length;
+  const closedCount = items.filter(item => item.closeout).length;
+  const evidenceCount = items.reduce((total, item) => total + item.attachments.length + (item.closeout?.attachments.length ?? 0), 0);
   const incidentDays = new Set(items.map(item => item.occurred_on)).size;
   const selectedPeriod = options.from || options.to
     ? `${options.from ? formatReportDate(options.from) : "Project start"} to ${options.to ? formatReportDate(options.to) : formatReportDate(data.asOf)}`
     : "All recorded project dates";
   const recordStatement = items.length === 0
-    ? "No safety incidents are recorded for the selected period. This statement reflects IDR M&M records only and is not an independent zero-accident certification."
-    : injuryCount === 0
-      ? `${items.length} incident${items.length === 1 ? " is" : "s are"} recorded for the selected period, with no injury incident recorded.`
-      : `${items.length} incident${items.length === 1 ? " is" : "s are"} recorded for the selected period, including ${injuryCount} injury record${injuryCount === 1 ? "" : "s"}.`;
-
+    ? "No safety incidents are recorded for the selected period. This reflects system records only and is not an independent zero-accident certification."
+    : `${items.length} incident${items.length === 1 ? " is" : "s are"} recorded for the selected period; ${injuryCount} incident${injuryCount === 1 ? " reports" : "s report"} an injury. Counts describe incident records, not the number of injured people.`;
+  const reportedAt = (value: string) => {
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString("en-PH", {
+      timeZone: "Asia/Manila", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
+    }) : "Not recorded";
+  };
+  const occurrenceTime = (value: string) => {
+    const parsed = new Date(`2000-01-01T${value || "invalid"}Z`);
+    return Number.isFinite(parsed.getTime()) ? parsed.toLocaleTimeString("en-PH", {timeZone: "UTC", hour: "numeric", minute: "2-digit", hour12: true}) : "Not recorded";
+  };
+  const answer = (value: boolean | undefined) => value === true ? "Yes" : value === false ? "No" : "Not recorded";
   const incidentRows = items.map(item => [
-    formatReportDate(item.occurred_on),
-    item.occurred_time?.slice(0, 5) || "Not recorded",
-    INCIDENT_TYPES[item.incident_type],
-    INCIDENT_SEVERITIES[item.severity],
-    item.context_name || "Project-wide",
-    item.location || "Not recorded",
-    item.reporter_name || "Project member",
+    formatReportDate(item.occurred_on), occurrenceTime(item.occurred_time), incidentTitle(item),
+    item.context_name || "Project-wide", item.location || "Not recorded", reportedAt(item.created_at), item.reporter_name || "Project member", incidentStatus(item),
   ]);
   const narrativeRows = items.map(item => [
-    formatReportDate(item.occurred_on),
-    INCIDENT_TYPES[item.incident_type],
-    INCIDENT_SEVERITIES[item.severity],
-    item.description,
-    item.reporter_name || "Project member",
+    formatReportDate(item.occurred_on), incidentTitle(item), item.context_name || "Project-wide", item.description,
   ]);
-  const evidenceRows = items.flatMap(item => item.attachments.map(attachment => [
-    formatReportDate(item.occurred_on),
-    INCIDENT_TYPES[item.incident_type],
-    attachment.name,
-    attachment.type === "application/pdf" ? "PDF" : "Photo",
+  const peopleRows = items.flatMap(item => (item.details?.people ?? []).map(person => [
+    formatReportDate(item.occurred_on), incidentTitle(item), person.name, person.role || "Not recorded", person.contact || "Not recorded",
+  ]));
+  const medicalRows = items.map(item => [
+    formatReportDate(item.occurred_on), incidentTitle(item), answer(item.details?.injured),
+    item.details?.injuryDescription || "Not recorded", answer(item.details?.firstAid),
+    answer(item.details?.hospitalTransport), item.details?.medicalProvider || "Not recorded",
+  ]);
+  const closureRows = items.map(item => [formatReportDate(item.occurred_on), incidentTitle(item), incidentStatus(item),
+    item.closeout?.findings || "Not recorded", item.closeout?.actionTaken || "Not recorded",
+    item.closeout?.closedByName || "Not recorded", item.closeout ? reportedAt(item.closeout.closedAt) : "Not recorded",
+  ]);
+  const evidenceRows = items.flatMap(item => [...item.attachments, ...(item.closeout?.attachments ?? [])].map(attachment => [
+    formatReportDate(item.occurred_on), incidentTitle(item), attachment.name,
+    attachment.type === "application/pdf" ? "PDF" : "Image",
     attachment.url ? "Available in system" : "Recorded; file unavailable",
   ]));
 
@@ -482,52 +498,74 @@ export function generateSafetyReport(data: CloseoutReportData, options: SafetyRe
     sections: [
       {
         title: "A. Safety performance summary",
-        paragraphs: [recordStatement, `Reporting period: ${selectedPeriod}.`],
+        paragraphs: [recordStatement, `Reporting period: ${selectedPeriod}.`,
+          "An incident may have multiple types, so type counts may exceed the total number of incidents.",
+          ...(missingMedicalCount ? [`${missingMedicalCount} older incident record(s) have no structured medical answers; missing answers are not treated as No.`] : []),
+        ],
         headers: ["Measure", "Recorded count", "Review"],
         rows: [
           ["Total incidents", items.length, `${incidentDays} day${incidentDays === 1 ? "" : "s"} with a recorded incident`],
-          ["Injuries", injuryCount, injuryCount === 0 ? "No injury incident recorded" : "Review incident narratives"],
-          ["Near misses", countType("near_miss"), "Recorded near-miss events"],
-          ["Equipment damage", countType("equipment_damage"), "Recorded equipment events"],
-          ["Property damage", countType("property_damage"), "Recorded property events"],
-          ["Other incidents", countType("other"), "Other recorded safety events"],
-          ["Minor severity", countSeverity("minor"), "Recorded classification"],
-          ["Moderate severity", countSeverity("moderate"), "Recorded classification"],
-          ["Serious severity", seriousCount, seriousCount === 0 ? "No serious incident recorded" : "Requires management review"],
+          ["Open incidents", items.length - closedCount, "Requires follow-up"],
+          ["Closed incidents", closedCount, "Verified by a Project Manager or Administrator"],
+          ...Object.entries(INCIDENT_KINDS).map(([kind, label]) => [label, countType(kind as keyof typeof INCIDENT_KINDS), "Recorded incident classification"]),
+          ["Incidents reporting injury", injuryCount, "Based on injury answers or older injury classifications; not a count of people"],
+          ["First aid administered", firstAidCount, "Recorded Yes answers"],
+          ["EMS / hospital transport required", transportCount, "Recorded Yes answers"],
+          ["Medical details not recorded", missingMedicalCount, "Older records without structured medical answers"],
         ],
       },
       {
         title: "B. Incident register",
         paragraphs: incidentRows.length ? [] : ["No incident records match this selection."],
-        headers: incidentRows.length ? ["Date", "Time", "Incident type", "Severity", "Task / Phase", "Location", "Reported by"] : [],
+        headers: incidentRows.length ? ["Incident date", "Time occurred", "Incident type", "Task / Phase", "Location", "Reported date and time", "Reported by", "Status"] : [],
         rows: incidentRows,
       },
       {
         title: "C. Incident review details",
         paragraphs: narrativeRows.length ? [] : ["No incident narratives match this selection."],
-        headers: narrativeRows.length ? ["Date", "Incident type", "Severity", "What happened", "Reported by"] : [],
+        headers: narrativeRows.length ? ["Incident date", "Incident type", "Task / Phase", "Describe the incident"] : [],
         rows: narrativeRows,
       },
       {
-        title: "D. Supporting evidence register",
+        title: "D. Persons involved",
+        paragraphs: peopleRows.length ? [] : ["No persons involved are recorded for the selected incidents."],
+        headers: peopleRows.length ? ["Incident date", "Incident type", "Name", "Role", "Contact information"] : [],
+        rows: peopleRows,
+      },
+      {
+        title: "E. Injuries and medical attention",
+        paragraphs: medicalRows.length ? [] : ["No medical information matches this selection."],
+        headers: medicalRows.length ? ["Incident date", "Incident type", "Anyone injured?", "Describe the injury", "First aid administered?", "EMS / hospital transport required?", "First responder / medical provider"] : [],
+        rows: medicalRows,
+      },
+      {
+        title: "F. Attachments register",
         paragraphs: evidenceRows.length
-          ? ["Files listed below are retained with their source incident records in IDR M&M."]
-          : ["No photos or supporting documents are attached to the selected incident records."],
-        headers: evidenceRows.length ? ["Incident date", "Incident type", "File", "Evidence type", "Availability"] : [],
+          ? ["Attachments are retained with their source incident records in IDR M&M."]
+          : ["No attachments are recorded for the selected incidents."],
+        headers: evidenceRows.length ? ["Incident date", "Incident type", "File", "File type", "Availability"] : [],
         rows: evidenceRows,
       },
       {
-        title: "E. Closeout review",
+        title: "G. Investigation and closeout records",
+        paragraphs: closureRows.length ? [] : ["No incidents match this selection."],
+        headers: closureRows.length ? ["Incident date", "Incident type", "Status", "Investigation findings", "Action taken", "Closed by", "Closed on"] : [],
+        rows: closureRows,
+      },
+      {
+        title: "H. Closeout review",
         paragraphs: [
-          "This report summarizes submitted incident records. The current incident form does not record corrective actions, resolution status, regulatory determinations, or final safety sign-off, so this document must not be treated as proof that every incident is closed.",
+          "Closure records show internal verification by the Project Manager or Administrator. They do not establish regulatory approval or project-wide safety certification. Open incidents still require follow-up.",
         ],
-        headers: ["Review item", "Result"],
+        headers: ["Review item", "Recorded information"],
         rows: [
-          ["Incident records reviewed", items.length],
-          ["Serious incidents requiring management review", seriousCount],
-          ["Supporting files recorded", evidenceCount],
-          ["Corrective action and resolution status", "Not recorded by the current incident feature"],
-          ["Final safety approval", "Signature: ______________________________    Date: ________________"],
+          ["Incident records included", items.length],
+          ["Incidents reporting injury", injuryCount],
+          ["EMS / hospital transport required", transportCount],
+          ["Attachments recorded", evidenceCount],
+          ["Open incidents", items.length - closedCount],
+          ["Closed incidents", closedCount],
+          ["Overall incident closeout", items.length === 0 ? "No incident records to review" : closedCount === items.length ? "All recorded incidents closed internally" : "Open incidents remain"],
         ],
       },
     ],
@@ -876,11 +914,9 @@ export function generateAsBuiltReport(data: CloseoutReportData, options: AsBuilt
         const documentGroups = groups.filter(g => g.latest.document_type !== "drawing");
         const revisedGroups = groups.filter(g => g.versions.length > 1);
         const asBuiltGroups = groups.filter(g => g.latest.stage === "as_built");
-        const acceptedGroups = groups.filter(g => g.latest.status === "accepted");
-        const pendingGroups = groups.filter(g => g.latest.status === "submitted");
-        const changesRequestedGroups = groups.filter(g => g.latest.status === "changes_requested");
-        const rejectedGroups = groups.filter(g => g.latest.status === "rejected");
-        const stakeholderSignedVersions = sheets.filter(s => !!(s.external_name || s.approval_date)).length;
+        const publishedGroups = groups.filter(g => g.latest.status === "published");
+
+        const stakeholderSignedVersions = sheets.filter(s => !!(s.evidence_path && s.external_name && s.external_role && s.approval_date)).length;
 
         const disciplineCounts = new Map<string, number>();
         for (const g of drawingGroups) {
@@ -899,16 +935,16 @@ export function generateAsBuiltReport(data: CloseoutReportData, options: AsBuilt
           ? [`${rangeNote}No construction drawings or supporting project documents match this period as of ${data.asOf}.`]
           : [
               `${rangeNote}This report documents ${totalReferences} unique drawing and document reference(s) across ${totalVersions} total uploaded version(s) for ${data.project.name} as of ${data.asOf}. Initial uploads are recorded as Original baselines, and subsequent field or design updates are tracked sequentially starting from Revision 1.`,
-              `Of the ${totalReferences} active reference(s), ${drawingGroups.length} are Construction Drawings and ${documentGroups.length} are supporting Project Documents. ${revisedGroups.length} reference(s) have recorded revisions beyond the Original baseline, ${asBuiltGroups.length} drawing(s) are designated at the final As-built stage, and ${acceptedGroups.length} latest record(s) have been formally accepted into project records.`,
+              `Of the ${totalReferences} active reference(s), ${drawingGroups.length} are Construction Drawings and ${documentGroups.length} are supporting Project Documents. ${revisedGroups.length} reference(s) have recorded revisions beyond the Original baseline, ${asBuiltGroups.length} drawing(s) are designated at the final As-built stage, and ${publishedGroups.length} latest record(s) were published by the Owner/Administrator. Publishing is separate from external technical verification.`,
             ];
 
         const rows: (string | number)[][] = [
           ["Unique references tracked", totalReferences, `${drawingGroups.length} Construction Drawings, ${documentGroups.length} Project Documents`],
           ["Total versions uploaded", totalVersions, `${groups.length} Original baselines, ${Math.max(0, totalVersions - groups.length)} subsequent revision(s)`],
           ["References with field revisions", revisedGroups.length, `${totalReferences - revisedGroups.length} remained unchanged from Original baseline`],
-          ["Final as-built stage drawings", asBuiltGroups.length, "Construction drawings verified as final as-built records"],
-          ["Accepted for project records (latest)", acceptedGroups.length, `${pendingGroups.length} submitted for review, ${changesRequestedGroups.length} changes requested, ${rejectedGroups.length} rejected`],
-          ["Stakeholder-verified submissions", stakeholderSignedVersions, `Out of ${totalVersions} total version(s) uploaded`],
+          ["Final as-built stage drawings", asBuiltGroups.length, "Uploaded drawings designated as as-built; designation alone does not prove verification"],
+          ["Owner/Admin-published references (latest)", publishedGroups.length, "Available to assigned project users without internal approval"],
+          ["Versions with recorded external verification", stakeholderSignedVersions, `Out of ${totalVersions} total version(s) uploaded`],
           ...[...disciplineCounts.entries()].map(([disc, count]) => [`Drawing discipline — ${disc}`, count, "Active construction drawing reference(s)"] as [string, number, string]),
           ...[...categoryCounts.entries()].map(([cat, count]) => [`Document category — ${cat}`, count, "Active supporting project document(s)"] as [string, number, string]),
         ];
@@ -928,7 +964,7 @@ export function generateAsBuiltReport(data: CloseoutReportData, options: AsBuilt
             : (DOC_TYPE_LABELS[latest.document_type] ?? latest.document_type);
           const stakeholder = latest.external_name
             ? `${latest.external_name}${latest.external_role ? ` (${latest.external_role})` : ""}${latest.approval_date ? ` · ${latest.approval_date}` : ""}`
-            : (latest.approval_date ? `Authorized Stakeholder · ${latest.approval_date}` : "Authorized Stakeholder (Signed & Verified)");
+            : (latest.approval_date ? `Authorized Stakeholder · ${latest.approval_date}` : "Not recorded");
           const values = [
             latest.sheet_number,
             latest.title,
@@ -937,7 +973,7 @@ export function generateAsBuiltReport(data: CloseoutReportData, options: AsBuilt
             formatVersionLabel(latest.revision),
             formatStageLabel(latest.stage),
             Math.max(0, versions.length - 1),
-            STATUS_LABELS[latest.status] ?? latest.status,
+            sheetRecordStatus(latest, latest.revision),
             stakeholder,
             `${latest.submitted_name} (${(latest.created_at || "").slice(0, 10) || missing})`,
           ];
@@ -949,7 +985,7 @@ export function generateAsBuiltReport(data: CloseoutReportData, options: AsBuilt
             ...(options.from || options.to ? [`Submission dates: ${options.from || "Any"} to ${options.to || "Any"}`] : []),
             ...(!rows.length
               ? ["No drawing or document records match this selection."]
-              : [`Master index of the latest version for each of the ${groups.length} recorded reference(s), comparing the Original baseline date against the current active version and review status.`]),
+              : [`Master index of the latest version for each of the ${groups.length} recorded reference(s), comparing the Original baseline date against the current version and publication status.`]),
           ],
           headers: options.columns,
           rows,
@@ -997,41 +1033,28 @@ export function generateAsBuiltReport(data: CloseoutReportData, options: AsBuilt
           s.change_notes.trim() || (s.revision <= 1 ? "Initial baseline submission." : "No change notes recorded."),
           s.submitted_name,
           (s.created_at || "").slice(0, 10) || missing,
-          STATUS_LABELS[s.status] ?? s.status,
+          sheetRecordStatus(s, groups.find(g => g.latest.sheet_number === s.sheet_number)?.latest.revision ?? s.revision),
         ]);
         return {
           title: sectionTitle,
           paragraphs: !rows.length
             ? ["No field changes or revisions have been recorded."]
             : ["Chronological audit log of every uploaded version (Original, Revision 1, Revision 2, and As-built) with full field change descriptions and submission metadata."],
-          headers: ["Reference", "Title", "Version", "Stage", "Field changes / revision notes", "Submitted by", "Submitted date", "Status"],
+          headers: ["Reference", "Title", "Version", "Stage", "Field changes / revision notes", "Uploaded by", "Submitted date", "Status"],
           rows,
         };
       }
 
-      const rows = sheets.map(s => {
-        const reviewSummary = s.reviewed_at
-          ? `${s.reviewed_at.slice(0, 10)}${s.review_notes ? ` — ${s.review_notes}` : ""}`
-          : (s.review_notes || "Awaiting admin review");
-        return [
-          s.sheet_number,
-          formatVersionLabel(s.revision),
-          formatStageLabel(s.stage),
-          s.external_name || "Authorized Stakeholder",
-          s.external_role || "Signed & Verified",
-          s.approval_date || (s.created_at || "").slice(0, 10) || missing,
-          STATUS_LABELS[s.status] ?? s.status,
-          s.reviewed_name || "Pending review",
-          reviewSummary,
-        ];
-      });
+      const rows = sheets.map(s => [
+        s.sheet_number, formatVersionLabel(s.revision), formatStageLabel(s.stage),
+        s.external_name || missing, s.external_role || missing, s.approval_date || missing,
+        s.evidence_path ? "Verification document recorded" : "Not recorded",
+        s.submitted_name, (s.created_at || "").slice(0,10) || missing,
+      ]);
       return {
         title: sectionTitle,
-        paragraphs: !rows.length
-          ? ["No external stakeholder approvals or administrator reviews have been recorded."]
-          : ["Verification register of external technical stakeholder sign-offs (architects, engineers, and authorized verifiers) alongside internal administrator document review decisions."],
-        headers: ["Reference", "Version", "Stage", "External stakeholder", "Professional role", "Approval date", "Review status", "Reviewed by", "Review date & comments"],
-        rows,
+        paragraphs: ["External verification details are recorded only when supplied with the uploaded document. Owner/Admin publication makes documents available to the project team and does not certify technical correctness, code compliance, or authority approval."],
+        headers: ["Reference", "Version", "Stage", "External professional", "Professional role", "Verification date", "Evidence", "Uploaded by", "Upload date"], rows,
       };
     }),
   };

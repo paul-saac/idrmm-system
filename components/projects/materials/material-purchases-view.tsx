@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element */
 
+import { AttachmentLink } from "@/components/ui/attachment-viewer";
 import { RequiredMark } from "@/components/ui/required-mark";
 import { ProjectWriteButton, useProjectCanEdit } from "@/components/projects/project-access-context";
 import { usePortal } from "@/components/portal/portal-context";
@@ -10,7 +11,6 @@ import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } f
 import { useRouter } from "next/navigation";
 import {
   ChevronRight,
-  ExternalLink,
   FileText,
   Image as ImageIcon,
   Package,
@@ -107,11 +107,13 @@ export function MaterialPurchasesView({
   usage,
   initialPurchases,
   onStocksChange,
+  stockNotice,
 }: {
   projectId: number;
   usage: ProgressMaterialUsage[];
   initialPurchases?: MaterialPurchase[];
   onStocksChange?: (stocks: MaterialStockItem[]) => void;
+  stockNotice?: string | null;
 }) {
   const router = useRouter();
   const formId = useId();
@@ -130,8 +132,12 @@ export function MaterialPurchasesView({
     new Date().toISOString().slice(0, 10)
   );
   const [items, setItems] = useState<ItemDraft[]>([blankItem()]);
-  const [viewingReceiptUrl, setViewingReceiptUrl] = useState<string | null>(null);
   const [view, setView] = useState<PurchaseView>("stocks");
+  const [handledStockNotice, setHandledStockNotice] = useState(stockNotice);
+  if (handledStockNotice !== stockNotice) {
+    setHandledStockNotice(stockNotice);
+    if (stockNotice) setView("stocks");
+  }
   const [stockModalItemIndex, setStockModalItemIndex] = useState<number | null>(null);
 
   async function refresh() {
@@ -322,7 +328,7 @@ export function MaterialPurchasesView({
                     ? "text-zinc-500"
                     : "text-zinc-900"
                 }`}>{stock.balance.toLocaleString("en-PH", { maximumFractionDigits: 3 })}</td>
-                <td className="px-4 py-3.5"><span className={`rounded-sm px-2 py-0.5 text-xs font-medium ${stock.badgeStyle}`}>{stock.statusLabel}</span></td>
+                <td className="px-4 py-3.5"><span title={stock.referenceQuantity !== undefined && stock.lowStockThreshold !== undefined ? `${stock.lowStockThreshold === 0 && stock.referenceQuantity > 0 ? "No low-stock stage for a single whole item; zero remaining is out of stock." : `Low-stock threshold (5% policy, rounded up for whole-item units): ${stock.lowStockThreshold.toLocaleString("en-PH", { maximumFractionDigits: 6 })} ${stock.unit}.`} Stock reference (100%): ${stock.referenceQuantity.toLocaleString("en-PH", { maximumFractionDigits: 3 })} ${stock.unit} after the latest receipt.` : undefined} className={`rounded-sm px-2 py-0.5 text-xs font-medium ${stock.badgeStyle}`}>{stock.statusLabel}</span></td>
                 <td className="px-5 py-3.5 text-zinc-600">{lastMovement ? formatDay(lastMovement) : "—"}</td>
               </tr>;
             })}</tbody></table></div>
@@ -385,14 +391,14 @@ export function MaterialPurchasesView({
                       </td>
                       <td className="px-4 py-3.5 text-center whitespace-nowrap">
                         {r.receipt_url ? (
-                          <button
-                            type="button"
-                            onClick={() => setViewingReceiptUrl(r.receipt_url!)}
+                          <AttachmentLink
+                            url={r.receipt_url}
+                            name={`Purchase ${r.id} attachment`}
                             className="inline-flex cursor-pointer items-center gap-1 rounded bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 transition hover:bg-zinc-200"
                           >
                             <ImageIcon className="size-3.5" />
                             View
-                          </button>
+                          </AttachmentLink>
                         ) : (
                           <span className="text-xs text-zinc-400">—</span>
                         )}
@@ -605,6 +611,7 @@ export function MaterialPurchasesView({
                       <Field label="Attachments">
                         {item.receiptFile ? (
                           <div className="flex h-[38px] items-center gap-2.5 rounded-md border border-zinc-200 bg-zinc-50 px-2.5">
+                            <AttachmentLink url="" name={item.receiptFile.name} file={item.receiptFile} className="flex min-w-0 flex-1 items-center gap-2.5">
                             {item.receiptPreviewUrl ? (
                               <img
                                 src={item.receiptPreviewUrl}
@@ -622,6 +629,7 @@ export function MaterialPurchasesView({
                                 {(item.receiptFile.size / 1024).toFixed(1)} KB
                               </p>
                             </div>
+                            </AttachmentLink>
                             <button
                               type="button"
                               onClick={() => handleRemoveFile(index)}
@@ -706,35 +714,7 @@ export function MaterialPurchasesView({
         onClose={() => setStockModalItemIndex(null)}
       />
 
-      {/* Attachment preview modal */}
-      <Modal
-        open={viewingReceiptUrl !== null}
-        title="Attachment"
-        icon={<FileText className="size-5" />}
-        onClose={() => setViewingReceiptUrl(null)}
-      >
-        {viewingReceiptUrl ? (
-          <div className="flex flex-col items-center gap-4">
-            <div className="max-h-[70vh] w-full overflow-auto rounded border border-zinc-200 bg-zinc-50 p-2">
-              <img
-                src={viewingReceiptUrl}
-                alt="Purchase attachment"
-                className="mx-auto max-h-[65vh] w-auto object-contain"
-              />
-            </div>
-            <div className="flex w-full justify-end">
-              <a
-                href={viewingReceiptUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-xs font-medium text-zinc-700 hover:text-zinc-900 hover:underline"
-              >
-                <ExternalLink className="size-3.5" /> Open attachment in new tab
-              </a>
-            </div>
-          </div>
-        ) : null}
-      </Modal>
+
     </section>
   );
 }

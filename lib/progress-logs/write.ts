@@ -23,6 +23,8 @@ export async function logOverride(
     category_id: item.kind === "category" ? item.id : null,
     entry_date: log.entryDate,
     action: log.action,
+    remarks: log.remarks ?? "",
+    photos: log.photos ?? [],
     quantity_completed: log.quantityCompleted,
     labor_cost: log.costs.labor,
     material_cost: log.costs.material,
@@ -34,24 +36,25 @@ export async function logOverride(
     saved_by_name: `${profile.firstName} ${profile.lastName}`.trim() || null,
   };
 
-  let { error } = await supabase.from("progress_override_logs").insert({
+  let { data, error } = await supabase.from("progress_override_logs").insert({
     ...basePayload,
     ...(log.equipmentCosts ? { equipment_costs: log.equipmentCosts } : {}),
     ...(log.otherCosts ? { other_costs: log.otherCosts } : {}),
-  } as typeof basePayload);
+  } as typeof basePayload).select("id, created_at").single();
 
   if (error && (error.code === "PGRST204" || error.code === "42703")) {
-    ({ error } = await supabase.from("progress_override_logs").insert({
+    ({ data, error } = await supabase.from("progress_override_logs").insert({
       ...basePayload,
       ...(log.otherCosts ? { other_costs: log.otherCosts } : {}),
-    } as typeof basePayload));
+    } as typeof basePayload).select("id, created_at").single());
   }
 
   if (error && (error.code === "PGRST204" || error.code === "42703")) {
-    ({ error } = await supabase.from("progress_override_logs").insert(basePayload));
+    ({ data, error } = await supabase.from("progress_override_logs").insert(basePayload).select("id, created_at").single());
   }
 
   if (error) {
     console.error("[progress-logs] Could not add to the override history:", error.message);
   }
+  return !error && data ? { id: data.id, createdAt: data.created_at } : undefined;
 }

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { DisableBrowserAutocomplete } from "@/components/ui/disable-browser-autocomplete";
+import { AttachmentViewerProvider } from "@/components/ui/attachment-viewer";
 
 // The whole system's body font — matches the Figma design file's own
 // typeface, replacing Next.js's default Geist Sans.
@@ -40,7 +41,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           variable, without this class. */}
       <body className="min-h-full flex flex-col font-sans">
         <DisableBrowserAutocomplete />
-        {children}
+        <AttachmentViewerProvider>{children}</AttachmentViewerProvider>
       </body>
     </html>
   );

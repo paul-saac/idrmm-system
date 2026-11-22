@@ -34,6 +34,10 @@ select::-webkit-scrollbar{display:none}
 
 .resource{border-bottom:0}
 input::placeholder{color:#a1a1aa;opacity:1}
+#connection{display:flex;align-items:center;gap:8px;font-size:13px}
+#connection small{font-size:11px;color:#d4d4d8}
+.connection-online{color:#6ee7b7}
+.connection-offline{color:#fca5a5}
 /* Reserve the remove-button column only when a row actually has one. */
 .resource:not(:has(.remove)){grid-template-columns:2fr 1fr 1fr}
 .resource.cost-row:not(:has(.remove)){grid-template-columns:3fr 1fr}
@@ -81,3 +85,65 @@ body:has(.workforce-picker[open]){overflow:hidden}
 .material-picker table{min-width:610px}
 .stock-available{padding:2px 6px;background:#ecfdf5;color:#047857;font-size:11px;white-space:nowrap}
 .stock-unavailable{padding:2px 6px;background:#fef2f2;color:#dc2626;font-size:11px;white-space:nowrap}
+
+.offline-incident{max-width:800px;width:calc(100vw - 32px);max-height:90dvh;padding:0;border:1px solid #d4d4d8;background:white;color:#27272a}
+.offline-incident::backdrop{background:#0008}
+.offline-incident .incident-fields{padding:24px;display:grid;gap:16px;max-height:65dvh;overflow-y:auto;scrollbar-width:none}
+.offline-incident .incident-fields::-webkit-scrollbar{display:none}
+.offline-incident fieldset{border:0;padding:0;margin:0}
+.offline-incident .incident-choice{display:inline-flex;align-items:center;gap:8px;margin:8px 16px 0 0}
+.offline-incident .incident-choice input{width:14px;height:14px;min-height:14px;flex:none;accent-color:#3b3939}
+.offline-incident .incident-person{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px}
+@media(max-width:600px){.offline-incident .incident-person{grid-template-columns:1fr}}
+
+.offline-incident{width:min(1024px,calc(100vw - 32px));max-width:none;border-radius:2px}
+.offline-incident .workforce-heading{padding:20px 24px}
+.offline-incident .workforce-heading .remove{margin-left:auto;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:0;background:transparent;color:#a1a1aa;font-size:22px;line-height:1}
+.incident-heading-icon{display:flex;align-items:center;justify-content:center;width:40px;height:40px;background:#f4f4f5;flex:none}
+.offline-incident form{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.offline-incident .incident-fields{padding:0;display:block;overflow:auto;max-height:calc(90dvh - 170px)}
+.offline-incident .incident-section{padding:20px 24px;border-bottom:1px solid #e4e4e7;display:grid;gap:16px}
+.offline-incident .incident-section:nth-child(even){background:rgb(250 250 250 / 60%)}
+.offline-incident h3{font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;margin:0}
+.offline-incident label{position:relative;font-size:12px;font-weight:500;color:#3f3f46;display:block}
+.offline-incident input:not([type=checkbox]):not([type=radio]),.offline-incident textarea{display:block;width:100%;height:40px;min-height:40px;margin-top:8px;padding:8px 12px;border:1px solid #e4e4e7;border-radius:2px;background:#fff;color:#27272a;font:inherit;font-size:14px;outline:none}
+.offline-incident textarea{resize:vertical;overflow:hidden;line-height:20px}
+.offline-incident input:focus,.offline-incident textarea:focus{border-color:#a1a1aa}
+.offline-incident .incident-person{grid-template-columns:repeat(3,minmax(0,1fr)) 24px;align-items:end}
+.offline-incident .incident-person .remove{width:24px;height:40px;padding:0;border:0;background:transparent;color:#a1a1aa;font-size:20px}
+.incident-two-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.offline-incident .incident-choice{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:400;line-height:20px}
+.offline-incident fieldset:has([name=incidentKind]){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.offline-incident fieldset legend{font-size:12px;font-weight:500;margin-bottom:8px}
+.offline-incident .incident-choice input{appearance:none;margin:0;width:14px;height:14px;border:1px solid #d4d4d8;border-radius:1px;background:#fafafa;display:grid;place-content:center}
+.offline-incident .incident-choice input:checked:after{content:"";width:8px;height:8px;background:#3b3939}
+.offline-incident .incident-period{position:absolute;right:0;bottom:0;height:40px;display:flex;align-items:center;gap:12px}
+.offline-incident label:has(.incident-period)>input{width:calc(100% - 112px)}
+.offline-incident .incident-period .incident-choice{margin:0}
+.offline-incident .incident-upload{margin-top:12px;width:100%;padding:20px;border:1px dashed #d4d4d8;border-radius:2px;background:white;text-align:center;font-size:14px}
+.offline-incident .form-footer{padding:16px 24px;border-top:1px solid #e4e4e7;justify-content:flex-end;gap:12px;background:#fff}
+.offline-incident .form-footer button{padding:8px 16px;font-size:14px;border-radius:2px}
+.offline-incident .primary{background:#3b3939;border-color:#3b3939;color:white}
+.offline-incident .required-mark{color:#dc2626}
+.offline-incident .error{padding:0 24px}
+@media(max-width:600px){.incident-two-cols{grid-template-columns:1fr}.offline-incident .incident-person{grid-template-columns:1fr 24px}.offline-incident .incident-person>label{grid-column:1}.offline-incident .incident-person .remove{grid-column:2;grid-row:1}.offline-incident fieldset:has([name=incidentKind]){grid-template-columns:1fr}.offline-incident .workforce-heading{flex-direction:row}}
+
+/* Override the offline page's vertical label layout for inline choices. */
+.offline-incident .incident-choice{flex-direction:row;justify-content:flex-start;text-align:left;margin:0;white-space:normal}
+.offline-incident .incident-choice input{padding:0;min-width:14px;max-width:14px;min-height:14px;max-height:14px;flex:0 0 14px;box-sizing:border-box}
+.offline-incident .incident-section{margin:0;border:0;border-bottom:1px solid #e4e4e7}
+.offline-incident .remove svg{display:block;flex:none}
+.offline-incident .remove:hover{background:transparent;color:#71717a}
+.offline-incident .incident-person .remove:hover{color:#dc2626}
+.offline-incident .incident-period .incident-choice{flex-direction:row;gap:6px}
+
+/* Keep medical choices and time periods in distinct, evenly spaced controls. */
+.offline-incident fieldset:has(> .incident-choice){display:flex;flex-wrap:wrap;align-items:center;column-gap:16px;row-gap:8px}
+.offline-incident fieldset:has(> .incident-choice)>legend{float:none;width:100%;margin:0 0 8px}
+.offline-incident fieldset:has(> .incident-choice)>.incident-choice{display:inline-flex;align-items:center;gap:8px;margin:0;line-height:20px}
+.offline-incident label:has(> .incident-period){display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:16px;align-items:center}
+.offline-incident label:has(> .incident-period)>input{grid-column:1;width:100%;margin-top:8px}
+.offline-incident label:has(> .incident-period)>.incident-period{position:static;grid-column:2;grid-row:2;height:40px;margin-top:8px;display:flex;align-items:center;gap:12px}
+.offline-incident .incident-time-label{grid-column:1 / -1}.offline-incident .incident-time-label .required-mark{margin-left:3px}
+.offline-incident fieldset:has([name=incidentKind]){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:600px){.offline-incident fieldset:has([name=incidentKind]){grid-template-columns:1fr}}

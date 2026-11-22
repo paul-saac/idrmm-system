@@ -468,10 +468,10 @@ export interface Database {
           recipient_id: string;
           actor_id: string | null;
           actor_name: string | null;
-          kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident";
+          kind: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident" | "incident_closed" | "material_out_of_stock";
           project_id: number;
           project_name: string;
-          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident";
+          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident" | "material_stock";
           item_id: number;
           item_name: string;
           entry_date: string;
@@ -482,10 +482,10 @@ export interface Database {
           recipient_id: string;
           actor_id?: string | null;
           actor_name?: string | null;
-          kind?: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident";
+          kind?: "progress_override" | "material_request" | "equipment_request" | "sheet_submitted" | "safety_incident" | "incident_closed" | "material_out_of_stock";
           project_id: number;
           project_name: string;
-          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident";
+          item_kind: "task" | "category" | "material_request" | "equipment_request" | "sheet" | "incident" | "material_stock";
           item_id: number;
           item_name: string;
           entry_date: string;
@@ -781,6 +781,8 @@ export interface Database {
         // quantity_completed is that day's own increment, not a running
         // total.
         Row: {
+          remarks: string;
+          photos: unknown;
           id: number;
           task_id: number;
           entry_date: string;
@@ -795,6 +797,8 @@ export interface Database {
           created_at: string;
         };
         Insert: {
+          remarks?: string;
+          photos?: unknown;
           task_id: number;
           entry_date: string;
           quantity_completed?: number;
@@ -805,6 +809,8 @@ export interface Database {
           recorded_by?: string | null;
         };
         Update: {
+          remarks?: string;
+          photos?: unknown;
           quantity_completed?: number;
           labor_cost?: number;
           material_cost?: number;
@@ -867,6 +873,8 @@ export interface Database {
         // The override history — every saved or deleted Daily Progress
         // Update, who and exactly when, append-only. See 0071.
         Row: {
+          remarks: string;
+          photos: unknown;
           id: number;
           project_id: number;
           task_id: number | null;
@@ -887,6 +895,8 @@ export interface Database {
           created_at: string;
         };
         Insert: {
+          remarks?: string;
+          photos?: unknown;
           project_id: number;
           task_id?: number | null;
           category_id?: number | null;
@@ -909,6 +919,8 @@ export interface Database {
         // Same idea as task_progress_entries above, one level up — see
         // 0048_category_progress_tracking.sql.
         Row: {
+          remarks: string;
+          photos: unknown;
           id: number;
           category_id: number;
           entry_date: string;
@@ -923,6 +935,8 @@ export interface Database {
           created_at: string;
         };
         Insert: {
+          remarks?: string;
+          photos?: unknown;
           category_id: number;
           entry_date: string;
           quantity_completed?: number;
@@ -933,6 +947,8 @@ export interface Database {
           recorded_by?: string | null;
         };
         Update: {
+          remarks?: string;
+          photos?: unknown;
           quantity_completed?: number;
           labor_cost?: number;
           material_cost?: number;
@@ -1620,6 +1636,10 @@ export interface Database {
     Views: Record<string, never>;
     // See 0051_foreman_project_access.sql.
     Functions: {
+      close_safety_incident: {
+        Args: { p_project_id: number; p_incident_id: number; p_findings: string; p_action_taken: string; p_attachments: import("@/lib/incidents/model").IncidentAttachment[] };
+        Returns: Incident;
+      };
       offline_project_progress: {
         Args: { p_project_id: number; p_date: string };
         Returns: Record<string, import("@/lib/offline/types").OfflineState>;
@@ -1632,6 +1652,14 @@ export interface Database {
       edit_saved_progress_log: {
         Args: { p_project_id:number; p_kind:string; p_item_id:number; p_log_id:number; p_input:unknown };
         Returns: undefined;
+      };
+      edit_progress_log_with_evidence: {
+        Args: { p_project_id:number; p_kind:string; p_item_id:number; p_log_id:number; p_input:unknown };
+        Returns: undefined;
+      };
+      edit_progress_log_with_evidence_result: {
+        Args: { p_project_id:number; p_kind:string; p_item_id:number; p_log_id:number; p_input:unknown };
+        Returns: unknown;
       };
       import_reviewed_estimate: {
         Args: { p_project_id: number; p_categories: unknown };

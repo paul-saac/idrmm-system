@@ -25,7 +25,7 @@ export function QualityInspectionManager({ data, onClose, onSaved }: { data: Clo
   const [selected, setSelected] = useState<QualityInspection | null>(null);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
-  const documents = (data.sheets ?? []).filter(sheet => sheet.status === "accepted");
+  const documents = (data.sheets ?? []).filter(sheet => ["published", "accepted"].includes(sheet.status));
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

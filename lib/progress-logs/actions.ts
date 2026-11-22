@@ -3,6 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { roleLabel } from "@/lib/auth/roles";
+import type { ProgressPhoto } from "./evidence";
 import type { Database } from "@/lib/supabase/types";
 import type {
   OverrideLog,
@@ -84,6 +85,8 @@ function toOverrideLog(row: OverrideLogRow, accounts: SavedByAccounts): Override
     savedByName:
       row.saved_by_name || (row.saved_by ? (accounts.get(row.saved_by)?.name ?? null) : null),
     savedByRole: row.saved_by ? (accounts.get(row.saved_by)?.role ?? null) : null,
+    remarks: row.remarks ?? "",
+    photos: Array.isArray(row.photos) ? row.photos as ProgressPhoto[] : [],
     quantityCompleted: toNumber(row.quantity_completed),
     costs: {
       labor: toNumber(row.labor_cost),

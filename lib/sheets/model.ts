@@ -9,12 +9,12 @@ export type Sheet = {
   document_type: DocumentType;
   revision: number; stage: "original" | "revision" | "as_built"; file_path: string; file_name: string;
   evidence_path: string | null; external_name: string | null; external_role: string | null; approval_date: string | null;
-  change_notes: string; status: "submitted" | "accepted" | "changes_requested" | "rejected";
+  change_notes: string; status: "published" | "submitted" | "accepted" | "changes_requested" | "rejected";
   submitted_by: string; submitted_name: string; created_at: string;
   reviewed_by: string | null; reviewed_name: string | null; reviewed_at: string | null; review_notes: string | null;
 };
 export type SheetReview = { id: number; sheet_id: number; status: string; notes: string; reviewer_name: string; created_at: string };
-export const SHEET_STATUS = { submitted: "Submitted for review", accepted: "Accepted for project records", changes_requested: "Changes requested", rejected: "Rejected" };
+export const SHEET_STATUS = { published: "Current", submitted: "Submitted for review", accepted: "Accepted for project records", changes_requested: "Changes requested", rejected: "Rejected" };
 export const formatVersion = (revision: number) => (revision <= 1 ? "Original" : `Revision ${revision - 1}`);
 
 export function readSheetMetadata(form: FormData) {
@@ -39,4 +39,9 @@ export function readSheetMetadata(form: FormData) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   if (approval_date && approval_date > today) throw new Error("Approval date cannot be in the future.");
   return { sheet_number, title, document_type: document_type as DocumentType, discipline, stage: stage as Sheet["stage"], change_notes, external_name: external_name || null, external_role: external_role || null, approval_date: approval_date || null };
+}
+
+/** Publication is separate from professional verification; legacy decisions are preserved. */
+export function sheetRecordStatus(sheet: Pick<Sheet,"status"|"revision">, latestRevision: number) {
+  return sheet.revision < latestRevision ? "Superseded" : SHEET_STATUS[sheet.status];
 }

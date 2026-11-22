@@ -3,7 +3,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Archive, Building2, Info, MapPin } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
-import { InitialsAvatar } from "@/components/ui/list-table";
 import type { CostCategory } from "@/lib/cost-estimate/data";
 import type { ProjectRow } from "@/lib/projects/data";
 import { projectStatusBadgeClasses, projectStatusLabel } from "@/lib/projects/status";
@@ -13,9 +12,6 @@ import { assessProjectSchedule } from "@/lib/projects/schedule-assessment";
 import { manilaToday } from "@/components/admin/dashboard/calendar-model";
 import { Modal } from "@/components/ui/modal";
 import { OfflineProjectControl } from "@/components/offline/offline-project-control";
-
-// How many crew avatars show before "+N".
-const TEAM_PREVIEW = 4;
 
 function toDate(iso: string) {
   return new Date(`${iso}T00:00:00`);
@@ -56,8 +52,6 @@ function Person({ role, name }: { role: string; name: string | null }) {
 export function ProjectHeader({
   project,
   categories,
-  workers,
-  workerAssignments,
   taskRecords,
   categoryRecords,
   onEdit,
@@ -91,14 +85,6 @@ export function ProjectHeader({
     for (const row of category.tasks.length ? category.tasks : [category]) progress += row.weight * row.percentComplete / 100;
   }
   progress = Math.min(100, progress);
-
-  // The crew: everyone on one of its tasks or phases.
-  const crewIds = new Set(
-    workerAssignments
-      .filter((a) => a.projectId === project.id && a.kind !== "project")
-      .map((a) => a.workerId)
-  );
-  const crew = workers.filter((worker) => crewIds.has(worker.id));
 
   const baselineStart = categories.flatMap(category => category.tasks.length
     ? category.tasks.map(task => task.plannedStartDate) : [category.plannedStartDate])
@@ -162,26 +148,7 @@ export function ProjectHeader({
           <span aria-hidden className="h-4 w-px bg-zinc-600" />
           <Person role="Foreman" name={project.foremanName} />
         </div>
-        {crew.length > 0 && (
-          <div className="flex items-center gap-3">
-            <span className="text-zinc-400">Project team</span>
-            <div
-              className="flex flex-wrap items-center gap-1.5"
-              title={crew.map((worker) => worker.fullName).join(", ")}
-            >
-              {crew.slice(0, TEAM_PREVIEW).map((worker) => (
-                <span key={worker.id} className="rounded-[1px]">
-                  <InitialsAvatar name={worker.fullName} />
-                </span>
-              ))}
-              {crew.length > TEAM_PREVIEW && (
-                <span className="text-xs text-zinc-400">
-                  +{crew.length - TEAM_PREVIEW}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
+
       </div>
 
       <div className="mt-3.5 grid grid-cols-2 border-y border-zinc-400 bg-zinc-200 lg:grid-cols-4 lg:divide-x lg:divide-zinc-400">

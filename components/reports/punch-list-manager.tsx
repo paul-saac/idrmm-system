@@ -1,5 +1,7 @@
 "use client";
 
+import { AttachmentLink } from "@/components/ui/attachment-viewer";
+
 import { RequiredMark } from "@/components/ui/required-mark";
 import { ProjectWriteButton, ProjectWriteInput, ProjectWriteSelect, ProjectWriteTextarea } from "@/components/projects/project-access-context";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -208,14 +210,13 @@ export function PunchListManager({
               className={input}
             />
             {selected?.before_photo_url && (
-              <a
-                href={selected.before_photo_url}
-                target="_blank"
-                rel="noreferrer"
+              <AttachmentLink
+                url={selected.before_photo_url}
+                name="Punch-list attachment"
                 className="block text-xs text-zinc-500 underline"
               >
                 View attached file
-              </a>
+              </AttachmentLink>
             )}
           </div>
 

@@ -2,6 +2,8 @@
 
 /* eslint-disable @next/next/no-img-element -- Authenticated private image endpoint, not a public optimized image. */
 import { useEffect, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCw, Maximize, Download, Loader2 } from "lucide-react";
+import { downloadAttachment } from "@/lib/attachments/preview";
 import type { PDFDocumentProxy, PDFDocumentLoadingTask, RenderTask } from "pdfjs-dist";
 
 const pdfAssets = { standardFontDataUrl: "/api/pdf-assets/standard_fonts/", cMapUrl: "/api/pdf-assets/cmaps/", cMapPacked: true, wasmUrl: "/api/pdf-assets/wasm/" };
@@ -87,13 +89,26 @@ export function DocumentThumbnail({ url, pdf, title, cache, large = false }: { u
   </span>;
 }
 
-export function DocumentViewer({ url, pdf, title }: { url: string; pdf: boolean; title: string }) {
+export function DocumentViewer({ url, pdf, title, showDownload = true, downloadName = title }: { url: string; pdf: boolean; title: string; showDownload?: boolean; downloadName?: string }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
   const [error, setError] = useState("");
   const [rendering, setRendering] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [space, setSpace] = useState({ width: 900, height: 600 });
+  useEffect(() => {
+    const container = viewport.current;
+    if (!container) return;
+    const observer = new ResizeObserver(() => setSpace({ width: Math.max(1, container.clientWidth - 32), height: Math.max(1, container.clientHeight - 32) }));
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (!pdf) return;
     let canceled = false;
@@ -105,7 +120,7 @@ export function DocumentViewer({ url, pdf, title }: { url: string; pdf: boolean;
         task = library.getDocument({ url, ...pdfAssets });
         const result = await task.promise;
         if (!canceled) setDocument(result);
-      } catch { if (!canceled) setError("Preview unavailable. The PDF may be damaged or password-protected. You can download it below."); }
+      } catch { if (!canceled) setError("Preview unavailable. The PDF may be damaged, password-protected, or no longer accessible. You can download it below."); }
     })();
     return () => { canceled = true; if (task) void task.destroy(); };
   }, [url, pdf]);
@@ -118,28 +133,43 @@ export function DocumentViewer({ url, pdf, title }: { url: string; pdf: boolean;
         setRendering(true);
         const pdfPage = await document.getPage(page);
         if (canceled || !canvas.current) return;
-        const original = pdfPage.getViewport({ scale: 1 });
-        const viewport = pdfPage.getViewport({ scale: 900 / Math.max(original.width, original.height) * zoom });
-        // New canvas per render prevents canceled renders competing for the same surface.
+        const original = pdfPage.getViewport({ scale: 1, rotation: pdfPage.rotate + rotation });
+        const fit = Math.min(space.width / original.width, space.height / original.height);
+        const display = pdfPage.getViewport({ scale: fit * zoom, rotation: pdfPage.rotate + rotation });
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
         const surface = window.document.createElement("canvas");
-        surface.width = Math.ceil(viewport.width); surface.height = Math.ceil(viewport.height);
-        task = pdfPage.render({ canvas: surface, viewport }); await task.promise;
+        const rendered = pdfPage.getViewport({ scale: fit * zoom * pixelRatio, rotation: pdfPage.rotate + rotation });
+        surface.width = Math.ceil(rendered.width); surface.height = Math.ceil(rendered.height);
+        task = pdfPage.render({ canvas: surface, viewport: rendered }); await task.promise;
         if (!canceled && canvas.current) {
           canvas.current.width = surface.width; canvas.current.height = surface.height;
+          canvas.current.style.width = `${display.width}px`; canvas.current.style.height = `${display.height}px`;
           canvas.current.getContext("2d")?.drawImage(surface, 0, 0); setRendering(false);
         }
       } catch { if (!canceled) { setError("Could not render this page. Try downloading the document."); setRendering(false); } }
     })();
     return () => { canceled = true; task?.cancel(); };
-  }, [document, page, zoom]);
+  }, [document, page, zoom, rotation, space]);
+  const rotated = rotation % 180 !== 0;
+  const imageWidth = rotated ? imageSize.height : imageSize.width;
+  const imageHeight = rotated ? imageSize.width : imageSize.height;
+  const imageScale = imageWidth && imageHeight ? Math.min(space.width / imageWidth, space.height / imageHeight, 1) * zoom : 1;
+  const control = "inline-flex h-8 min-w-8 items-center justify-center rounded border border-zinc-200 px-2 text-zinc-600 hover:text-zinc-900 disabled:opacity-40";
+  async function download() {
+    if (downloading) return;
+    setDownloading(true); setDownloadError("");
+    try { await downloadAttachment(url, downloadName); }
+    catch { setDownloadError("Could not download the document. Please try again."); }
+    finally { setDownloading(false); }
+  }
   return <section aria-label="Document preview" className="overflow-hidden rounded border border-zinc-200">
-    {pdf && <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-white p-3 text-sm">
-      <div className="flex items-center gap-3"><button type="button" disabled={!document || page === 1} onClick={() => setPage(p => p - 1)} className="disabled:opacity-40">Previous</button><span>Page {page} / {document?.numPages ?? "…"}</span><button type="button" disabled={!document || page === document.numPages} onClick={() => setPage(p => p + 1)} className="disabled:opacity-40">Next</button></div>
-      <label className="flex items-center gap-2">Zoom<select value={zoom} onChange={e => setZoom(Number(e.target.value))} className="rounded border border-zinc-200 p-1"><option value={1}>Fit</option><option value={1.5}>150%</option><option value={2}>200%</option><option value={3}>300%</option></select></label>
-    </div>}
-    <div className="relative max-h-[65vh] min-h-48 overflow-auto bg-zinc-100 p-4">
-      {error ? <p role="alert" className="p-5 text-sm text-zinc-600">{error}</p> : pdf ? <><canvas ref={canvas} aria-label={`${title}, page ${page}`} className={`mx-auto bg-white shadow-sm ${zoom === 1 ? "max-h-[58vh] max-w-full object-contain" : "max-w-none"}`} />{(!document || rendering) && <p role="status" className="absolute left-4 top-4 rounded bg-white p-2 text-xs text-zinc-500">Rendering document…</p>}</> : <img src={url} alt={title} onError={() => setError("Image preview unavailable. Try downloading the document.")} className="mx-auto max-h-[60vh] max-w-full object-contain" />}
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-white p-3 text-xs">
+      {pdf ? <div className="flex items-center gap-2"><button type="button" aria-label="Previous page" disabled={!document || page === 1} onClick={() => setPage(p => p - 1)} className={control}><ChevronLeft className="size-4" /></button><span className="tabular-nums">Page {page} / {document?.numPages ?? "?"}</span><button type="button" aria-label="Next page" disabled={!document || page === document.numPages} onClick={() => setPage(p => p + 1)} className={control}><ChevronRight className="size-4" /></button></div> : <span className="text-zinc-500">Image preview</span>}
+      <div className="flex items-center gap-2"><button type="button" aria-label="Zoom out" disabled={zoom <= 0.5} onClick={() => setZoom(z => Math.max(.5, z - .25))} className={control}><ZoomOut className="size-4" /></button><span className="min-w-10 text-center tabular-nums">{zoom === 1 ? "Fit" : `${Math.round(zoom * 100)}%`}</span><button type="button" aria-label="Zoom in" disabled={zoom >= 3} onClick={() => setZoom(z => Math.min(3, z + .25))} className={control}><ZoomIn className="size-4" /></button><button type="button" aria-label="Fit to screen" onClick={() => setZoom(1)} className={control}><Maximize className="size-4" /></button><button type="button" aria-label="Rotate clockwise" onClick={() => setRotation(r => (r + 90) % 360)} className={control}><RotateCw className="size-4" /></button></div>
     </div>
-    <div className="border-t border-zinc-200 bg-white p-3 text-xs text-zinc-500">{pdf ? "PDF page preview" : "Image preview"} · <a href={`${url}?download=1`} className="text-zinc-700 underline">Download original</a></div>
+    <div ref={viewport} className="relative h-[55dvh] min-h-48 overflow-auto bg-zinc-100 p-4">
+      {error ? <p role="alert" className="p-5 text-sm text-zinc-600">{error}</p> : pdf ? <><canvas ref={canvas} aria-label={`${title}, page ${page}`} className="mx-auto bg-white shadow-sm" />{(!document || rendering) && <p role="status" className="absolute left-4 top-4 flex items-center gap-2 rounded bg-white p-2 text-xs text-zinc-500"><Loader2 className="size-4 animate-spin" />Rendering document?</p>}</> : <div className="relative mx-auto" style={{ width: imageWidth ? imageWidth * imageScale : "100%", height: imageHeight ? imageHeight * imageScale : "100%" }}><img src={url} alt={title} onLoad={event => setImageSize({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })} onError={() => setError("Image preview unavailable. Try downloading the document.")} className="absolute left-1/2 top-1/2 max-w-none" style={{ width: imageSize.width ? imageSize.width * imageScale : undefined, height: imageSize.height ? imageSize.height * imageScale : undefined, transform: `translate(-50%, -50%) rotate(${rotation}deg)` }} /></div>}
+    </div>
+    {showDownload && <div className="border-t border-zinc-200 bg-white p-3 text-xs"><button type="button" onClick={download} disabled={downloading} className="inline-flex items-center gap-2 text-zinc-700 disabled:opacity-50">{downloading ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}Download original</button>{downloadError && <p role="alert" className="mt-2 text-red-600">{downloadError}</p>}</div>}
   </section>;
 }

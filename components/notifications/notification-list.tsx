@@ -52,8 +52,10 @@ function NotificationCard({
   const text = TEXT[textSize];
   const request = notification.kind !== "progress_override";
   const sheet = notification.kind === "sheet_submitted";
-  const incident = notification.kind === "safety_incident";
-  const Icon = incident ? Flag : notification.kind === "material_request" ? Package : notification.kind === "equipment_request" ? Wrench : TrendingUp;
+  const incident = notification.kind === "safety_incident" || notification.kind === "incident_closed";
+  const closedIncident = notification.kind === "incident_closed";
+  const stock = notification.kind === "material_out_of_stock";
+  const Icon = incident ? Flag : (stock || notification.kind === "material_request") ? Package : notification.kind === "equipment_request" ? Wrench : TrendingUp;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -91,12 +93,12 @@ function NotificationCard({
         </span>
         <div className="min-w-0 flex-1">
           <p className={`${text.title} text-zinc-900`}>
-            {!incident && <><span className="font-semibold">{notification.actorName ?? "Someone"}</span>{" "}</>}
-            {incident ? "Reported a safety incident: " : sheet ? "uploaded a document for admin review: " : request ? `submitted ${notification.kind === "material_request" ? "material" : "equipment"} request ` : "overrode the progress of "}
+            {!stock && (!incident || closedIncident) && <><span className="font-semibold">{notification.actorName ?? "Someone"}</span>{" "}</>}
+            {stock ? "Material out of stock: " : closedIncident ? "closed an incident: " : incident ? "Reported a safety incident: " : sheet ? "published a project document: " : request ? `submitted ${notification.kind === "material_request" ? "material" : "equipment"} request ` : "overrode the progress of "}
             <span className="font-semibold">{notification.itemName}</span>
           </p>
           <p className={`mt-0.5 ${text.detail} text-zinc-500`}>
-            {notification.projectName} · {incident ? "occurred" : request ? "requested" : "progress for"} {formatDay(notification.entryDate)}
+            {notification.projectName} · {stock ? "out of stock on" : incident ? "occurred" : request ? "requested" : "progress for"} {formatDay(notification.entryDate)}
           </p>
           <p className={`mt-1 ${text.time} text-zinc-400`}>
             {notificationTime(notification.createdAt)}

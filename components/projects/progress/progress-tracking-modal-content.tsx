@@ -1,42 +1,41 @@
 "use client";
 
+import { incidentStatus } from "@/lib/incidents/model";
+
+import { MAX_LOG_PHOTOS, MAX_LOG_PHOTO_BYTES, LOG_PHOTO_TYPES, progressPhotoUrl, type ProgressPhoto } from "@/lib/progress-logs/evidence";
 import { SuggestionInput } from "@/components/ui/suggestion-input";
 
+import { AttachmentLink } from "@/components/ui/attachment-viewer";
 import { EmptyState } from "@/components/ui/empty-state";
-import Image from "next/image";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   CalendarDays,
   Check,
   ChevronDown,
-  ChevronRight,
   ClipboardCheck,
   ClipboardList,
   FileDown,
   HistoryIcon,
   Loader2,
   Flag,
-  Package,
-  Paperclip,
   PanelRight,
   Plus,
-  Receipt,
   Trash2,
-  Wrench,
   X,
 } from "lucide-react";
 import { EditIcon } from "@/components/icons/edit-icon";
 import { Modal, ModalFooter, ModalHeaderActions, ModalHeaderAddon } from "@/components/ui/modal";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { InitialsAvatar } from "@/components/ui/list-table";
 import { MaterialStockPickerModal } from "@/components/projects/materials/material-stock-picker-modal";
 import { WorkerPickerModal } from "./worker-picker-modal";
+import { useIncidentRecords } from "@/components/projects/progress/incident-records-context";
 import { IncidentReportPanel } from "./incident-report-panel";
 import { IncidentDetailModal } from "./incident-detail-modal";
 import type { IncidentContext } from "@/lib/incidents/model";
-import { INCIDENT_SEVERITIES, INCIDENT_TYPES, type Incident } from "@/lib/incidents/model";
-import { listTodayIncidents } from "@/lib/incidents/actions";
+import { incidentReportedDate } from "@/lib/incidents/report";
+import { incidentTitle, type Incident } from "@/lib/incidents/model";
+import { listTaskIncidents, listTodayIncidents } from "@/lib/incidents/actions";
 import { loadMaterialPurchases } from "@/lib/materials/purchase-actions";
 import {
   computeMaterialStocks,
@@ -50,7 +49,7 @@ import { progressLogDraftKey } from "@/lib/progress-logs/draft";
 import { laborEntryCost } from "@/lib/task-progress/labor";
 import { downloadDailyLogPdf } from "@/lib/progress-logs/daily-log-pdf";
 import type { Worker } from "@/lib/workers/data";
-import { formatHours, weekdayIndex } from "@/lib/workers/schedule";
+import { formatHours } from "@/lib/workers/schedule";
 import {
   COST_COMPONENTS,
   computeProgressBreakdown,
@@ -71,7 +70,7 @@ import {
   type UnplannedOtherCost,
 } from "@/lib/task-progress/calculate";
 
-type ProgressActionResult = { error?: string; success?: boolean };
+type ProgressActionResult = { error?: string; success?: boolean; photos?: ProgressPhoto[] };
 
 const SCHEDULE_STATUS_LABEL: Record<ScheduleStatus, string> = {
   ahead: "Ahead of schedule",
@@ -85,19 +84,29 @@ const SCHEDULE_STATUS_STYLE: Record<ScheduleStatus, string> = {
   behind: "bg-red-50 text-red-600",
 };
 
-const MATERIAL_COLUMNS = "grid grid-cols-[minmax(0,1fr)_8rem] items-center gap-3 px-4";
+const RESOURCE_LABEL = "mb-1.5 block text-xs text-zinc-500";
+const RESOURCE_READONLY = "flex min-w-0 items-center rounded-md border border-zinc-200 bg-zinc-100/70 px-3 py-2 text-sm text-zinc-700";
+const RESOURCE_ADD = "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded text-zinc-400 transition hover:text-zinc-900";
 
-// A material not on the task's own lines: what it is, its unit, how
-// much, at what unit cost, what that comes to, and its remove button.
-const UNPLANNED_COLUMNS =
-  "grid grid-cols-[minmax(0,1fr)_5rem_6.5rem_2.25rem] items-center gap-2 px-4";
+function ResourceField({ label, htmlFor, children }: { label: string; htmlFor?: string; children: ReactNode; }) {
+  return <div className="flex min-w-0 flex-col">
+    {htmlFor ? <label htmlFor={htmlFor} className={RESOURCE_LABEL}>{label}</label> : <span aria-hidden={label ? undefined : true} className={RESOURCE_LABEL}>{label || " "}</span>}
+    {children}
+  </div>;
+}
 
-const OTHER_COST_COLUMNS = "grid grid-cols-[minmax(0,1fr)_9rem] items-center gap-3 px-4";
-const UNPLANNED_OTHER_COLUMNS =
-  "grid grid-cols-[minmax(0,1fr)_9rem_2.25rem] items-center gap-2 px-4";
+function ResourceDescription({ name, detail, action }: { name: string; detail?: ReactNode; action?: ReactNode; }) {
+  return <>
+    <div className={`${RESOURCE_READONLY} gap-2`} title={name}>
+      <p className="min-w-0 flex-1 truncate">{name}</p>
+      {action}
+    </div>
+    {detail && <div className="mt-1.5 truncate text-xs text-zinc-500 tabular-nums">{detail}</div>}
+  </>;
+}
 
 const CELL_INPUT =
-  "h-[34px] w-full min-w-0 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-sm text-zinc-700 outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
+  "w-full min-w-0 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 placeholder:text-zinc-400 outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-zinc-200";
 
 /** One typed row of a material used that isn't on the task's own lines. */
 type UnplannedRow = { id: number; name: string; unit: string; quantity: string; unitCost: string };
@@ -174,7 +183,7 @@ function AmountInput({
   compact?: boolean;
 }) {
   return (
-    <div className={`flex items-center rounded-md border border-zinc-200 bg-white transition focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200 ${compact ? "h-[34px]" : ""}`}>
+    <div className={`flex items-center rounded-md border border-zinc-200 bg-white transition focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200`}>
       {prefix && <span className="shrink-0 pl-3 text-sm text-zinc-400">{prefix}</span>}
       <input
         id={id}
@@ -184,8 +193,8 @@ function AmountInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="0"
-        className={`w-full min-w-0 bg-transparent text-sm text-zinc-700 outline-none tabular-nums ${
-          compact ? "py-1.5 pl-2.5" : prefix ? "py-2 pr-3 pl-1.5" : "px-3 py-2"
+        className={`w-full min-w-0 bg-transparent text-sm text-zinc-700 outline-none tabular-nums placeholder:text-zinc-400 ${
+          compact ? "px-3 py-2" : prefix ? "py-2 pr-3 pl-1.5" : "px-3 py-2"
         }`}
       />
       {unit && (
@@ -214,7 +223,7 @@ function paidHourly(worker: Worker) {
 }
 
 // Team member | Rate | Hours | Cost — shared by the header and each row.
-const LABOR_COLUMNS = "grid grid-cols-[minmax(0,1fr)_6rem_7rem_7rem] items-center gap-3 px-4";
+const LABOR_COLUMNS = "grid grid-cols-2 items-stretch gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]";
 
 /** "Labor today": whoever's assigned to the task (and anyone added who
  * helped), each with the actual hours entered at their Default Rate. The
@@ -228,10 +237,9 @@ function LaborToday({
   onAmount,
   onAdd,
   onRemove,
-  laborToday,
   laborDetail,
 }: {
-  rows: { worker: Worker; helper: boolean }[];
+  rows: { worker: Worker; helper: boolean; }[];
   /** Skilled workers and subcontractors who can be added. */
   team: Worker[];
   /** Hours typed per person, by worker id. */
@@ -244,7 +252,6 @@ function LaborToday({
   laborToday: number;
   laborDetail?: ReactNode;
 }) {
-  const today = weekdayIndex();
   const [pickerOpen, setPickerOpen] = useState(false);
   const listed = new Set(rows.map((row) => row.worker.id));
   const addable = team.filter((worker) => !listed.has(worker.id));
@@ -258,120 +265,53 @@ function LaborToday({
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <h3 className="text-base font-semibold text-zinc-900">Labor costs</h3>
-        <span className="text-base font-semibold text-zinc-900 tabular-nums">
-          Labor {formatPeso(laborToday)}
-        </span>
-      </div>
-
-      {rows.length > 0 && (
-        <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
-          <div
-            className={`${LABOR_COLUMNS} border-b border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
-          >
-            <span>Worker</span>
-            <span>Rate</span>
-            <span>Hours</span>
-            <span>Cost</span>
-          </div>
-          <ul className="divide-y divide-zinc-100">
-            {rows.map(({ worker, helper }) => {
-              const worked = parseHours(hours[worker.id] ?? "");
-              const fixed = worker.employmentType === "subcontractor";
-              const dayOff = !fixed && (worker.workHours[today] ?? 0) === 0;
-              return (
-                <li key={worker.id} className={`${LABOR_COLUMNS} py-2.5 text-sm`}>
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <InitialsAvatar name={worker.fullName} />
-                    <div className="min-w-0">
-                      <p className="truncate text-zinc-900" title={worker.fullName}>
-                        {worker.fullName}
-                        {dayOff && <span className="ml-1.5 text-xs text-zinc-400">Day off</span>}
-                      </p>
-                      {worker.title && (
-                        <p className="truncate text-xs text-zinc-500">{worker.title}</p>
-                      )}
-                    </div>
-                    {helper && (
-                      <button
-                        type="button"
-                        onClick={() => onRemove(worker.id)}
-                        title="Remove"
-                        aria-label={`Remove ${worker.fullName}`}
-                        className="shrink-0 cursor-pointer rounded p-0.5 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  <span className="truncate text-xs text-zinc-500 tabular-nums">
-                    {!fixed && worker.hourlyRate !== null ? (
-                      `${formatPeso(worker.hourlyRate)}/hr`
-                    ) : worker.employmentType === "subcontractor" ? (
-                      <span className="text-zinc-400">—</span>
-                    ) : (
-                      <span className="text-amber-600">No rate</span>
-                    )}
-                  </span>
-                  {fixed ? <span aria-label="Hours not applicable" className="text-xs text-zinc-400">—</span> : <div
-                    className={`flex items-center rounded-md border bg-white transition focus-within:ring-2 focus-within:ring-zinc-200 ${
-                      worked === null ? "border-red-300" : "border-zinc-200 focus-within:border-zinc-400"
-                    }`}
-                  >
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      autoComplete="off"
-                      value={hours[worker.id] ?? ""}
-                      onChange={(e) => onHours(worker.id, e.target.value)}
-                      placeholder="0"
-                      aria-label={`Hours ${worker.fullName} worked today`}
-                      className="w-full min-w-0 bg-transparent py-1.5 pl-2.5 text-sm text-zinc-700 outline-none tabular-nums"
-                    />
-                    <span className="shrink-0 pr-2.5 pl-1 text-xs text-zinc-400">hrs</span>
-                  </div>}
-                  {fixed ? (
-                    <div className="flex items-center rounded-md border border-zinc-200 bg-white focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200">
-                      <span aria-hidden className="pl-2.5 text-sm text-zinc-400">₱</span>
-                      <input type="text" inputMode="decimal" autoComplete="off"
-                        aria-label={`${worker.fullName}'s daily subcontractor amount`}
-                        value={amounts[worker.id] ?? ""}
-                        onChange={event => onAmount(worker.id, event.target.value)} placeholder="0"
-                        className="w-full min-w-0 bg-transparent px-2 py-1.5 text-sm text-zinc-700 outline-none tabular-nums" />
-                    </div>
-                  ) : (
-                  <span
-                    aria-label={`${worker.fullName}'s cost today`}
-                    className="flex items-center rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-sm tabular-nums"
-                  >
-                    <span className={(worked ?? 0) > 0 ? "text-zinc-600" : "text-zinc-400"}>
-                      {formatPeso((worker.hourlyRate ?? 0) * (worked ?? 0))}
-                    </span>
-                  </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-semibold text-zinc-900">Labor costs</h3>
+          {addable.length > 0 && <button type="button" onClick={() => setPickerOpen(true)}
+            aria-label="Add workforce" title="Add workforce" className={RESOURCE_ADD}><Plus className="size-4" /></button>}
         </div>
-      )}
-
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        {addable.length > 0 ? (
-          <button
-            type="button"
-            onClick={() => setPickerOpen(true)}
-            aria-label="Add workforce"
-            className="inline-flex cursor-pointer items-center gap-1.5 rounded py-1 px-1.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-          >
-            <Plus aria-hidden className="size-4 text-zinc-700" />
-            <span>Add</span>
-          </button>
-        ) : (
-          <span />
-        )}
-        {laborDetail && <span className="text-xs text-zinc-500 tabular-nums">{laborDetail}</span>}
+      {laborDetail && <div className="text-right text-xs text-zinc-500 tabular-nums">{laborDetail}</div>}
       </div>
+      {rows.length > 0 && <ul className="space-y-4">
+        {rows.map(({ worker, helper }) => {
+          const worked = parseHours(hours[worker.id] ?? "");
+          const fixed = worker.employmentType === "subcontractor";
+          return <li key={worker.id} className={LABOR_COLUMNS}>
+            <div className="col-span-2 flex min-w-0 flex-col sm:col-span-1">
+              <span className={RESOURCE_LABEL}>Worker</span>
+              <div className={`${RESOURCE_READONLY} gap-2`}>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate" title={worker.fullName}>{worker.fullName}{worker.title && <span className="ml-1.5 text-xs text-zinc-400">{worker.title}</span>}</p>
+                </div>
+                {helper && <button type="button" onClick={() => onRemove(worker.id)} title="Remove" aria-label={`Remove ${worker.fullName}`}
+                  className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center p-0 text-zinc-400 transition hover:text-red-600"><X className="block size-3.5 shrink-0" /></button>}
+              </div>
+            </div>
+            <ResourceField label="Rate"><div className={`${RESOURCE_READONLY} tabular-nums`}>
+              {!fixed && worker.hourlyRate !== null ? `${formatPeso(worker.hourlyRate)}/hr` : <span className={fixed ? "text-zinc-400" : "text-amber-600"}>{fixed ? "—" : "No rate"}</span>}
+            </div></ResourceField>
+            <ResourceField label="Hours worked">
+              {fixed ? <div aria-label="Hours not applicable" className={`${RESOURCE_READONLY} text-zinc-400`}>—</div> :
+                <div className={`flex items-center rounded-md border bg-white transition focus-within:ring-2 focus-within:ring-zinc-200 ${worked === null ? "border-red-300" : "border-zinc-200 focus-within:border-zinc-400"}`}>
+                  <input type="text" inputMode="decimal" autoComplete="off" value={hours[worker.id] ?? ""}
+                    onChange={e => onHours(worker.id, e.target.value)} placeholder="0" aria-label={`Hours ${worker.fullName} worked today`}
+                    className="w-full min-w-0 bg-transparent py-2 pl-3 text-sm text-zinc-700 outline-none tabular-nums placeholder:text-zinc-400" />
+                  <span className="shrink-0 pr-2.5 pl-1 text-xs text-zinc-400">hrs</span>
+                </div>}
+            </ResourceField>
+            <ResourceField label="Cost">
+              {fixed ? <div className="flex items-center rounded-md border border-zinc-200 bg-white focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-200">
+                <span aria-hidden className="pl-2.5 text-sm text-zinc-400">₱</span>
+                <input type="text" inputMode="decimal" autoComplete="off" aria-label={`${worker.fullName}'s daily subcontractor amount`}
+                  value={amounts[worker.id] ?? ""} onChange={event => onAmount(worker.id, event.target.value)} placeholder="0"
+                  className="w-full min-w-0 bg-transparent px-2 py-2 text-sm text-zinc-700 outline-none tabular-nums placeholder:text-zinc-400" />
+              </div> : <div aria-label={`${worker.fullName}'s cost today`} className={`${RESOURCE_READONLY} tabular-nums`}>
+                <span className={(worked ?? 0) > 0 ? "text-zinc-600" : "text-zinc-400"}>{formatPeso((worker.hourlyRate ?? 0) * (worked ?? 0))}</span>
+              </div>}
+            </ResourceField>
+          </li>;
+        })}
+      </ul>}
 
       <WorkerPickerModal
         open={pickerOpen}
@@ -452,7 +392,7 @@ function LastOverride({
             onClick={onDelete}
             aria-label="Delete this override"
             title="Delete this override"
-            className="ml-auto cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
+            className="ml-auto cursor-pointer rounded p-1 text-zinc-400 transition hover:text-red-600"
           >
             <Trash2 className="size-3.5" />
           </button>
@@ -517,12 +457,6 @@ function deleteOverrideMessage(entryDate: string) {
   return `${update} and its associated quantity, resource, and cost entries will be removed. Logs from other dates will remain. Actual progress and costs will be recalculated from the remaining saved logs.`;
 }
 
-function formatFileSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 // How many of the newest history entries show before "Show all".
 const HISTORY_PREVIEW = 5;
 
@@ -537,7 +471,6 @@ const HISTORY_COST_LABEL: Record<CostComponent, string> = {
 
 const HISTORY_COST_ORDER: CostComponent[] = ["labor", "other", "equipment"];
 const EMPTY_INCIDENTS: Incident[] = [];
-
 /** One override in full, under its opened card — who worked (their hours
  * and cost then), what was used, and the day's total, for review. */
 function OverrideLogDetails({ log }: { log: OverrideLog }) {
@@ -704,11 +637,15 @@ function OverrideHistory({
   logs,
   loggedDates,
   unit,
+  estimatedQuantity,
   highlightLatest,
   highlightEntryDate,
+  showProgress = true,
   onDelete,
   onEdit,
   editingLogId,
+  saving = false,
+  savingDate,
   projectId,
   projectName,
   incidentContext,
@@ -718,11 +655,16 @@ function OverrideHistory({
   /** Days that still have a saved update. */
   loggedDates: readonly string[];
   unit: string | null;
+  estimatedQuantity: number;
+  progressColor: string;
   highlightLatest: boolean;
   highlightEntryDate?: string;
+  showProgress?: boolean;
   onDelete?: (entryDate: string) => void;
   onEdit?: (log: OverrideLog | null) => void;
   editingLogId?: number;
+  saving?: boolean;
+  savingDate?: string;
   projectId?: number;
   projectName: string;
   incidentContext?: IncidentContext;
@@ -769,6 +711,12 @@ function OverrideHistory({
   }, [targetLogId]);
 
   const logged = new Set(loggedDates);
+  const cumulativeByDate = new Map<string, number>();
+  let cumulativeQuantity = 0;
+  for (const entry of [...dailyLogs].reverse()) {
+    if (logged.has(entry.entryDate)) cumulativeQuantity += entry.quantityCompleted;
+    cumulativeByDate.set(entry.entryDate, cumulativeQuantity);
+  }
   const latestDate = dailyLogs.find(log=>logged.has(log.entryDate))?.entryDate;
   const shown = showAll || targetNeedsReveal ? dailyLogs : dailyLogs.slice(0, HISTORY_PREVIEW);
   const selectedLog = dailyLogs.find(log=>log.entryDate===selectedDate) ?? null;
@@ -782,10 +730,14 @@ function OverrideHistory({
         {shown.map((log, index) => {
           const current = logged.has(log.entryDate);
           const latest = current && log.entryDate===latestDate;
+          const isSaving = saving && log.entryDate === savingDate;
           const highlighted = highlightedId === log.id || editingLogId === log.id;
           const versions = orderedLogs.filter(row=>row.entryDate===log.entryDate && row.action==="saved");
           const original = versions[versions.length-1] ?? log;
           const edited = versions.length > 1;
+          const logPercent = estimatedQuantity > 0 && Number.isFinite(estimatedQuantity)
+            ? Math.min(100, Math.max(0, (cumulativeByDate.get(log.entryDate) ?? 0) / estimatedQuantity * 100))
+            : null;
           const last = index === shown.length - 1;
           return (
             <li
@@ -806,11 +758,11 @@ function OverrideHistory({
                   Center the check explicitly, without inline SVG baseline space. */}
               <span
                 aria-hidden
-                className={`relative mt-1 inline-flex size-4 shrink-0 items-center justify-center rounded-full leading-none ring-1 ${
-                  latest ? "bg-emerald-100 ring-emerald-200" : "bg-zinc-400 ring-zinc-400"
+                className={`relative mt-1 inline-flex size-4 shrink-0 items-center justify-center leading-none ${
+                  isSaving ? "" : latest ? "rounded-full bg-emerald-100 ring-1 ring-emerald-200" : "rounded-full bg-zinc-400 ring-1 ring-zinc-400"
                 }`}
               >
-                <svg viewBox="0 0 12 12" focusable="false" className={`block size-3 shrink-0 ${latest ? "text-emerald-700" : "text-white"}`}>
+                {isSaving ? <Loader2 className="block size-4 shrink-0 animate-spin text-zinc-500" /> : <svg viewBox="0 0 12 12" focusable="false" className={`block size-3 shrink-0 ${latest ? "text-emerald-700" : "text-white"}`}>
                   <path
                     d="M2.5 6 5 8.5l4.5-5"
                     fill="none"
@@ -819,25 +771,25 @@ function OverrideHistory({
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
-                </svg>
+                </svg>}
               </span>
 
               <div className="min-w-0 flex-1">
                 <div className="flex min-h-6 flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-sm font-semibold text-zinc-900">Saved</span>
+                  <span role="status" aria-live="polite" className="text-sm font-semibold text-zinc-900">{isSaving ? "Saving" : "Saved"}</span>
                   <span className="text-xs text-zinc-500 tabular-nums">
                     {formatDateTime(original.createdAt)}
                   </span>
                   {edited && <span className="text-xs text-zinc-500">(Edited)</span>}
                   {current && (onEdit || onDelete) && <div className="ml-auto flex items-center gap-1">
-                  {onEdit && log.id > 0 && <button type="button" onClick={()=>onEdit(editingLogId===log.id ? null : log)} aria-label={`${editingLogId===log.id ? "Cancel editing" : "Edit"} ${formatDay(log.entryDate)} log`} aria-pressed={editingLogId===log.id} title={editingLogId===log.id ? "Cancel edit" : "Edit log"} className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700">{editingLogId===log.id ? <X className="size-4" /> : <EditIcon className="size-4" />}</button>}
-                  {onDelete && (
+                  {onEdit && log.id > 0 && !saving && <button type="button" onClick={()=>onEdit(editingLogId===log.id ? null : log)} aria-label={`${editingLogId===log.id ? "Cancel editing" : "Edit"} ${formatDay(log.entryDate)} log`} aria-pressed={editingLogId===log.id} title={editingLogId===log.id ? "Cancel edit" : "Edit log"} className="cursor-pointer rounded p-1 text-zinc-400 transition hover:text-zinc-700">{editingLogId===log.id ? <X className="size-4" /> : <EditIcon className="size-4" />}</button>}
+                  {onDelete && !saving && (
                     <button
                       type="button"
                       onClick={() => onDelete(log.entryDate)}
                       aria-label="Delete this override"
                       title="Delete this override"
-                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
+                      className="cursor-pointer rounded p-1 text-zinc-400 transition hover:text-red-600"
                     >
                       <Trash2 className="size-4" />
                     </button>
@@ -847,7 +799,7 @@ function OverrideHistory({
                 {/* The card opens the full record in a centered modal. */}
                 <div
                   className={`mt-2 overflow-hidden rounded-md border bg-white ${
-                    highlighted ? "border-zinc-900" : "border-zinc-200"
+                    editingLogId === log.id ? "border-dashed border-zinc-900" : highlighted ? "border-zinc-900" : "border-zinc-200"
                   }`}
                 >
                   <button
@@ -857,33 +809,27 @@ function OverrideHistory({
                   >
                     <span className="grid grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
                       <span className="contents">
-                        <span className="text-zinc-500">Quantity</span>
+                        <span className="text-zinc-500">Completed</span>
                         <span className="text-right font-medium text-zinc-900 tabular-nums">{formatQuantity(log.quantityCompleted)}{unit ? ` ${unit}` : ""}</span>
                       </span>
-                      {HISTORY_COST_ORDER.map((component) => (
+                      {(["equipment", "labor", "other"] as const).map((component) => (
                         <span key={component} className="contents">
                           <span className="text-zinc-500">{HISTORY_COST_LABEL[component]}</span>
                           <span className="text-right font-medium text-zinc-900 tabular-nums">{formatPeso(log.costs[component])}</span>
                         </span>
                       ))}
                     </span>
-                    <span className="mt-3 flex items-center gap-2.5 border-t border-zinc-100 pt-3">
-                      <InitialsAvatar name={original.savedByName ?? "?"} />
+                    {showProgress && <>
+                    <span className="mt-3 flex items-center gap-3 border-t border-zinc-100 pt-3">
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-xs text-zinc-500">
-                          Saved by{" "}
-                          <span className="font-semibold text-zinc-900">
-                            {original.savedByName ?? "an unknown account"}
-                          </span>
+                        <span className="flex items-center justify-between gap-2 text-xs">
+                          <span className="text-zinc-500">Task progress</span>
+                          <span className="font-medium text-zinc-900 tabular-nums">{logPercent === null ? "No planned quantity" : `${formatQuantity(logPercent)}%`}</span>
                         </span>
-                        {original.savedByRole && (
-                          <span className="block truncate text-[11px] text-zinc-400">
-                            {original.savedByRole}
-                          </span>
-                        )}
+
                       </span>
-                      <ChevronRight aria-hidden className="size-4 shrink-0 text-zinc-400" />
                     </span>
+                    </>}
                   </button>
                 </div>
               </div>
@@ -997,6 +943,7 @@ function SavedProgressLogModal({
     setPdfError("");
     try {
       await downloadDailyLogPdf({
+        projectId,
         projectName,
         workItemName: incidentContext?.name ?? "Progress item",
         unit,
@@ -1022,22 +969,20 @@ function SavedProgressLogModal({
             ? `Logged by ${original?.savedByName ?? "Unknown account"}`
             : undefined
         }
-        icon={<HistoryIcon className="size-6" />}
-        bareIcon
+        icon={<HistoryIcon className="size-5" />}
         variant="centered"
         size="wide"
         headerClassName="[&_h2]:text-base [&_p]:text-xs"
       >
-        {edited && displayedLog && <ModalHeaderActions><LogEditHistoryMenu versions={versions} selectedId={displayedLog.id} onSelect={setSelectedVersionId} /></ModalHeaderActions>}
+        {edited && log && displayedLog && <ModalHeaderActions><div className="flex items-center gap-3"><p className="text-right text-xs leading-relaxed text-zinc-500">Last edited by <span className="font-semibold text-zinc-700">{log.savedByName ?? "Unknown account"}</span> · {formatDateTime(log.createdAt)}</p><LogEditHistoryMenu versions={versions} selectedId={displayedLog.id} onSelect={setSelectedVersionId} /></div></ModalHeaderActions>}
         {log && displayedLog && (
           <article className="flex flex-col gap-4">
-            {edited && <p className="text-xs text-zinc-500">Last edited by <span className="font-medium text-zinc-700">{log.savedByName ?? "Unknown account"}</span> · {formatDateTime(log.createdAt)}</p>}
             {displayedLog && displayedLog.id!==log.id && <p className="border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">Viewing earlier version · {displayedLog.savedByName ?? "Unknown account"} · {formatDateTime(displayedLog.createdAt)}</p>}
             <section className="overflow-hidden rounded border border-zinc-200">
-              <h4 className="bg-zinc-100 px-3 py-2 text-[13px] font-semibold text-zinc-800">Work progress and cost summary</h4>
-              <dl className="grid grid-cols-2 gap-x-8 gap-y-2 px-3 py-3 text-[13px]">
+              <h4 className="bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-800">Work progress and cost summary</h4>
+              <dl className="relative grid grid-cols-2 gap-x-8 gap-y-2 px-3 py-3 text-xs after:pointer-events-none after:absolute after:inset-y-0 after:left-1/2 after:border-l after:border-zinc-200 after:content-['']">
               <div className="flex justify-between gap-3">
-                <dt className="text-zinc-500">Quantity</dt>
+                <dt className="text-zinc-500">Quantity Completed</dt>
                 <dd className="font-medium tabular-nums">
                   {formatQuantity(displayedLog.quantityCompleted)}
                   {unit ? ` ${unit}` : ""}
@@ -1055,9 +1000,20 @@ function SavedProgressLogModal({
             </section>
             <OverrideLogDetails log={displayedLog} />
             <section className="overflow-hidden rounded border border-zinc-200">
+              <h4 className="bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-800">Remarks / Site observations</h4>
+              <p className={`whitespace-pre-wrap break-words px-3 py-3 text-xs ${displayedLog.remarks ? "text-zinc-700" : "text-zinc-400"}`}>{displayedLog.remarks || "No remarks recorded."}</p>
+            </section>
+            <section className="overflow-hidden rounded border border-zinc-200">
+              <h4 className="bg-zinc-100 px-3 py-2 text-xs font-semibold text-zinc-800">Attachments</h4>
+              {!!displayedLog.photos?.length ? (
+                <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-3">{displayedLog.photos.map(photo => projectId ? <LogPhoto key={photo.path} src={progressPhotoUrl(projectId,photo)} name={photo.name} /> : <span key={photo.path} className="text-xs text-zinc-600">{photo.name}</span>)}</div>
+              ) : <p className="px-3 py-3 text-xs text-zinc-400">No attachments.</p>}
+            </section>
+
+            <section className="overflow-hidden rounded border border-zinc-200">
               <div className="flex items-center gap-2 bg-zinc-100 px-3 py-2">
                 <Flag className="size-4 text-amber-600" />
-                <h4 className="text-[13px] font-semibold text-zinc-800">
+                <h4 className="text-xs font-semibold text-zinc-800">
                   Incident reports
                 </h4>
               </div>
@@ -1068,54 +1024,22 @@ function SavedProgressLogModal({
                   No incidents reported for this log.
                 </EmptyState>
               ) : (
-                <div className="space-y-3 p-3">
-                  {incidents.map((incident) => {
-                    const files = incident.attachments;
-                    return (
-                      <article
-                        key={incident.id}
-                        className="rounded-md border border-zinc-200 bg-white px-4 py-3 text-xs"
-                      >
-                        <span className="flex items-center gap-2">
-                          <span className="min-w-0 flex-1 truncate font-medium text-zinc-700">{INCIDENT_TYPES[incident.incident_type]}</span>
-                          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-600">{INCIDENT_SEVERITIES[incident.severity]}</span>
-                        </span>
-                        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-                          <dt className="font-medium text-zinc-500">Occurred</dt><dd>{formatDay(incident.occurred_on)} · {incident.occurred_time.slice(0, 5)}</dd>
-                          <dt className="font-medium text-zinc-500">Location</dt><dd>{incident.location || "Not recorded"}</dd>
-                          <dt className="font-medium text-zinc-500">What happened</dt><dd className="whitespace-pre-wrap break-words leading-relaxed">{incident.description}</dd>
-                          <dt className="font-medium text-zinc-500">Reported by</dt><dd>{incident.reporter_name || "Project member"}</dd>
-                          <dt className="font-medium text-zinc-500">Submitted</dt><dd>{formatDateTime(incident.created_at)}</dd>
-                        </dl>
-                        {files.length > 0 && (
-                          <div className="mt-3 border-t border-zinc-100 pt-3">
-                            <p className="font-semibold text-zinc-700">Attachments ({files.length})</p>
-                            <ul className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-3">
-                              {files.map((file) => (
-                                <li key={file.path} className="min-w-0 overflow-hidden rounded border border-zinc-200 bg-zinc-50/50 text-xs">
-                                  {file.url && file.type.startsWith("image/") ? <a href={file.url} target="_blank" rel="noopener noreferrer" className="relative block aspect-[4/3]"><Image src={file.url} alt={file.name} fill unoptimized sizes="260px" className="object-cover" /></a> : file.url && file.type === "application/pdf" ? <iframe src={file.url} title={file.name} className="h-40 w-full bg-white" /> : <div className="flex h-40 items-center justify-center"><Paperclip className="size-6 text-zinc-400" /></div>}
-                                  <div className="flex items-center gap-2 px-2.5 py-2">
-                                  {file.url ? (
-                                    <a href={file.url} target="_blank" rel="noopener noreferrer" className="min-w-0 flex-1 truncate text-zinc-700 underline underline-offset-4 hover:text-blue-600 font-medium">
-                                      {file.name}
-                                    </a>
-                                  ) : (
-                                    <span className="min-w-0 flex-1 truncate text-zinc-500">{file.name}</span>
-                                  )}
-                                  {file.size ? (
-                                    <span className="ml-auto shrink-0 text-[11px] text-zinc-400 tabular-nums">
-                                      {formatFileSize(file.size)}
-                                    </span>
-                                  ) : null}
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </article>
-                    );
-                  })}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-zinc-50 text-zinc-500">
+                      <tr>{["Date", "Incident Type", "Reported Date and Time", "Reported By", "Status"].map(column => <th key={column} className="px-3 py-2 font-medium">{column}</th>)}</tr>
+                    </thead>
+                    <tbody>
+                      {incidents.map(incident => (
+                        <tr key={incident.id} className="border-t border-zinc-200">
+                          <td className="whitespace-nowrap px-3 py-2.5 text-zinc-500">{formatDay(incident.occurred_on)}</td>
+                          <td className="px-3 py-2.5 font-medium text-zinc-700">{incidentTitle(incident)}</td>
+                          <td className="whitespace-nowrap px-3 py-2.5 text-zinc-500">{incidentReportedDate(incident.created_at)}</td>
+                          <td className="px-3 py-2.5 text-zinc-600">{incident.reporter_name || "Project member"}</td><td className="px-3 py-2.5"><span className={`rounded px-2 py-0.5 text-xs ${incident.closeout ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{incidentStatus(incident)}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </section>
@@ -1162,6 +1086,7 @@ function SavedProgressLogModal({
  */
 export function ProgressTrackingModalContent({
   readOnly = false,
+  progressColor = "#71717a",
   estimatedQuantity,
   unit,
   plannedStartDate,
@@ -1192,12 +1117,14 @@ export function ProgressTrackingModalContent({
   onSummaryCollapsedChange,
   backgroundSync = false,
   saving = false,
+  savingDate,
   onDeleteOverride,
   loadOverrideHistory,
   onClose,
 }: {
   /** Equipment records show saved progress and history without editing controls. */
   readOnly?: boolean;
+  progressColor?: string;
   estimatedQuantity: number;
   unit: string | null;
   plannedStartDate: string | null;
@@ -1233,11 +1160,15 @@ export function ProgressTrackingModalContent({
   materialStocks?: readonly MaterialStockItem[];
   backgroundSync?: boolean;
   saving?: boolean;
+  savingDate?: string;
   editingLog?: OverrideLog | null;
   onEditHistory?: (log: OverrideLog | null) => void;
   initialSummaryCollapsed?: boolean;
   onSummaryCollapsedChange?: (collapsed: boolean) => void;
   onSave: (input: {
+    remarks?: string;
+    photos?: ProgressPhoto[];
+    photoFiles?: File[];
     quantityCompletedToday: number;
     costs: CostAmounts;
     materialsUsed: { name: string; unit: string | null; quantity: number }[];
@@ -1257,36 +1188,49 @@ export function ProgressTrackingModalContent({
 }) {
   const router = useRouter();
   const savedToday = editingLog ? dayEntry(editingLog) : progressToday.today;
+  const [remarks, setRemarks] = useState(() => savedToday?.remarks ?? "");
+  const [photos, setPhotos] = useState<ProgressPhoto[]>(() => savedToday?.photos ?? []);
+  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
+  const photoInput = useRef<HTMLInputElement>(null);
+  const cameraInput = useRef<HTMLInputElement>(null);
+  function addPhotos(files: FileList | null) {
+    if (!files) return;
+    const added = Array.from(files);
+    if (photos.length + photoFiles.length + added.length > MAX_LOG_PHOTOS) { setError("Attach up to 6 photos per log."); return; }
+    if (added.some(file => !LOG_PHOTO_TYPES.includes(file.type) || file.size <= 0 || file.size > MAX_LOG_PHOTO_BYTES)) { setError("Choose JPG, PNG, or WebP photos up to 5 MB each."); return; }
+    setPhotoFiles(previous => [...previous, ...added]);
+    setError(null);
+  }
+
   const retainedMaterials = editingLog?.materialsUsed.filter(row=>row.unitCost==null&&!plannedMaterials.some(planned=>planned.key===materialKey(row.name,row.unit))) ?? [];
   const workDate = editingLog?.entryDate ?? new Date().toLocaleDateString("en-CA", {timeZone:"Asia/Manila"});
   const [reportingIncident, setReportingIncident] = useState(false);
   const [summaryCollapsed, setSummaryCollapsed] = useState(initialSummaryCollapsed ?? !editingLog);
   const [summaryHasToggled, setSummaryHasToggled] = useState(false);
   const [incidentsOpen, setIncidentsOpen] = useState(false);
-  const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [incidentsLoading, setIncidentsLoading] = useState(true);
-  const [incidentsError, setIncidentsError] = useState("");
+  const incidentCache = useIncidentRecords();
+  const replaceTaskIncidents = incidentCache?.replaceTaskIncidents;
+  const [incidents, setIncidents] = useState<Incident[]>(()=>incidentCache?.items.filter(item=>(incidentContext?.kind==="task"?item.task_id:item.category_id)===incidentContext?.id) ?? []);
+  const [incidentsError, setIncidentsError] = useState(incidentCache && !incidentCache.available ? "Could not load incident reports." : "");
   const [incidentRefresh, setIncidentRefresh] = useState(0);
   const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null);
-  const incidentOpen = !editingLog && reportingIncident && !readOnly && !!projectId && !!incidentContext;
   const incidentContextKind = incidentContext?.kind;
   const incidentContextId = incidentContext?.id;
 
   useEffect(() => {
     if (readOnly || !projectId || !incidentContextKind || !incidentContextId) return;
     let cancelled = false;
-    listTodayIncidents(projectId, { kind: incidentContextKind, id: incidentContextId })
+    listTaskIncidents(projectId, { kind: incidentContextKind, id: incidentContextId })
       .then((result) => {
         if (cancelled) return;
-        setIncidents(result.items);
+        if(!result.error){setIncidents(result.items);replaceTaskIncidents?.({kind:incidentContextKind,id:incidentContextId},result.items);}
         setIncidentsError(result.error ?? "");
       })
-      .catch(() => { if (!cancelled) setIncidentsError("Could not load today's incident reports."); })
-      .finally(() => { if (!cancelled) setIncidentsLoading(false); });
+      .catch(() => { if (!cancelled) setIncidentsError("Could not load incident reports."); });
     return () => { cancelled = true; };
-  }, [readOnly, projectId, incidentContextKind, incidentContextId, incidentRefresh]);
+  }, [readOnly, projectId, incidentContextKind, incidentContextId, incidentRefresh, replaceTaskIncidents]);
 
-  const [stockModalRowId, setStockModalRowId] = useState<number | null>(null);
+  const [stockPickerOpen, setStockPickerOpen] = useState(false);
   const [fetchedStocks, setFetchedStocks] = useState<MaterialStockItem[] | null>(null);
 
   useEffect(() => {
@@ -1570,26 +1514,8 @@ export function ProgressTrackingModalContent({
     setUnplannedRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   }
 
-  // A name picked from the estimate fills in its unit and unit cost, when
-  // they're still blank.
-  function renameUnplanned(row: UnplannedRow, name: string) {
-    const matches = suggestions.filter(
-      (price) => price.name.trim().toLowerCase() === name.trim().toLowerCase()
-    );
-    const match =
-      matches.find(
-        (price) => (price.unit ?? "").trim().toLowerCase() === row.unit.trim().toLowerCase()
-      ) ?? matches[0];
-    updateUnplanned(row.id, {
-      name,
-      ...(match && !row.unit.trim() ? { unit: match.unit ?? "" } : {}),
-      ...(match && !row.unitCost.trim() ? { unitCost: toInput(match.unitCost) } : {}),
-    });
-  }
-
   function addUnplanned() {
-    const id = nextUnplannedId.current++;
-    setUnplannedRows((prev) => [...prev, { id, name: "", unit: "", quantity: "", unitCost: "" }]);
+    setStockPickerOpen(true);
   }
 
   const ownEquipmentCostKeys = new Set(plannedEquipmentCosts.map((item) => item.key));
@@ -2133,6 +2059,9 @@ export function ProgressTrackingModalContent({
   ];
 
   const draft = {
+      remarks: remarks.trim(),
+      photos,
+      photoFiles,
       quantityCompletedToday: quantity!,
       costs: {
         labor: costs.labor!,
@@ -2184,13 +2113,18 @@ export function ProgressTrackingModalContent({
         ...subcontractorsWorked.filter(entry => (entry.amount ?? 0) > 0).map(entry => ({workerId: entry.workerId, hours: 0, amount: entry.amount!}))],
   };
   const draftKey = progressLogDraftKey(draft);
-  const [savedDraftKey,setSavedDraftKey] = useState<string | null>(()=>savedToday ? draftKey : null);
+  const [savedDraftKey,setSavedDraftKey] = useState<string | null>(()=>draftKey);
   const savedDraftRef = useRef(savedDraftKey);
   const dirty = draftKey !== savedDraftKey;
+  const hasLogValues = !!draft.remarks || draft.photos.length > 0 || draft.photoFiles.length > 0 || draft.quantityCompletedToday > 0 || Object.values(draft.costs).some(value => value > 0)
+    || [...draft.materialsUsed, ...draft.unplannedMaterials].some(row => row.quantity > 0)
+    || [...draft.equipmentCostsUsed, ...draft.unplannedEquipmentCosts, ...draft.otherCostsUsed, ...draft.unplannedOtherCosts].some(row => row.amount > 0)
+    || draft.attendance.some(row => row.hours > 0 || ("amount" in row && Number(row.amount) > 0));
+  const emptyToday = !editingLog && !hasLogValues;
   const saveInFlight = useRef(false);
 
   async function handleSave() {
-    if (readOnly || pending || saving || saveInFlight.current || !dirty || draftKey===savedDraftRef.current) return;
+    if (readOnly || pending || saving || saveInFlight.current || !dirty || emptyToday || draftKey===savedDraftRef.current) return;
     setError(null);
     if (quantity === null) {
       setError("Quantity completed must be 0 or more.");
@@ -2257,8 +2191,12 @@ export function ProgressTrackingModalContent({
       return;
     }
     if (!result.success) return;
-    savedDraftRef.current = draftKey;
-    setSavedDraftKey(draftKey);
+    const savedPhotos = result.photos ?? photos;
+    setPhotos(savedPhotos);
+    setPhotoFiles([]);
+    const confirmedKey = progressLogDraftKey({ ...draft, photos: savedPhotos, photoFiles: [] });
+    savedDraftRef.current = confirmedKey;
+    setSavedDraftKey(confirmedKey);
     if (!backgroundSync) router.refresh();
     // Finish the historical correction without closing the progress modal.
     // Returning to today's form also avoids reusing the old audit version
@@ -2272,46 +2210,45 @@ export function ProgressTrackingModalContent({
   return (
     // Equipment records use one scrolling column; editing keeps the
     // form and history side by side on wide screens.
-    <div data-progress-summary-collapsed={readOnly ? undefined : summaryCollapsed && !incidentOpen ? "true" : "false"} data-progress-summary-animated={!readOnly && summaryHasToggled ? "true" : undefined} className={[
+    <div data-progress-summary-collapsed={readOnly ? undefined : summaryCollapsed ? "true" : "false"} data-progress-summary-animated={!readOnly && summaryHasToggled ? "true" : undefined} className={[
       "compact-text relative h-full overflow-y-auto",
       !readOnly && "lg:grid lg:overflow-hidden",
-      !readOnly && (summaryCollapsed && !incidentOpen
+      !readOnly && (summaryCollapsed
         ? "lg:grid-cols-1"
         : "lg:grid-cols-[minmax(0,1fr)_28rem]"),
     ].filter(Boolean).join(" ")}>
       {/* Reflects saved progress — updates after the log is saved, not live while typing. */}
       {savedStanding.scheduleStatus && (
         <ModalHeaderAddon>
-          {!incidentOpen && (
           <span
             className={`rounded px-2 py-0.5 text-xs font-semibold ${SCHEDULE_STATUS_STYLE[savedStanding.scheduleStatus]}`}
           >
             {SCHEDULE_STATUS_LABEL[savedStanding.scheduleStatus]}
           </span>
-          )}
         </ModalHeaderAddon>
       )}
       {!readOnly && (
         <ModalHeaderActions>
+          {projectId && incidentContext && <button type="button" onClick={()=>setIncidentsOpen(true)} aria-label="View task incidents" className="mr-2 inline-flex items-center gap-1.5 rounded border border-amber-200 bg-amber-50/60 px-2.5 py-1.5 text-xs font-medium text-amber-900"><Flag className="size-4 text-amber-700"/>Incidents</button>}
           <button
             type="button"
-            aria-expanded={incidentOpen ? undefined : !summaryCollapsed}
-            aria-controls={incidentOpen ? undefined : "progress-summary-panel"}
-            aria-label={incidentOpen ? "Close" : summaryCollapsed ? "Show Planned, Actual, and Log history" : "Hide Planned, Actual, and Log history"}
-            onClick={incidentOpen ? onClose : () => {
+            aria-expanded={!summaryCollapsed}
+            aria-controls="progress-summary-panel"
+            aria-label={summaryCollapsed ? "Show Planned, Actual, and Log history" : "Hide Planned, Actual, and Log history"}
+            onClick={() => {
               setSummaryHasToggled(true);
               setSummaryCollapsed(!summaryCollapsed);
               onSummaryCollapsedChange?.(!summaryCollapsed);
             }}
-            className="cursor-pointer rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-600"
+            className="cursor-pointer rounded p-1 text-zinc-400 transition hover:text-zinc-600"
           >
-            {incidentOpen ? <X aria-hidden className="size-5" /> : <PanelRight aria-hidden className="size-5" />}
+            <PanelRight aria-hidden className="size-5" />
           </button>
         </ModalHeaderActions>
       )}
 
       {!readOnly && (
-        <div className={`flex min-w-0 flex-col divide-y divide-zinc-200 lg:overflow-y-auto ${editingLog ? "outline outline-1 -outline-offset-1 outline-zinc-900" : ""}`}>
+        <div className={`flex min-w-0 flex-col divide-y divide-zinc-200 lg:overflow-y-auto ${editingLog ? "outline-dashed outline-1 -outline-offset-1 outline-zinc-900" : ""}`}>
           {/* Today's own record — an override of today. Each field's figure
               is the total with today over planned, live. */}
           <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
@@ -2368,7 +2305,7 @@ export function ProgressTrackingModalContent({
                     <div
                       id="progress-labor"
                       title="Hourly worker costs plus subcontractors' daily amounts, from Labor costs below."
-                      className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums"
+                      className="flex cursor-default items-center justify-between gap-2 rounded-md border border-zinc-200 bg-zinc-100/70 px-3 py-2 text-sm tabular-nums"
                     >
                       <span className="flex items-center gap-1.5">
                         <span className="text-zinc-400">₱</span>
@@ -2393,7 +2330,7 @@ export function ProgressTrackingModalContent({
                     <div
                       id="progress-equipment"
                       title="Sum of today's itemized equipment costs — from Equipment costs below."
-                      className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums"
+                      className="flex cursor-default items-center justify-between gap-2 rounded-md border border-zinc-200 bg-zinc-100/70 px-3 py-2 text-sm tabular-nums"
                     >
                       <span className="flex items-center gap-1.5">
                         <span className="text-zinc-400">₱</span>
@@ -2418,7 +2355,7 @@ export function ProgressTrackingModalContent({
                     <div
                       id="progress-other"
                       title="Sum of today's itemized other costs — from Other costs below."
-                      className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm tabular-nums"
+                      className="flex cursor-default items-center justify-between gap-2 rounded-md border border-zinc-200 bg-zinc-100/70 px-3 py-2 text-sm tabular-nums"
                     >
                       <span className="flex items-center gap-1.5">
                         <span className="text-zinc-400">₱</span>
@@ -2495,495 +2432,130 @@ export function ProgressTrackingModalContent({
           </div>
         )}
 
-        {/* Equipment costs today: assigned equipment cost items from the
-            task/phase's Equipment Cost Breakdown, plus any extra equipment
-            cost rows added on the spot (rental, maintenance, repair, fuel,
-            etc.) — their sum reflects on Today's log Equipment cost field. */}
-        <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <h3 className="text-base font-semibold text-zinc-900">Equipment costs</h3>
-            <span className="text-base font-semibold text-zinc-900 tabular-nums">
-              Equipment {formatPeso(costs.equipment ?? 0)}
-            </span>
-          </div>
-
-          {hasItemizedEquipmentCosts || unplannedEquipmentRows.length > 0 ? (
-            <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
-              {hasItemizedEquipmentCosts && (
-                <>
-                  <div
-                    className={`${OTHER_COST_COLUMNS} border-b border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
-                  >
-                    <span>Equipment cost</span>
-                    <span>Amount</span>
-                  </div>
-                  <ul className="divide-y divide-zinc-100">
-                    {plannedEquipmentCosts.map((item, index) => {
-                      if (item.plannedAmount <= 0) return null;
-                      const spent = breakdown.equipmentCostSpendToDate[item.key] ?? 0;
-                      const overPlan = spent > item.plannedAmount + 0.005;
-                      const id = `progress-equipment-cost-${index}`;
-                      return (
-                        <li key={item.key} className={`${OTHER_COST_COLUMNS} py-2.5 text-sm`}>
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span
-                              aria-hidden
-                              className="flex size-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500"
-                            >
-                              <Wrench className="size-3.5" />
-                            </span>
-                            <div className="min-w-0">
-                              <label
-                                htmlFor={id}
-                                title={item.name}
-                                className="block truncate text-zinc-900"
-                              >
-                                {item.name}
-                              </label>
-                              <p
-                                className={`truncate text-xs tabular-nums ${
-                                  overPlan ? "font-semibold text-red-600" : "text-zinc-500"
-                                }`}
-                              >
-                                {formatPeso(spent)} / {formatPeso(item.plannedAmount)} planned
-                              </p>
-                            </div>
-                          </div>
-                          <AmountInput
-                            id={id}
-                            value={equipmentCostInputs[item.key] ?? ""}
-                            onChange={(value) =>
-                              setEquipmentCostInputs((prev) => ({ ...prev, [item.key]: value }))
-                            }
-                            prefix="₱"
-                            compact
-                          />
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
-              )}
-
-              {unplannedEquipmentRows.length > 0 && (
-                <>
-                  <div
-                    className={`${UNPLANNED_OTHER_COLUMNS} ${
-                      hasItemizedEquipmentCosts ? "border-y" : "border-b"
-                    } border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
-                  >
-                    <span>{hasItemizedEquipmentCosts ? "Unplanned" : "Equipment cost"}</span>
-                    <span>Amount</span>
-                    <span className="sr-only">Remove</span>
-                  </div>
-                  <ul className="divide-y divide-zinc-100">
-                    {unplannedEquipmentRows.map((row) => (
-                      <li key={row.id} className={`${UNPLANNED_OTHER_COLUMNS} py-2.5 text-sm`}>
-                        <SuggestionInput
-                          suggestions={equipmentSuggestions.map(item => item.name)}
-                          value={row.name}
-                          onValueChange={value => renameUnplannedEquipment(row, value)}
-                          autoComplete="off"
-                          placeholder="e.g., Rental, Maintenance, Repair"
-                          aria-label="Equipment cost description"
-                          className={CELL_INPUT}
-                        />
-                        <AmountInput
-                          id={`progress-unplanned-equipment-${row.id}`}
-                          value={row.amount}
-                          onChange={(value) => updateUnplannedEquipment(row.id, { amount: value })}
-                          prefix="₱"
-                          compact
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setUnplannedEquipmentRows((prev) =>
-                              prev.filter((other) => other.id !== row.id)
-                            )
-                          }
-                          aria-label={`Remove ${row.name || "this equipment cost"}`}
-                          title="Remove"
-                          className="flex cursor-pointer items-center justify-center rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                        >
-                          <X className="size-4" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-          ) : null}
-
-
-
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <button
-              type="button"
-              onClick={addUnplannedEquipment}
-              className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-            >
-              <Plus className="size-4" />
-              Add
-            </button>
-            {plannedCosts.equipment > 0 && (
-              <p
-                className={`text-xs tabular-nums ${
-                  breakdown.costsToDate.equipment > plannedCosts.equipment + 0.005
-                    ? "font-semibold text-red-600"
-                    : "text-zinc-500"
-                }`}
-              >
-                {formatPeso(breakdown.costsToDate.equipment)} / {formatPeso(plannedCosts.equipment)} planned
-              </p>
-            )}
-          </div>
-        </section>
-
-        {/* Materials used today: each
-            line's cost is what's used of it × its unit cost from the
-            Material Breakdown, and the day's material cost is their total. */}
-        {(
           <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <h3 className="text-base font-semibold text-zinc-900">Materials used</h3>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2"><h3 className="text-base font-semibold text-zinc-900">Equipment costs</h3>
+                <button type="button" onClick={addUnplannedEquipment} aria-label="Add equipment cost" title="Add equipment cost" className={RESOURCE_ADD}><Plus className="size-4" /></button></div>
+            {plannedCosts.equipment > 0 && <p className={`text-right text-xs tabular-nums ${breakdown.costsToDate.equipment > plannedCosts.equipment + 0.005 ? "font-semibold text-red-600" : "text-zinc-500"}`}>
+              {formatPeso(breakdown.costsToDate.equipment)} / {formatPeso(plannedCosts.equipment)} planned
+            </p>}
             </div>
-            {retainedMaterials.length>0 && <div className="space-y-1 text-xs text-zinc-500"><p>Previously logged materials no longer in the plan are retained:</p>{retainedMaterials.map((row,index)=><p key={index}>{row.name} · {formatQuantity(row.quantity)} {row.unit}</p>)}</div>}
+            {hasItemizedEquipmentCosts && <ul className="space-y-4">
+              {plannedEquipmentCosts.map((item, index) => {
+                if (item.plannedAmount <= 0) return null;
+                const spent = breakdown.equipmentCostSpendToDate[item.key] ?? 0;
+                const overPlan = spent > item.plannedAmount + 0.005;
+                return <li key={item.key} className="grid grid-cols-[minmax(0,3fr)_minmax(0,1fr)] items-stretch gap-3">
+                  <ResourceField label="Description"><ResourceDescription name={item.name} detail={<span className={overPlan ? "font-semibold text-red-600" : ""}>{formatPeso(spent)} / {formatPeso(item.plannedAmount)} planned</span>} /></ResourceField>
+                  <ResourceField label="Amount" htmlFor={`progress-equipment-cost-${index}`}><AmountInput id={`progress-equipment-cost-${index}`} value={equipmentCostInputs[item.key] ?? ""}
+                    onChange={value => setEquipmentCostInputs(prev => ({ ...prev, [item.key]: value }))} prefix="₱" compact /></ResourceField>
+                </li>;
+              })}
+            </ul>}
+            {unplannedEquipmentRows.length > 0 && <ul className="space-y-4">{unplannedEquipmentRows.map(row =>
+              <li key={row.id} className="grid grid-cols-[minmax(0,3fr)_minmax(0,1fr)] items-stretch gap-3">
+                <ResourceField label="Description"><div className="relative"><SuggestionInput suggestions={equipmentSuggestions.map(item => item.name)} value={row.name}
+                  onValueChange={value => renameUnplannedEquipment(row, value)} autoComplete="off" placeholder="Equipment cost description" aria-label="Equipment cost description" className={`${CELL_INPUT} pr-9`} /><button type="button" onClick={() => setUnplannedEquipmentRows(prev => prev.filter(other => other.id !== row.id))}
+                  aria-label={`Remove ${row.name || "this equipment cost"}`} title="Remove" className="absolute top-1/2 right-2 -translate-y-1/2 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center p-0 text-zinc-400 transition hover:text-red-600"><X className="block size-4 shrink-0" /></button></div></ResourceField>
+                <ResourceField label="Amount" htmlFor={`progress-unplanned-equipment-${row.id}`}><AmountInput id={`progress-unplanned-equipment-${row.id}`} value={row.amount}
+                  onChange={value => updateUnplannedEquipment(row.id, { amount: value })} prefix="₱" compact /></ResourceField>
 
-            {(hasItemizedMaterials || unplannedRows.length > 0) && (
-            <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
-                {hasItemizedMaterials && (
-                <>
-                <div
-                  className={`${MATERIAL_COLUMNS} border-b border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
-                >
-                  <span>Material</span>
-                  <span>Actual Quantity</span>
-                </div>
-                <ul className="divide-y divide-zinc-100">
-                  {plannedMaterials.map((material, index) => {
-                    // A line without a planned quantity has nothing to count
-                    // or price.
-                    if (material.plannedQuantity <= 0) return null;
-                    const used = breakdown.materialUsageToDate[material.key] ?? 0;
-                    const overPlan = used > material.plannedQuantity + 0.005;
-                    const unitLabel = material.unit ? ` ${material.unit}` : "";
-                    // By position — a material key can contain spaces, which
-                    // an id can't.
-                    const id = `progress-material-${index}`;
-                    return (
-                      <li key={material.key} className={`${MATERIAL_COLUMNS} py-2.5 text-sm`}>
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          {/* Where Who worked today has each person's
-                              avatar — the same size, so both line up. */}
-                          <span
-                            aria-hidden
-                            className="flex size-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500"
-                          >
-                            <Package className="size-3.5" />
-                          </span>
-                          <div className="min-w-0">
-                            <label
-                              htmlFor={id}
-                              title={material.name}
-                              className="block truncate text-zinc-900"
-                            >
-                              {material.name}
-                            </label>
-                            {/* The total with today over planned; red once
-                                it's over the plan. */}
-                            <p
-                              className={`truncate text-xs tabular-nums ${
-                                overPlan ? "font-semibold text-red-600" : "text-zinc-500"
-                              }`}
-                            >
-                              {formatQuantity(used)} / {formatQuantity(material.plannedQuantity)}
-                              {unitLabel} used
-                            </p>
-                          </div>
-                        </div>
-                        <AmountInput
-                          id={id}
-                          value={materialInputs[material.key] ?? ""}
-                          onChange={(value) =>
-                            setMaterialInputs((prev) => ({ ...prev, [material.key]: value }))
-                          }
-                          unit={material.unit}
-                          compact
-                        />
-                      </li>
-                    );
-                  })}
-                </ul>
-                </>
-                )}
+              </li>)}</ul>}
 
-                {/* Materials used that aren't on the task's own lines —
-                    typed, each at its own unit cost; in the day's material
-                    cost, but not its progress. */}
-                {unplannedRows.length > 0 && (
-                  <>
-                    <div
-                      className={`${UNPLANNED_COLUMNS} ${hasItemizedMaterials ? "border-y" : "border-b"} border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
-                    >
-                      <span>{hasItemizedMaterials ? "Unplanned" : "Material"}</span>
-                      <span>Unit</span>
-                      <span>Quantity</span>
-                      <span className="sr-only">Remove</span>
-                    </div>
-                    <ul className="divide-y divide-zinc-100">
-                      {unplannedRows.map((row) => {
-                        return (
-                          <li key={row.id} className={`${UNPLANNED_COLUMNS} py-2.5 text-sm`}>
-                            <div className="flex min-w-0 items-center gap-1.5">
-                              <input
-                                value={row.name}
-                                onChange={(e) => renameUnplanned(row, e.target.value)}
-                                autoComplete="off"
-                                placeholder="e.g., Common nails"
-                                aria-label="Unplanned material"
-                                className={CELL_INPUT}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setStockModalRowId(row.id)}
-                                title="Select material from stock"
-                                aria-label="Select material from stock"
-                                className="flex size-[34px] shrink-0 cursor-pointer items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 transition hover:border-zinc-300 hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none"
-                              >
-                                <ChevronRight className="size-4" />
-                              </button>
-                            </div>
-                            <input
-                              value={row.unit}
-                              onChange={(e) => updateUnplanned(row.id, { unit: e.target.value })}
-                              autoComplete="off"
-                              placeholder="Unit"
-                              aria-label={`${row.name || "Material"} unit`}
-                              className={CELL_INPUT}
-                            />
-                            <AmountInput
-                              id={`progress-unplanned-quantity-${row.id}`}
-                              value={row.quantity}
-                              onChange={(value) => updateUnplanned(row.id, { quantity: value })}
-                              compact
-                            />
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setUnplannedRows((prev) => prev.filter((other) => other.id !== row.id))
-                              }
-                              aria-label={`Remove ${row.name || "this material"}`}
-                              title="Remove"
-                              className="flex size-[34px] cursor-pointer items-center justify-center rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                            >
-                              <X className="size-4" />
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </>
-                )}
+          </section>
+
+          <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
+            <div className="flex items-center gap-2"><h3 className="text-base font-semibold text-zinc-900">Materials used</h3>
+              <button type="button" onClick={addUnplanned} aria-label="Add material" title="Add material" className={RESOURCE_ADD}><Plus className="size-4" /></button></div>
+            {retainedMaterials.length > 0 && <div className="space-y-1 text-xs text-zinc-500"><p>Previously logged materials no longer in the plan are retained:</p>{retainedMaterials.map((row, index) => <p key={index}>{row.name} · {formatQuantity(row.quantity)} {row.unit}</p>)}</div>}
+            {hasItemizedMaterials && <ul className="space-y-4">{plannedMaterials.map((material, index) => {
+              if (material.plannedQuantity <= 0) return null;
+              const used = breakdown.materialUsageToDate[material.key] ?? 0;
+              const overPlan = used > material.plannedQuantity + 0.005;
+              return <li key={material.key} className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] items-stretch gap-3">
+                <ResourceField label="Material"><ResourceDescription name={material.name} detail={<span className={overPlan ? "font-semibold text-red-600" : ""}>
+                  {formatQuantity(used)} / {formatQuantity(material.plannedQuantity)}{material.unit ? ` ${material.unit}` : ""} used
+                </span>} /></ResourceField>
+                <ResourceField label="Quantity" htmlFor={`progress-material-${index}`}><AmountInput id={`progress-material-${index}`} value={materialInputs[material.key] ?? ""}
+                  onChange={value => setMaterialInputs(prev => ({ ...prev, [material.key]: value }))} compact /></ResourceField>
+                <ResourceField label="Unit"><div className={RESOURCE_READONLY}>{material.unit || "—"}</div></ResourceField>
+              </li>;
+            })}</ul>}
+            {unplannedRows.length > 0 && <ul className="space-y-4">{unplannedRows.map(row =>
+              <li key={row.id} className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] items-stretch gap-3">
+                <ResourceField label="Material"><ResourceDescription name={row.name} action={<button type="button" onClick={() => setUnplannedRows(prev => prev.filter(other => other.id !== row.id))} aria-label={`Remove ${row.name || "this material"}`} title="Remove"
+                  className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center p-0 text-zinc-400 transition hover:text-red-600"><X className="block size-4 shrink-0" /></button>} /></ResourceField>
+                <ResourceField label="Quantity" htmlFor={`progress-unplanned-quantity-${row.id}`}><AmountInput id={`progress-unplanned-quantity-${row.id}`} value={row.quantity}
+                  onChange={value => updateUnplanned(row.id, { quantity: value })} compact /></ResourceField>
+                <ResourceField label="Unit"><div className={RESOURCE_READONLY}>{row.unit}</div></ResourceField>
+
+              </li>)}</ul>}
+          </section>
+
+          <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2"><h3 className="text-base font-semibold text-zinc-900">Other costs</h3>
+                <button type="button" onClick={addUnplannedOther} aria-label="Add other cost" title="Add other cost" className={RESOURCE_ADD}><Plus className="size-4" /></button></div>
+            {plannedCosts.other > 0 && <p className={`text-right text-xs tabular-nums ${breakdown.costsToDate.other > plannedCosts.other + 0.005 ? "font-semibold text-red-600" : "text-zinc-500"}`}>
+              {formatPeso(breakdown.costsToDate.other)} / {formatPeso(plannedCosts.other)} planned
+            </p>}
+            </div>
+            {hasItemizedOtherCosts && <ul className="space-y-4">{plannedOtherCosts.map((item, index) => {
+              if (item.plannedAmount <= 0) return null;
+              const spent = breakdown.otherCostSpendToDate[item.key] ?? 0;
+              const overPlan = spent > item.plannedAmount + 0.005;
+              return <li key={item.key} className="grid grid-cols-[minmax(0,3fr)_minmax(0,1fr)] items-stretch gap-3">
+                <ResourceField label="Description"><ResourceDescription name={item.name} detail={<span className={overPlan ? "font-semibold text-red-600" : ""}>{formatPeso(spent)} / {formatPeso(item.plannedAmount)} planned</span>} /></ResourceField>
+                <ResourceField label="Amount" htmlFor={`progress-other-cost-${index}`}><AmountInput id={`progress-other-cost-${index}`} value={otherCostInputs[item.key] ?? ""}
+                  onChange={value => setOtherCostInputs(prev => ({ ...prev, [item.key]: value }))} prefix="₱" compact /></ResourceField>
+              </li>;
+            })}</ul>}
+            {unplannedOtherRows.length > 0 && <ul className="space-y-4">{unplannedOtherRows.map(row =>
+              <li key={row.id} className="grid grid-cols-[minmax(0,3fr)_minmax(0,1fr)] items-stretch gap-3">
+                <ResourceField label="Description"><div className="relative"><SuggestionInput suggestions={otherSuggestions.map(item => item.name)} value={row.name}
+                  onValueChange={value => renameUnplannedOther(row, value)} autoComplete="off" placeholder="Other cost description" aria-label="Other cost name" className={`${CELL_INPUT} pr-9`} /><button type="button" onClick={() => setUnplannedOtherRows(prev => prev.filter(other => other.id !== row.id))}
+                  aria-label={`Remove ${row.name || "this other cost"}`} title="Remove" className="absolute top-1/2 right-2 -translate-y-1/2 inline-flex size-5 shrink-0 cursor-pointer items-center justify-center p-0 text-zinc-400 transition hover:text-red-600"><X className="block size-4 shrink-0" /></button></div></ResourceField>
+                <ResourceField label="Amount" htmlFor={`progress-unplanned-other-${row.id}`}><AmountInput id={`progress-unplanned-other-${row.id}`} value={row.amount}
+                  onChange={value => updateUnplannedOther(row.id, { amount: value })} prefix="₱" compact /></ResourceField>
+
+              </li>)}</ul>}
+
+          </section>
+
+
+          <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
+            <label htmlFor="progress-remarks" className="text-base font-semibold text-zinc-900">Remarks / Site observations</label>
+            <textarea id="progress-remarks" value={remarks} onChange={event => setRemarks(event.target.value)} maxLength={2000} rows={3}
+              autoComplete="off" placeholder="Describe the work completed, site conditions, or why work stopped."
+              className="w-full resize-y rounded border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 outline-none placeholder:text-zinc-400 focus:border-zinc-400" />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-base font-semibold text-zinc-900">Attachments</h3>
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => photoInput.current?.click()} disabled={photos.length + photoFiles.length >= MAX_LOG_PHOTOS} className="inline-flex items-center gap-1 text-xs text-zinc-600 disabled:opacity-40"><Plus className="size-4" /> Add attachments</button>
+                <button type="button" onClick={() => cameraInput.current?.click()} disabled={photos.length + photoFiles.length >= MAX_LOG_PHOTOS} className="text-xs text-zinc-600 disabled:opacity-40">Take photo</button>
               </div>
-              )}
-
-              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-                <button
-                  type="button"
-                  onClick={addUnplanned}
-                  className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-                >
-                  <Plus className="size-4" />
-                  Add
-                </button>
-              </div>
-            </section>
-        )}
-
-        {/* Other costs today: assigned other cost items from the task/phase's
-            Other Cost Breakdown, plus any extra other cost rows added on the
-            spot — their sum reflects on Today's log Other cost field. */}
-        <section className={`flex flex-col gap-4 px-6 py-5 ${nextLogSectionBg()}`}>
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <h3 className="text-base font-semibold text-zinc-900">Other costs</h3>
-            <span className="text-base font-semibold text-zinc-900 tabular-nums">
-              Other {formatPeso(costs.other ?? 0)}
-            </span>
-          </div>
-
-          {hasItemizedOtherCosts || unplannedOtherRows.length > 0 ? (
-            <div className="overflow-hidden rounded-md border border-zinc-200 bg-white">
-              {hasItemizedOtherCosts && (
-                <>
-                  <div
-                    className={`${OTHER_COST_COLUMNS} border-b border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
-                  >
-                    <span>Other cost</span>
-                    <span>Amount</span>
-                  </div>
-                  <ul className="divide-y divide-zinc-100">
-                    {plannedOtherCosts.map((item, index) => {
-                      if (item.plannedAmount <= 0) return null;
-                      const spent = breakdown.otherCostSpendToDate[item.key] ?? 0;
-                      const overPlan = spent > item.plannedAmount + 0.005;
-                      const id = `progress-other-cost-${index}`;
-                      return (
-                        <li key={item.key} className={`${OTHER_COST_COLUMNS} py-2.5 text-sm`}>
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span
-                              aria-hidden
-                              className="flex size-6 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-zinc-500"
-                            >
-                              <Receipt className="size-3.5" />
-                            </span>
-                            <div className="min-w-0">
-                              <label
-                                htmlFor={id}
-                                title={item.name}
-                                className="block truncate text-zinc-900"
-                              >
-                                {item.name}
-                              </label>
-                              <p
-                                className={`truncate text-xs tabular-nums ${
-                                  overPlan ? "font-semibold text-red-600" : "text-zinc-500"
-                                }`}
-                              >
-                                {formatPeso(spent)} / {formatPeso(item.plannedAmount)} planned
-                              </p>
-                            </div>
-                          </div>
-                          <AmountInput
-                            id={id}
-                            value={otherCostInputs[item.key] ?? ""}
-                            onChange={(value) =>
-                              setOtherCostInputs((prev) => ({ ...prev, [item.key]: value }))
-                            }
-                            prefix="₱"
-                            compact
-                          />
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </>
-              )}
-
-              {unplannedOtherRows.length > 0 && (
-                <>
-                  <div
-                    className={`${UNPLANNED_OTHER_COLUMNS} ${
-                      hasItemizedOtherCosts ? "border-y" : "border-b"
-                    } border-zinc-200 bg-zinc-50 py-2 text-xs font-medium text-zinc-500`}
-                  >
-                    <span>{hasItemizedOtherCosts ? "Unplanned" : "Other cost"}</span>
-                    <span>Amount</span>
-                    <span className="sr-only">Remove</span>
-                  </div>
-                  <ul className="divide-y divide-zinc-100">
-                    {unplannedOtherRows.map((row) => (
-                      <li key={row.id} className={`${UNPLANNED_OTHER_COLUMNS} py-2.5 text-sm`}>
-                        <SuggestionInput
-                          suggestions={otherSuggestions.map(item => item.name)}
-                          value={row.name}
-                          onValueChange={value => renameUnplannedOther(row, value)}
-                          autoComplete="off"
-                          placeholder="e.g., Plan revision"
-                          aria-label="Other cost name"
-                          className={CELL_INPUT}
-                        />
-                        <AmountInput
-                          id={`progress-unplanned-other-${row.id}`}
-                          value={row.amount}
-                          onChange={(value) => updateUnplannedOther(row.id, { amount: value })}
-                          prefix="₱"
-                          compact
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setUnplannedOtherRows((prev) =>
-                              prev.filter((other) => other.id !== row.id)
-                            )
-                          }
-                          aria-label={`Remove ${row.name || "this other cost"}`}
-                          title="Remove"
-                          className="flex cursor-pointer items-center justify-center rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
-                        >
-                          <X className="size-4" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
             </div>
-          ) : null}
+            <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" aria-label="Upload log photos" onChange={event => { addPhotos(event.target.files); event.target.value = ""; }} />
+            <input ref={cameraInput} type="file" accept="image/*" capture="environment" className="hidden" aria-label="Take log photo" onChange={event => { addPhotos(event.target.files); event.target.value = ""; }} />
+            {(photos.length > 0 || photoFiles.length > 0) && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {photos.map(photo => <div key={photo.path} className="relative border border-zinc-200 bg-white p-1">
+                <LogPhoto src={progressPhotoUrl(projectId!, photo)} name={photo.name} />
+                <button type="button" aria-label={`Remove photo ${photo.name}`} onClick={() => setPhotos(previous => previous.filter(item => item.path !== photo.path))} className="absolute top-1 right-1 inline-flex size-6 items-center justify-center bg-white text-zinc-500 hover:text-red-600"><X className="size-4" /></button>
+              </div>)}
+              {photoFiles.map((file,index) => <div key={`${file.name}-${index}`} className="relative border border-zinc-200 bg-white p-1">
+                <LocalLogPhoto file={file} />
+                <button type="button" aria-label={`Remove photo ${file.name}`} onClick={() => setPhotoFiles(previous => previous.filter((_,position) => position !== index))} className="absolute top-1 right-1 inline-flex size-6 items-center justify-center bg-white text-zinc-500 hover:text-red-600"><X className="size-4" /></button>
+              </div>)}
+            </div>}
+          </section>
 
 
-
-          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-            <button
-              type="button"
-              onClick={addUnplannedOther}
-              className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900"
-            >
-              <Plus className="size-4" />
-              Add
-            </button>
-            {plannedCosts.other > 0 && (
-              <p
-                className={`text-xs tabular-nums ${
-                  breakdown.costsToDate.other > plannedCosts.other + 0.005
-                    ? "font-semibold text-red-600"
-                    : "text-zinc-500"
-                }`}
-              >
-                {formatPeso(breakdown.costsToDate.other)} / {formatPeso(plannedCosts.other)} planned
-              </p>
-            )}
-          </div>
-        </section>
-
-        {!editingLog && <section className={`${nextLogSectionBg()}`}>
-          <button
-            type="button"
-            aria-expanded={incidentOpen}
-            aria-controls="progress-incident-form"
-            onClick={() => {
-              setReportingIncident((open) => !open);
-              setIncidentsOpen(!incidentOpen);
-            }}
-            className="flex w-full cursor-pointer items-center justify-between gap-3 bg-amber-50/60 px-6 py-5 text-left text-amber-900 transition hover:bg-amber-100"
-          >
-            <span className="flex items-center gap-2">
-              <Flag className="size-4 text-amber-700" />
-              <span className="text-base font-semibold">Incidents</span>
-              {!incidentsLoading && incidents.length > 0 && <span className="text-[11px] font-medium text-zinc-900 tabular-nums">{incidents.length}</span>}
-            </span>
-            <ChevronDown className={`size-4 text-amber-700 transition ${incidentOpen ? "rotate-180" : ""}`} />
-          </button>
-          {incidentsOpen && (incidentsError || incidents.length > 0) && (
-            <div id="today-incidents" className="border-t border-zinc-200 px-6 py-4">
-              {incidentsError ? <p className="text-sm text-red-600">{incidentsError}</p>
-                : <div className="space-y-2">{incidents.map((incident) => (
-                  <button key={incident.id} type="button" onClick={() => setSelectedIncidentId(incident.id)} className="flex w-full cursor-pointer items-center gap-3 rounded-md border border-zinc-200 bg-white px-4 py-3 text-left text-sm transition hover:bg-zinc-50">
-                      <span className="min-w-0 truncate text-zinc-700">{INCIDENT_TYPES[incident.incident_type]}</span>
-                      <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">{INCIDENT_SEVERITIES[incident.severity]}</span>
-                      <ChevronRight className="ml-auto size-4 shrink-0 text-zinc-400" />
-                  </button>
-                ))}</div>}
-            </div>
-          )}
-        </section>}
       </div>
     )}
 
       {/* The right section: Planned and Actual status cards above,
           followed by the override history below. */}
-      <aside id="progress-summary-panel" inert={!readOnly && summaryCollapsed && !incidentOpen} className={`history-text progress-summary ${incidentOpen ? "hidden" : !readOnly && summaryCollapsed ? "hidden lg:flex" : "flex"} flex-col gap-4 px-6 ${readOnly ? "py-5" : "border-t border-zinc-200 py-5 lg:overflow-y-auto lg:border-t-0 lg:border-l"}`}>
+      <aside id="progress-summary-panel" inert={!readOnly && summaryCollapsed} className={`history-text progress-summary ${!readOnly && summaryCollapsed ? "hidden lg:flex" : "flex"} flex-col gap-4 px-6 ${readOnly ? "py-5" : "border-t border-zinc-200 py-5 lg:overflow-y-auto lg:border-t-0 lg:border-l"}`}>
         {/* The plan so far over where the task actually stands — the same
             parts in the same columns, to read one against the other. */}
         <div className="-mx-6 -mt-5 flex flex-col border-b border-zinc-200">
@@ -3022,7 +2594,7 @@ export function ProgressTrackingModalContent({
                     />
                   </span>
                 </span>
-                <span className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-5" : ""}`}>
+                <span className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-3" : ""}`}>
                   <span className="min-w-0">
                     <span className="block truncate text-xs text-zinc-500">Quantity</span>
                     <span className="mt-0.5 block text-sm font-semibold text-zinc-900 tabular-nums">
@@ -3084,7 +2656,7 @@ export function ProgressTrackingModalContent({
                   />
                 </span>
               </span>
-              <span className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-5" : ""}`}>
+              <span className={`mt-4 grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 ${readOnly ? "lg:grid-cols-3" : ""}`}>
                 <span className="min-w-0">
                   <span className="block truncate text-xs text-zinc-500">Quantity</span>
                   <span className="mt-0.5 block text-sm font-semibold text-zinc-900 tabular-nums">
@@ -3114,6 +2686,9 @@ export function ProgressTrackingModalContent({
           <OverrideHistory
             key={`${highlightLatest ? "latest" : "date"}:${highlightEntryDate ?? ""}`}
             logs={history}
+            showProgress
+            estimatedQuantity={estimatedQuantity}
+            progressColor={progressColor}
             loggedDates={progressToday.loggedDates}
             unit={unit}
             highlightLatest={highlightLatest}
@@ -3121,6 +2696,8 @@ export function ProgressTrackingModalContent({
             onDelete={!readOnly && onDeleteOverride ? askToDelete : undefined}
             onEdit={!readOnly && onEditHistory ? log=>onEditHistory(log) : undefined}
             editingLogId={editingLog?.id}
+            saving={pending || saving}
+            savingDate={savingDate ?? workDate}
             projectId={projectId}
             projectName={projectName}
             incidentContext={incidentContext}
@@ -3150,9 +2727,20 @@ export function ProgressTrackingModalContent({
         )}
       </aside>
 
-      {!readOnly && projectId && incidentContext && <IncidentReportPanel projectId={projectId} context={incidentContext} active={incidentOpen} onSubmitted={() => { setReportingIncident(false); setIncidentsLoading(true); setIncidentRefresh((value) => value + 1); setIncidentsOpen(true); }} />}
+      {!readOnly && projectId && incidentContext && <>
+        <Modal open={incidentsOpen || reportingIncident} onClose={()=>{if(reportingIncident){setReportingIncident(false);setIncidentsOpen(true);}else setIncidentsOpen(false);}} title={reportingIncident ? "Report Incident" : "Incidents"} description={reportingIncident ? undefined : incidentContext.name} variant="centered" size="wide" icon={<Flag className="size-5" />}>
+          {reportingIncident ? <IncidentReportPanel embedded projectId={projectId} context={incidentContext} active onClose={()=>{setReportingIncident(false);setIncidentsOpen(true);}} onSubmitted={() => { setReportingIncident(false); setIncidentsOpen(true); setIncidentRefresh(value=>value+1); }} /> : <>
+          <div className="-mx-6 -my-5">
 
-      {projectId && <IncidentDetailModal projectId={projectId} id={selectedIncidentId} result={selectedIncidentId === null ? null : (() => { const incident = incidents.find(item => item.id === selectedIncidentId); return incident ? { incident, evidence: incident.attachments.map(file => ({ ...file, url: file.url ?? null })) } : null; })()} onClose={() => setSelectedIncidentId(null)} onDeleted={() => { setIncidents(current => current.filter(item => item.id !== selectedIncidentId)); setSelectedIncidentId(null); setIncidentsLoading(true); setIncidentRefresh((value) => value + 1); }} />}
+            {incidentsError && <p role="alert" className="px-6 py-5 text-sm text-red-600">{incidentsError}</p>}
+            <div className="max-h-[45dvh] overflow-y-auto"><table className="w-full text-left text-sm"><thead className="bg-zinc-50 text-xs text-zinc-500"><tr>{["Date","Incident Type","Reported Date and Time","Reported By","Status"].map(title=><th key={title} className="px-6 py-3 font-medium">{title}</th>)}</tr></thead><tbody>{incidents.map(incident=><tr key={incident.id} onClick={()=>{setIncidentsOpen(false);setSelectedIncidentId(incident.id);}} className="cursor-pointer border-t border-zinc-200 hover:bg-zinc-50"><td className="px-6 py-3 text-zinc-500">{formatDay(incident.occurred_on)}</td><td className="px-6 py-3"><button type="button" onClick={()=>{setIncidentsOpen(false);setSelectedIncidentId(incident.id);}} className="text-left">{incidentTitle(incident)}</button></td><td className="whitespace-nowrap px-6 py-3 text-zinc-500">{incidentReportedDate(incident.created_at)}</td><td className="px-6 py-3 text-zinc-600">{incident.reporter_name || "Project member"}</td><td className="px-3 py-2.5"><span className={`rounded px-2 py-0.5 text-xs ${incident.closeout ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>{incidentStatus(incident)}</span></td></tr>)}{!incidents.length && !incidentsError && <tr><td colSpan={5} className="px-6 py-8 text-center text-sm text-zinc-400">No incidents reported for this task.</td></tr>}</tbody></table></div>
+          </div>
+          <ModalFooter><button type="button" onClick={()=>{setIncidentsOpen(false);setReportingIncident(true);}} className="rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white">Report Incident</button><button type="button" onClick={()=>setIncidentsOpen(false)} className="rounded border border-zinc-200 px-4 py-2 text-sm">Close</button></ModalFooter>
+        </>}
+        </Modal>
+      </>}
+
+      {projectId && <IncidentDetailModal projectId={projectId} projectName={projectName} id={selectedIncidentId} onUpdated={updated => { setIncidents(current => current.map(item => item.id === updated.id ? updated : item)); if (incidentContext) incidentCache?.replaceTaskIncidents(incidentContext, incidents.map(item => item.id === updated.id ? updated : item)); }} result={selectedIncidentId === null ? null : (() => { const incident = incidents.find(item => item.id === selectedIncidentId); return incident ? { incident, evidence: incident.attachments.map(file => ({ ...file, url: file.url ?? null })) } : null; })()} onClose={() => {setSelectedIncidentId(null);setIncidentsOpen(true);}} onDeleted={() => { setIncidents(current => current.filter(item => item.id !== selectedIncidentId)); setSelectedIncidentId(null); setIncidentRefresh((value) => value + 1); }} />}
 
       {/* Asks before deleting an override (admins only) — a centered
           dialog of its own, above this one. */}
@@ -3175,52 +2763,33 @@ export function ProgressTrackingModalContent({
       {/* Material Stock Selection Modal */}
       {!readOnly && (
         <MaterialStockPickerModal
-          open={stockModalRowId !== null}
-          stocks={unassignedStocks}
-          selectedMaterialName={
-            stockModalRowId !== null
-              ? unplannedRows.find((r) => r.id === stockModalRowId)?.name
-              : undefined
-          }
+          open={stockPickerOpen}
+          stocks={unassignedStocks.filter(stock => stock.balance > 0 && !unplannedRows.some(row => materialKey(row.name, row.unit) === materialKey(stock.name, stock.unit)))}
           title="Select material from stock"
           description="Choose a material from current inventory stocks to record its usage today."
           variant="centered"
           onSelect={(stock) => {
-            if (stockModalRowId !== null) {
-              const row = unplannedRows.find((r) => r.id === stockModalRowId);
-              const matches = suggestions.filter(
-                (price) => price.name.trim().toLowerCase() === stock.name.trim().toLowerCase()
-              );
-              const match =
-                matches.find(
-                  (price) =>
-                    (price.unit ?? "").trim().toLowerCase() ===
-                    (stock.unit || row?.unit || "").trim().toLowerCase()
-                ) ?? matches[0];
-
-              updateUnplanned(stockModalRowId, {
-                name: stock.name,
-                unit: stock.unit || row?.unit || "",
-                ...(match && (!row?.unitCost.trim() || row.unitCost === "0")
-                  ? { unitCost: toInput(match.unitCost) }
-                  : {}),
-              });
-              setStockModalRowId(null);
-            }
+            if (stock.balance <= 0) return;
+            const id = nextUnplannedId.current++;
+            const match = suggestions.find(price => materialKey(price.name, price.unit) === materialKey(stock.name, stock.unit));
+            setUnplannedRows(prev => prev.some(row => materialKey(row.name, row.unit) === materialKey(stock.name, stock.unit))
+              ? prev
+              : [...prev, { id, name: stock.name, unit: stock.unit, quantity: "", unitCost: match ? toInput(match.unitCost) : "" }]);
+            setStockPickerOpen(false);
           }}
-          onClose={() => setStockModalRowId(null)}
+          onClose={() => setStockPickerOpen(false)}
         />
       )}
 
       {/* Along the window's bottom edge, however long it gets. */}
-      {!readOnly && !incidentOpen && <ModalFooter>
+      {!readOnly && <ModalFooter>
         {error ? (
           <p role="alert" className="mr-auto text-sm text-red-600">
             {error}
           </p>
-        ) : (
-          <p className="mr-auto text-xs text-zinc-500">{editingLog ? `Changes apply to the ${formatDay(editingLog.entryDate)} log only. Previous versions remain in history.` : "Changes apply to today's log only."}</p>
-        )}
+        ) : editingLog ? (
+          <p className="mr-auto text-xs text-zinc-500">{`Changes apply to the ${formatDay(editingLog.entryDate)} log only. Previous versions remain in history.`}</p>
+        ) : <span className="mr-auto" aria-hidden />}
         <button
           type="button"
           onClick={onClose}
@@ -3231,9 +2800,9 @@ export function ProgressTrackingModalContent({
         <button
           type="button"
           onClick={handleSave}
-          disabled={pending || saving || !dirty}
+          disabled={pending || saving || !dirty || emptyToday}
           aria-busy={pending || saving}
-          title={!dirty ? "No changes to save" : undefined}
+          title={emptyToday ? "Enter an accomplishment, usage or cost before saving" : !dirty ? "No changes to save" : undefined}
           className="flex cursor-pointer items-center gap-1.5 rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {pending || saving ? <Loader2 aria-hidden className="size-4 animate-spin" /> : <Check aria-hidden className="size-4" />}
@@ -3242,4 +2811,26 @@ export function ProgressTrackingModalContent({
       </ModalFooter>}
     </div>
   );
+}
+
+
+function LogPhoto({src,name}: {src:string;name:string}) {
+  return <AttachmentLink url={src} name={name} type="image/jpeg" className="block w-full min-w-0">
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img src={src} alt={name} className="h-28 w-full object-cover" />
+    <span className="block truncate pt-1 text-xs text-zinc-500">{name}</span>
+  </AttachmentLink>;
+}
+function LocalLogPhoto({file}: {file:File}) {
+  const image = useRef<HTMLImageElement>(null);
+  useEffect(() => {
+    const src = URL.createObjectURL(file);
+    if (image.current) image.current.src = src;
+    return () => URL.revokeObjectURL(src);
+  }, [file]);
+  return <AttachmentLink url="" name={file.name} file={file} className="block w-full min-w-0">
+    {/* eslint-disable-next-line @next/next/no-img-element */}
+    <img ref={image} alt={file.name} className="h-28 w-full object-cover" />
+    <span className="block truncate pt-1 text-xs text-zinc-500">{file.name}</span>
+  </AttachmentLink>;
 }

@@ -17,7 +17,7 @@ export function dayEntry(log: OverrideLog): ProgressDayEntry {
   }
   const spend = (rows: { name: string; amount: number; unplanned?: boolean }[] = []) => Object.fromEntries(
     rows.filter(row => !row.unplanned).map(row => [otherCostKey(row.name), row.amount]));
-  return { quantityCompleted: log.quantityCompleted, costs: log.costs, materialUsage,
+  return { remarks: log.remarks, photos: log.photos, quantityCompleted: log.quantityCompleted, costs: log.costs, materialUsage,
     // Unit costs identify the unplanned lines in override history.
     unplannedMaterials: log.materialsUsed.filter(row => row.unitCost != null).map(row => ({ ...row, unitCost: row.unitCost! })),
     equipmentCostSpend: spend(log.equipmentCosts), otherCostSpend: spend(log.otherCosts),

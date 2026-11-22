@@ -18,6 +18,7 @@ import {
 import { listTaskProgressToday } from "@/lib/task-progress/data";
 import { listCategoryProgressToday } from "@/lib/category-progress/data";
 import { listProjectOverrideHistory } from "@/lib/progress-logs/actions";
+import { listProjectIncidents } from "@/lib/incidents/data";
 import { listProjectEvents } from "@/lib/project-events/data";
 import { listSheets } from "@/lib/sheets/actions";
 import {
@@ -106,6 +107,7 @@ async function ProjectDetailContent({
     sheetsResult,
     equipmentTrackingResult,
     materialPurchases,
+    incidentRecords,
   ] = await Promise.all([
     listAccountsByRole(["project_manager"]),
     listAccountsByRole(["foreman"]),
@@ -132,6 +134,7 @@ async function ProjectDetailContent({
     listSheets(projectId),
     loadEquipmentTracking(projectId),
     listMaterialPurchases(projectId),
+    listProjectIncidents(projectId),
   ]);
 
   // Every material the project has, each once: planned, used, in stock.
@@ -307,6 +310,7 @@ async function ProjectDetailContent({
       taskProgressToday={taskProgressToday}
       categoryProgressToday={categoryProgressToday}
       overrideHistory={overrideHistory}
+      incidentRecords={incidentRecords}
       events={events}
       sheetsResult={sheetsResult}
       equipmentTracking={equipmentTrackingResult.data ?? null}

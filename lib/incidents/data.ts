@@ -22,7 +22,7 @@ export async function listProjectIncidents(
       (data ?? []).map(async row => {
         const attachments = (Array.isArray(row.attachments) ? row.attachments : []) as IncidentAttachment[];
         const resolved = await Promise.all(
-          attachments.map(async attachment => {
+          [...attachments, ...(row.closeout?.attachments ?? [])].map(async attachment => {
             if (!attachment.path?.startsWith(`${projectId}/`)) return { ...attachment, url: null };
             const { data: signed } = await client.storage
               .from("incident-evidence")
@@ -30,7 +30,7 @@ export async function listProjectIncidents(
             return { ...attachment, url: signed?.signedUrl ?? null };
           })
         );
-        return { ...row, attachments: resolved } as Incident;
+        return { ...row, attachments: resolved.slice(0, attachments.length), ...(row.closeout ? {closeout: {...row.closeout, attachments: resolved.slice(attachments.length)}} : {}) } as Incident;
       })
     );
 

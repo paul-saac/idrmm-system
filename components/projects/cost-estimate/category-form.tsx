@@ -4,7 +4,7 @@ import { RequiredMark } from "@/components/ui/required-mark";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useActionState, useEffect, useId, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Trash2 } from "lucide-react";
+import { Check, Trash2, Loader2 } from "lucide-react";
 import { ModalFooter } from "@/components/ui/modal";
 import {
   createCategory,
@@ -267,7 +267,7 @@ export function CategoryForm({
               className="flex cursor-pointer items-center gap-1.5 rounded border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Trash2 className="size-3.5" />
-              {deletePending ? "Deleting..." : "Delete"}
+              {deletePending ? <span className="inline-flex items-center gap-2"><Loader2 aria-hidden className="size-4 animate-spin" />Deleting...</span> : "Delete"}
             </button>
           </form>
         )}

@@ -1,6 +1,6 @@
 import { activeOfflineOwner, localAll, localGet, localPut, localDelete, draftKey, manilaDate,
   offlineEntryState, queueOfflineLog, synchronizeOfflineLogs, subscribeOffline, prepareOfflineProject,
-  lockOfflineWorkspace } from "/offline/storage.js";
+  lockOfflineWorkspace, queueOfflineIncident } from "/offline/storage.js";
 
 const $ = id => document.getElementById(id);
 const blank = () => ({ quantityCompletedToday: 0, costs: { labor: 0, material: 0, equipment: 0, other: 0 }, attendance: [], materialsUsed: [], unplannedMaterials: [], equipmentCostsUsed: [], unplannedEquipmentCosts: [], otherCostsUsed: [], unplannedOtherCosts: [] });
@@ -346,7 +346,6 @@ async function selectProject(key, itemKey, date, overrideInput, reviewing) {
   project = await localGet("projects", key);
   if (!project) return;
   $("editor").hidden = !project.items.length;
-  $("project-title").textContent = project.name;
   $("downloaded").textContent = `Downloaded ${new Date(project.preparedAt).toLocaleString("en-PH")}`;
   $("task").replaceChildren(...project.items.map(row => element("option", { value: row.key }, row.phase ? `${row.name} · ${row.phase}` : row.name)));
   if (itemKey) $("task").value = itemKey;
@@ -432,7 +431,13 @@ $("log-form").addEventListener("submit", async event => {
   } catch (error) { notice(error.message); $("save").disabled = false; }
 });
 $("sync").addEventListener("click", async () => { $("sync").disabled = true; await synchronizeOfflineLogs(true); $("sync").disabled = false; await refreshEntries(); });
-function connectivity() { $("connection").textContent = navigator.onLine === false ? "Offline · saved on this device" : "Connected · synchronization available"; }
+function connectivity() {
+  const offline = navigator.onLine === false;
+  $("connection").replaceChildren(
+    element("span", { className: offline ? "connection-offline" : "connection-online" }, offline ? "Offline" : "Connected"),
+    element("small", {}, offline ? "Saved on this device" : "Synchronization available")
+  );
+}
 window.addEventListener("online", () => { connectivity(); void synchronizeOfflineLogs(true); });
 window.addEventListener("offline", connectivity);
 window.addEventListener("focus", () => void synchronizeOfflineLogs());
@@ -482,3 +487,91 @@ async function boot() {
 }
 boot().catch(() => notice("This browser could not open offline storage. Use a regular browser window with site storage enabled."));
 setInterval(() => void synchronizeOfflineLogs(), 15000);
+
+$("report-incident").addEventListener("click", async () => {
+  if (!project || !item) return;
+  const savedProject=project, savedItem=item;
+  const key=`incident-draft:${project.ownerId}:${project.projectId}:${item.key}`;
+  const previous=await localGet("settings",key);
+  const dialog=element("dialog",{className:"workforce-picker offline-incident","aria-label":"Report incident"});
+  const heading=element("div",{className:"workforce-heading"});
+  const icon=element("span",{className:"incident-heading-icon","aria-hidden":"true"});icon.innerHTML='<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 22V3m0 1c5-4 11 4 16 0v11c-5 4-11-4-16 0"/></svg>';
+  heading.append(icon,element("h2",{},"Report Incident"));
+  const close=()=>{dialog.close();dialog.remove();};
+  function crossButton(label, action) {
+    const button=element("button",{type:"button",className:"remove","aria-label":label,onclick:action});
+    button.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18"/></svg>';
+    return button;
+  }
+  heading.append(crossButton("Close",close));
+  const form=element("form",{autocomplete:"off"});
+  const content=element("div",{className:"incident-fields"});
+  const addField=(label,name,type="text",required=false)=>{const labelNode=field(label,"",name,{type,required});content.append(labelNode);return labelNode.querySelector("input");};
+  const peopleHeading=element("h3",{},"Persons involved");content.append(peopleHeading);
+  const people=element("div");content.append(people);
+  function addPerson(person={}) {const row=element("div",{className:"incident-person"});for(const [label,name]of [["Name","name"],["Role","role"],["Contact information","contact"]])row.append(field(label,person[name]??"",`person-${name}`));row.append(crossButton("Remove person involved",()=>row.remove()));people.append(row);}
+  (previous?.people?.length?previous.people:[{}]).forEach(addPerson);
+  peopleHeading.append(element("button",{type:"button",className:"section-add","aria-label":"Add person involved",onclick:()=>{if(people.children.length<10)addPerson();}},"+"));
+  content.append(element("h3",{},"Incident details"));
+  const date=addField("Date *","occurredOn","date",true);date.value=manilaDate();date.max=manilaDate();
+  const time=addField("Time *","occurredTime","text",true);time.placeholder="hh:mm";time.pattern="(0?[1-9]|1[0-2]):[0-5][0-9]";time.maxLength=5;
+  const periods=element("span",{className:"incident-period"});
+  for(const value of ["AM","PM"]){const choice=element("label",{className:"incident-choice"});choice.append(element("input",{type:"checkbox",name:"period",value,checked:value==="AM",onchange:event=>{for(const input of periods.querySelectorAll("input"))input.checked=input===event.target;event.target.checked=true;}}),document.createTextNode(value));periods.append(choice);}time.parentNode.append(periods);
+  addField("Location","location");
+  const kinds=element("fieldset");kinds.append(element("legend",{},"Type of incident *"));
+  for(const [value,label]of Object.entries({injury:"Worker injury",equipment_damage:"Equipment incident",fall_slip:"Fall / slip",property_damage:"Property / material damage",excavation:"Excavation / trenching",fire:"Fire / explosion",vehicle:"Vehicle incident",hazardous_exposure:"Hazardous substance exposure",near_miss:"Near miss",other:"Other"})) {const choice=element("label",{className:"incident-choice"});choice.append(element("input",{type:"checkbox",name:"incidentKind",value}),document.createTextNode(label));kinds.append(choice);}content.append(kinds);
+  const other=addField("Other incident type *","otherType");other.parentNode.hidden=true;
+  kinds.addEventListener("change",()=>{other.parentNode.hidden=!kinds.querySelector('[value=other]').checked;other.required=!other.parentNode.hidden;});
+  const describe=element("label",{},"Describe the incident *");describe.append(element("textarea",{name:"description",rows:1,required:true,maxLength:5000}));content.append(describe);
+  content.append(element("h3",{},"Injuries and medical attention"));
+  function yesNo(label,name){const group=element("fieldset");group.append(element("legend",{},label));for(const [value,text]of [["yes","Yes"],["no","No"]]){const choice=element("label",{className:"incident-choice"});choice.append(element("input",{type:"radio",name,value,required:true}),document.createTextNode(text));group.append(choice);}content.append(group);}
+  yesNo("Was anyone injured? *","injured");
+  const injuryLabel=element("label",{},"Describe the injury");const injury=element("textarea",{name:"injuryDescription",rows:1,maxLength:2000});injuryLabel.append(injury);content.append(injuryLabel);
+  yesNo("Was first aid administered? *","firstAid");yesNo("Was EMS / hospital transport required? *","hospitalTransport");
+  addField("First responder / medical provider","medicalProvider");
+  const attachments=addField("Attachments","attachments","file");attachments.multiple=true;attachments.accept="image/jpeg,image/png,application/pdf";
+  const attachmentLabel=attachments.parentNode;attachmentLabel.replaceChildren();
+  const attachmentHeading=element("h3",{},"Attachments");attachmentLabel.append(attachmentHeading,attachments);attachments.hidden=true;
+  const fileNames=element("div",{className:"incident-files"});
+  attachmentLabel.append(element("button",{type:"button",className:"incident-upload",onclick:()=>attachments.click()},"? Add attachments"),fileNames);
+  attachments.addEventListener("change",()=>{fileNames.replaceChildren();for(const file of attachments.files)fileNames.append(element("p",{},file.name));});
+  const error=element("p",{className:"error",role:"alert"});
+  // Edge-to-edge sections follow the online incident form.
+  const nodes=[...content.children];content.replaceChildren();let block;
+  for(const node of nodes){if(node.tagName==="H3"||node===attachmentLabel){block=element("section",{className:"incident-section"});content.append(block);}block.append(node);}
+  const detailSection=content.children[1];const dateTime=element("div",{className:"incident-two-cols"});dateTime.append(date.parentNode,time.parentNode);detailSection.insertBefore(dateTime,detailSection.children[1]);
+  const medical=content.children[2];const medicalQuestions=element("div",{className:"incident-two-cols"});const groups=medical.querySelectorAll("fieldset");medicalQuestions.append(groups[1],groups[2]);medical.insertBefore(medicalQuestions,medical.lastElementChild);
+  content.append(error);
+  for(const control of content.querySelectorAll("textarea"))control.addEventListener("input",()=>{control.style.height="auto";control.style.height=`${control.scrollHeight}px`;});
+  for(const label of content.querySelectorAll("label,legend")){const first=label.firstChild;if(first?.nodeType===Node.TEXT_NODE&&first.textContent.includes("*")){const text=first.textContent;first.textContent=text.replace("*","");const mark=element("span",{className:"required-mark","aria-hidden":"true"},"*");first.after(mark);}}
+
+  const footer=element("div",{className:"form-footer"});const submit=element("button",{type:"submit",className:"primary"},"Submit incident");footer.append(element("button",{type:"button",onclick:close},"Cancel"),submit);
+  form.append(content,footer);dialog.append(heading,form);document.body.append(dialog);
+  if(previous?.values)for(const control of form.elements){if(!control.name||control.type==="file")continue;const value=previous.values[control.name];if(control.type==="checkbox"||control.type==="radio")control.checked=Array.isArray(value)&&value.includes(control.value);else if(value!==undefined)control.value=value;}
+  other.parentNode.hidden=!kinds.querySelector('[value=other]').checked;other.required=!other.parentNode.hidden;
+  function capture(){const data=new FormData(form),values={};for(const control of form.elements){if(!control.name||control.type==="file"||control.name.startsWith("person-"))continue;values[control.name]=control.type==="radio"||control.type==="checkbox"?data.getAll(control.name):control.value;}return {id:key,values,people:[...people.children].map(row=>Object.fromEntries([...row.querySelectorAll("input")].map(input=>[input.name.slice(7),input.value]))) };}
+  const timeTitle=element("span",{className:"incident-time-label"});
+  for(const node of [...time.parentNode.childNodes])if(node.nodeType===Node.TEXT_NODE||node.classList?.contains("required-mark"))timeTitle.append(node);
+  time.parentNode.prepend(timeTitle);
+  let draftWrites=Promise.resolve();
+  form.addEventListener("input",()=>{const draft=capture();draftWrites=draftWrites.then(()=>localPut("settings",draft)).catch(()=>{error.textContent="Could not save the draft on this device.";});});
+  form.addEventListener("submit",async event=>{event.preventDefault();if(submit.disabled)return;error.textContent="";const data=new FormData(form),selected=data.getAll("incidentKind");other.required=selected.includes("other");injury.required=data.get("injured")==="yes";
+    if(!selected.length){error.textContent="Select an incident type.";return;}if(!form.reportValidity())return;
+    const period=form.querySelector('[name=period]:checked')?.value??"AM";
+    const match=/^(0?[1-9]|1[0-2]):([0-5]\d)$/.exec(time.value);if(!match){error.textContent="Enter a valid time.";return;}
+    const time24=`${String(Number(match[1])%12+(period==="PM"?12:0)).padStart(2,"0")}:${match[2]}`;
+    const files=[...attachments.files];if(files.length>5||files.some(file=>file.size>10*1024*1024)||files.reduce((n,file)=>n+file.size,0)>15*1024*1024){error.textContent="Use up to 5 attachments, 10 MB each and 15 MB total.";return;}
+    submit.disabled=true;submit.textContent="Saving...";
+    try{await draftWrites;const draft=capture();await queueOfflineIncident(savedProject,savedItem,{incidentType:selected.find(kind=>["injury","equipment_damage","property_damage","near_miss","other"].includes(kind))??"other",severity:"minor",occurredOn:String(data.get("occurredOn")),occurredTime:time24,location:String(data.get("location")),description:String(data.get("description")),details:JSON.stringify({people:draft.people,kinds:selected,otherType:other.value,injured:data.get("injured")==="yes",injuryDescription:injury.value,firstAid:data.get("firstAid")==="yes",hospitalTransport:data.get("hospitalTransport")==="yes",medicalProvider:String(data.get("medicalProvider"))})},files);await localDelete("settings",key);close();notice("Incident saved on this device. It will synchronize when connected and signed in.");void synchronizeOfflineLogs();await refreshIncidentEntries();}
+    catch(cause){error.textContent=cause.message;submit.disabled=false;submit.textContent="Submit incident";}
+  });
+  dialog.addEventListener("cancel",event=>{event.preventDefault();close();});dialog.showModal();
+});
+async function refreshIncidentEntries(){
+  const owner=await activeOfflineOwner();const holder=$("offline-incidents")??element("section",{id:"offline-incidents"});if(!holder.parentNode)$("saved").after(holder);
+  holder.replaceChildren();if(!owner||owner.locked)return;
+  const reports=(await localAll("settings")).filter(row=>row.id.startsWith("incident:")&&row.ownerId===owner.ownerId).sort((a,b)=>b.capturedAt.localeCompare(a.capturedAt));
+  if(!reports.length)return;holder.append(element("h2",{},"Saved incident reports"));
+  for(const row of reports){const card=element("div",{className:"entry"});card.append(element("strong",{},`${row.taskName} ? ${prettyDate(row.fields.occurredOn)}`),element("p",{},row.fields.description),element("span",{className:`status ${row.status==="synced"?"synced":"pending"}`},row.status==="synced"?"Synced":"Pending sync"));if(row.error)card.append(element("p",{className:"error"},row.error));holder.append(card);}
+}
+subscribeOffline(()=>void refreshIncidentEntries());void refreshIncidentEntries();

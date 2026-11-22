@@ -1,3 +1,4 @@
+import type { ProgressPhoto } from "./evidence";
 import type { CostAmounts } from "@/lib/task-progress/calculate";
 
 /** Which task, or task-less phase (category), a history belongs to. */
@@ -18,6 +19,8 @@ export type OverrideLog = {
   savedByName: string | null;
   /** Their account's role (e.g. "Administrator") — null when unknown. */
   savedByRole: string | null;
+  remarks?: string;
+  photos?: ProgressPhoto[];
   quantityCompleted: number;
   costs: CostAmounts;
   /** What was used that day — a material not on the planned lines with
@@ -48,3 +51,6 @@ export type OverrideLog = {
  * task-less phase key (`task-<id>` / `category-<id>`). Preloaded with the
  * project so opening a Progress Tracking modal needs no second fetch. */
 export type ProjectOverrideHistory = Record<string, OverrideLog[]>;
+
+/** Identity returned with the confirmed database write, before route refresh. */
+export type SavedLogIdentity = { id: number; createdAt: string };

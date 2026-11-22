@@ -1,4 +1,7 @@
 "use client";
+
+import { IncidentRecordsProvider } from "./progress/incident-records-context";
+import type { Incident } from "@/lib/incidents/model";
 import { ProgressLogSyncProvider, useProgressLogSync } from "./progress/progress-log-sync";
 import { SheetsSection } from "@/components/projects/sheets/sheets-section";
 import type { listSheets } from "@/lib/sheets/actions";
@@ -201,9 +204,9 @@ function ArchiveProjectModalContent({
 }
 
 export function ProjectDetailView(props: Parameters<typeof ProjectDetailContent>[0]) {
-  return <ProgressLogSyncProvider key={props.project.id} task={props.taskProgressToday} category={props.categoryProgressToday} history={props.overrideHistory}>
+  return <IncidentRecordsProvider key={props.project.id} records={props.incidentRecords ?? {items:[],available:false}}><ProgressLogSyncProvider key={props.project.id} task={props.taskProgressToday} category={props.categoryProgressToday} history={props.overrideHistory}>
     <RequestSyncProvider><LiveProjectDetailView {...props} /></RequestSyncProvider>
-  </ProgressLogSyncProvider>;
+  </ProgressLogSyncProvider></IncidentRecordsProvider>;
 }
 
 function LiveProjectDetailView(serverProps: Parameters<typeof ProjectDetailContent>[0]) {
@@ -352,6 +355,7 @@ function ProjectDetailContent({
   categoryProgressToday: Record<number, TaskProgressToday>;
   /** All override histories, preloaded so the Gantt modal has no loading state. */
   overrideHistory: ProjectOverrideHistory;
+  incidentRecords?: {items:Incident[];available:boolean};
   /** The project's calendar events — see lib/project-events/data.ts. */
   events: ProjectEvent[];
   /** Preloaded sheets so opening the Sheets dropdown has no loading state. */
@@ -820,6 +824,7 @@ function ProjectDetailContent({
               usage={recentMaterialUsage}
               initialPurchases={materialPurchases}
               onStocksChange={setLiveStocks}
+              stockNotice={searchParams.get("stockNotice")}
             />
             {/* scroll-mt clears the sticky tabs bar when See all scrolls here. */}
             <div ref={materialsRecordRef} className="scroll-mt-16">
@@ -975,7 +980,7 @@ function ProjectDetailContent({
                   insightRequest={insightNavigation?.destination === "documents" ? insightNavigation.request : undefined}
                   projectId={project.id}
                   initialSheets={sheetsResult?.sheets}
-                  initialCanReview={sheetsResult?.canReview}
+                  initialCanManage={sheetsResult?.canManage}
                   initialError={sheetsResult?.error}
                 />
               </div>
@@ -1061,7 +1066,7 @@ function ProjectDetailContent({
         overrideHistory={overrideHistory}
         onClose={() => setEquipmentProgressTarget(null)}
       />
-      <IncidentDetailModal projectId={project.id} id={incidentId} onClose={closeIncident} />
+      <IncidentDetailModal projectId={project.id} projectName={project.name} id={incidentId} onClose={closeIncident} />
 
       {isAdmin && (
         <>

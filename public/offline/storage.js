@@ -130,6 +130,7 @@ export async function synchronizeOfflineLogs(force = false) {
   try {
     const owner = await activeOfflineOwner();
     if (!owner || owner.locked) return;
+    await synchronizeOfflineIncidents(owner.ownerId);
     const pending = (await localAll("outbox")).filter(row => row.ownerId === owner.ownerId && ["pending", "syncing", "auth-required"].includes(row.status)).sort((a, b) => a.workDate.localeCompare(b.workDate) || a.capturedAt.localeCompare(b.capturedAt));
     if (!pending.length) return;
     const session = await fetch("/api/offline/session", { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(10000) });
@@ -186,4 +187,26 @@ export async function offlineEntryState(project, item, date) {
   if (exact) return { ...exact, totalQuantity: project.totals?.[item.key] ?? exact.totalQuantity };
   if (date === project.workDate && project.states[item.key]) return { ...project.states[item.key], totalQuantity: project.totals?.[item.key] ?? project.states[item.key].totalQuantity };
   return { version: null, totalQuantity: project.totals?.[item.key] ?? project.states[item.key]?.totalQuantity ?? 0, input: null };
+}
+
+export async function queueOfflineIncident(project, item, fields, files) {
+  const owner = await activeOfflineOwner();
+  if (!owner || owner.locked || owner.ownerId !== project.ownerId) throw new Error("Prepare this project with the original account first.");
+  const row = { id: `incident:${crypto.randomUUID()}`, ownerId: owner.ownerId, projectId: project.projectId, itemId: item.id, kind: item.kind,
+    taskName: item.name, fields, files, capturedAt: new Date().toISOString(), status: "pending" };
+  await localPut("settings", row); changed(); return row;
+}
+async function synchronizeOfflineIncidents(ownerId) {
+  const rows = (await localAll("settings")).filter(row => row.id.startsWith("incident:") && row.ownerId === ownerId && row.status !== "synced");
+  for (const row of rows) {
+    const form = new FormData();
+    for (const [key,value] of Object.entries(row.fields)) form.set(key,value);
+    form.set("ownerId",ownerId); form.set("projectId",String(row.projectId));
+    form.set("contextKind",row.kind); form.set("contextId",String(row.itemId)); form.set("offlineSubmissionId",row.id.slice(9));
+    for (const file of row.files) form.append("attachments",file,file.name);
+    const response = await fetch("/api/offline/incidents",{method:"POST",body:form,credentials:"same-origin",signal:AbortSignal.timeout(30000)});
+    const result = await response.json();
+    await localPut("settings",{...row,status:response.ok?"synced":"pending",error:result.error,files:response.ok?[]:row.files}); changed();
+    if (!response.ok) break;
+  }
 }

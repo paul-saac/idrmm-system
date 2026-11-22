@@ -1,88 +1,82 @@
 "use client";
 
+import { AttachmentLink } from "@/components/ui/attachment-viewer";
 import { RequiredMark } from "@/components/ui/required-mark";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Bell, ChevronDown, Flag, MapPin, Paperclip, Send, X } from "lucide-react";
-import { ModalFooter } from "@/components/ui/modal";
+import { DatePicker } from "@/components/ui/date-picker";
+import { useId, useRef, useState, type FormEvent, type InputHTMLAttributes } from "react";
+import { Flag, Paperclip, Plus, X } from "lucide-react";
+import { Modal, ModalFooter } from "@/components/ui/modal";
 import { reportIncident } from "@/lib/incidents/actions";
-import { INCIDENT_TYPES, INCIDENT_SEVERITIES, validateIncidentFiles, type IncidentContext } from "@/lib/incidents/model";
+import { INCIDENT_KINDS, incidentTime24, validateIncidentFiles, type IncidentContext, type IncidentDetails } from "@/lib/incidents/model";
 
-const input = "h-10 w-full min-w-0 rounded border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-zinc-400 focus:ring-2 focus:ring-zinc-100";
-
-export function IncidentReportPanel({ projectId, context, active, onSubmitted }: {
-  projectId: number; context: IncidentContext; active: boolean; onSubmitted?: (id: number) => void;
+const input = "h-10 w-full min-w-0 rounded border border-zinc-200 bg-white px-3 text-sm text-zinc-700 outline-none focus:border-zinc-400 placeholder:text-zinc-400";
+const label = "grid min-w-0 gap-2 text-xs font-medium text-zinc-700";
+function ChoiceInput(props:InputHTMLAttributes<HTMLInputElement>) {
+ return <span className="relative inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center align-middle"><input {...props} className="peer m-0 block box-border h-[14px] w-[14px] min-w-[14px] shrink-0 cursor-pointer appearance-none rounded-none border border-zinc-300 bg-white p-0 checked:border-zinc-900 focus-visible:ring-2 focus-visible:ring-zinc-200 focus-visible:outline-none"/><span className="pointer-events-none absolute top-1/2 left-1/2 block h-[6px] w-[6px] -translate-x-1/2 -translate-y-1/2 rounded-none bg-zinc-900 opacity-0 peer-checked:opacity-100"/></span>;
+}
+function growText(event:FormEvent<HTMLTextAreaElement>) {
+ const field=event.currentTarget;field.style.height="auto";
+ field.style.height=`${Math.max(40,field.scrollHeight+field.offsetHeight-field.clientHeight)}px`;
+}
+const section = "space-y-4 border-b border-zinc-200 px-6 py-5 last:border-b-0";
+function YesNo({name,children,value,onChange}:{name:string;children:React.ReactNode;value:boolean|null;onChange:(value:boolean)=>void}) {
+ return <fieldset className="space-y-2"><legend className="text-xs font-medium text-zinc-700">{children} <RequiredMark /></legend><div className="flex gap-5 text-sm">{[true,false].map(answer=><label key={String(answer)} className="flex items-center gap-2"><ChoiceInput type="radio" name={name} required checked={value===answer} onChange={()=>onChange(answer)} />{answer ? "Yes" : "No"}</label>)}</div></fieldset>;
+}
+export function IncidentReportPanel({ projectId, context, active, onClose, onSubmitted, embedded = false }: {
+ projectId:number;context:IncidentContext;active:boolean;embedded?:boolean;onClose:()=>void;onSubmitted?:(id:number)=>void;
 }) {
-  const formId = useId();
-  const heading = useRef<HTMLHeadingElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [files, setFiles] = useState<File[]>([]);
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  useEffect(() => { if (active) heading.current?.focus(); }, [active]);
+ const formId=useId();const fileInput=useRef<HTMLInputElement>(null);
+ const [files,setFiles]=useState<File[]>([]);const [error,setError]=useState("");const [pending,setPending]=useState(false);
+ const [people,setPeople]=useState([{key:0,name:"",role:"",contact:""}]);const nextPerson=useRef(1);
+ const [period,setPeriod]=useState<"AM"|"PM">("AM");
+ const [kinds,setKinds]=useState<IncidentDetails["kinds"]>([]);
+ const [injured,setInjured]=useState<boolean|null>(null);const [firstAid,setFirstAid]=useState<boolean|null>(null);const [hospital,setHospital]=useState<boolean|null>(null);
+ const [today]=useState(()=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Manila",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date()));
+ function addFiles(incoming:File[]) {const next=[...files,...incoming];const issue=validateIncidentFiles(next);if(issue){setError(issue);return;}setError("");setFiles(next);}
+ async function submit(event:FormEvent<HTMLFormElement>) {
+  event.preventDefault();if(pending)return;const form=new FormData(event.currentTarget);
+  if(!kinds.length){setError("Select at least one incident type.");return;}
+  if(injured===null||firstAid===null||hospital===null){setError("Answer the injury and medical attention questions.");return;}
+  if(kinds.includes("other")&&!String(form.get("otherType")??"").trim()){setError("Describe the other incident type.");return;}
+  const time=incidentTime24(String(form.get("occurredTime12")??""),period);
+  if(!time){setError("Enter a time from 1:00 to 12:59 and choose AM or PM.");return;}
+  form.set("occurredTime",time);
+  const issue=validateIncidentFiles(files);if(issue){setError(issue);return;}
+  const primary=kinds.find(kind=>["injury","equipment_damage","property_damage","near_miss","other"].includes(kind))??"other";
+  form.set("incidentType",primary);
+  form.set("severity","minor");
+  form.set("details",JSON.stringify({people:people.filter(p=>p.name.trim()||p.role.trim()||p.contact.trim()).map(({name,role,contact})=>({name,role,contact})),kinds,otherType:String(form.get("otherType")??""),injured,injuryDescription:String(form.get("injuryDescription")??""),firstAid,hospitalTransport:hospital,medicalProvider:String(form.get("medicalProvider")??"")}));
+  files.forEach(file=>form.append("attachments",file));setPending(true);setError("");
+  try {const result=await reportIncident(projectId,form);if(result.error)setError(result.error);else if(result.id)onSubmitted?.(result.id);}
+  catch {setError("Could not submit the incident. Your entries are still here; please try again.");}
+  finally {setPending(false);}
+ }
+ const body=<>
+  <form id={formId} onSubmit={submit} autoComplete="off" className="-mx-6 -my-5">
+   <input type="hidden" name="contextKind" value={context.kind}/><input type="hidden" name="contextId" value={context.id}/>
+   <fieldset disabled={pending}>
 
-  function addFiles(incoming: File[]) {
-    const next = [...files, ...incoming];
-    const validation = validateIncidentFiles(next);
-    if (validation) { setError(validation); return; }
-    setError(""); setFiles(next);
-  }
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (pending) return;
-    const form = new FormData(event.currentTarget);
-    const validation = validateIncidentFiles(files);
-    if (validation) { setError(validation); return; }
-    files.forEach(file => form.append("attachments", file));
-    setPending(true); setError("");
-    try {
-      const result = await reportIncident(projectId, form);
-      if (result.error) setError(result.error);
-      else if (result.id) { setFiles([]); formRef.current?.reset(); onSubmitted?.(result.id); }
-    } catch { setError("Could not submit the incident. Your entries are still here; please try again."); }
-    finally { setPending(false); }
-  }
-
-  return (
-    <section id="progress-incident-form" hidden={!active} className="h-full min-h-0 border-t border-zinc-200 bg-white lg:overflow-y-auto lg:border-t-0 lg:border-l">
-      <div className="px-6 py-5">
-        <h3 ref={heading} tabIndex={-1} className="flex items-center gap-2 text-base font-semibold text-zinc-900 outline-none"><Flag className="size-4 text-amber-700" />Report incident</h3>
-
-        <>
-            <form id={formId} ref={formRef} onSubmit={submit} className="mt-6">
-              <input type="hidden" name="contextKind" value={context.kind} />
-              <input type="hidden" name="contextId" value={context.id} />
-              <fieldset disabled={pending} className="grid grid-cols-2 gap-x-3 gap-y-5 disabled:opacity-60">
-                <label className="grid min-w-0 gap-2 text-xs font-medium text-zinc-800"><span>Incident type <RequiredMark /></span><span className="relative"><select name="incidentType" required defaultValue="injury" className={`${input} flex appearance-none items-center pr-7 text-left leading-normal`}>{Object.entries(INCIDENT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-zinc-400" /></span></label>
-                <label className="grid min-w-0 gap-2 text-xs font-medium text-zinc-800"><span>Severity <RequiredMark /></span><span className="relative"><select name="severity" required defaultValue="minor" className={`${input} flex appearance-none items-center pr-7 text-left leading-normal`}>{Object.entries(INCIDENT_SEVERITIES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-4 -translate-y-1/2 text-zinc-400" /></span></label>
-                <label className="col-span-2 grid gap-2 text-xs font-medium text-zinc-800">Location<span className="relative"><input name="location" maxLength={300} placeholder="e.g. Site entrance · unloading area" className={`${input} pr-9`} /><MapPin className="pointer-events-none absolute right-3 top-3 size-4 text-zinc-400" /></span></label>
-                <label className="col-span-2 grid gap-2 text-xs font-medium text-zinc-800"><span>What happened? <RequiredMark /></span><textarea name="description" required maxLength={5000} rows={5} placeholder="Describe what happened and any immediate action taken." className={`${input} h-auto resize-y py-3 leading-relaxed`} /></label>
-                <div className="col-span-2">
-                  <div className="mb-2 flex justify-between text-xs"><span className="font-medium text-zinc-800">Photos or documents</span><span className="text-zinc-400">Optional</span></div>
-                  <input ref={fileInput} type="file" multiple accept="image/jpeg,image/png,application/pdf" aria-label="Add incident photos or documents" className="sr-only" tabIndex={-1} onChange={event => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-                  <button type="button" disabled={pending} onClick={() => fileInput.current?.click()}
-                    onDragOver={event => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={event => { event.preventDefault(); setDragging(false); if (!pending) addFiles(Array.from(event.dataTransfer.files)); }}
-                    className={`flex w-full flex-col items-center gap-2 rounded border border-dashed px-4 py-6 text-xs transition ${dragging ? "border-amber-400 bg-amber-50" : "border-zinc-300 bg-zinc-50 hover:bg-zinc-100"}`}>
-                    <span className="flex items-center gap-2 font-medium text-zinc-800"><Paperclip className="size-4" />Add photos or files</span>
-                    <span className="text-zinc-500">JPG, PNG or PDF · up to 10 MB each</span>
-                    <span className="text-[10px] text-zinc-400">Up to 5 files · 15 MB total</span>
-                  </button>
-                  {!!files.length && <ul className="mt-2 divide-y divide-zinc-100">{files.map((file, index) => <li key={`${file.name}-${index}`} className="flex items-center gap-2 py-2 text-xs"><Paperclip className="size-3 shrink-0 text-zinc-400" /><span className="min-w-0 flex-1 truncate" title={file.name}>{file.name}</span><button type="button" aria-label={`Remove ${file.name}`} onClick={() => setFiles(current => current.filter((_, position) => position !== index))} className="p-1 text-zinc-500 hover:text-red-600"><X className="size-4" /></button></li>)}</ul>}
-                </div>
-              </fieldset>
-            </form>
-            <p className="mt-5 flex items-start gap-2 text-xs leading-relaxed text-zinc-500"><Bell className="mt-0.5 size-4 shrink-0" />Your supervisor will be notified in the system. Progress entries stay unchanged.</p>
-            {error && <p role="alert" className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</p>}
-        </>
-      </div>
-      {active && <ModalFooter>
-        <div className="flex w-full items-center justify-between gap-3 lg:w-[25rem]">
-          <p className="text-xs text-zinc-800">Separate incident report<span className="mt-1 block text-[10px] text-zinc-500">Does not save progress</span></p>
-          <button type="submit" form={formId} disabled={pending} className="inline-flex shrink-0 items-center gap-2 rounded bg-zinc-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"><Send className="size-4" />{pending ? "Submitting…" : "Submit incident"}</button>
-        </div>
-      </ModalFooter>}
+    <section className={section}><div className="flex items-center gap-2"><h3 className="text-base font-semibold text-zinc-900">Persons involved</h3><button type="button" aria-label="Add person involved" disabled={people.length>=10} onClick={()=>setPeople(current=>[...current,{key:nextPerson.current++,name:"",role:"",contact:""}])} className="p-1 text-zinc-400 hover:text-zinc-700 disabled:opacity-40"><Plus className="size-4"/></button></div>
+     {people.map(person=><div key={person.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2"><div className="grid gap-3 sm:grid-cols-3">{([['name','Name',200],['role','Role',150],['contact','Contact information',200]] as const).map(([key,title,max])=><label key={key} className={label}>{title}<input value={person[key]} maxLength={max} onChange={e=>setPeople(current=>current.map(p=>p.key===person.key?{...p,[key]:e.target.value}:p))} className={input}/></label>)}</div><button type="button" aria-label="Remove person involved" onClick={()=>setPeople(current=>current.filter(p=>p.key!==person.key))} className="mb-2.5 p-1 text-zinc-400 hover:text-red-600"><X className="size-4"/></button></div>)}
     </section>
-  );
+    <section className={`${section} bg-zinc-50/60`}><h3 className="text-base font-semibold text-zinc-900">Incident details</h3><div className="grid gap-4 sm:grid-cols-2"><label className={label}><span>Date <RequiredMark/></span><DatePicker name="occurredOn" defaultValue={today} max={today} required ariaLabel="Incident date" className={input}/></label><fieldset className="min-w-0"><legend className="mb-2 text-xs font-medium text-zinc-700">Time <RequiredMark/></legend><div className="flex h-10 items-center gap-4"><input name="occurredTime12" aria-label="Incident time" placeholder="hh:mm" pattern="(0?[1-9]|1[0-2]):[0-5][0-9]" maxLength={5} required className={`${input} flex-1`}/><div className="flex shrink-0 items-center gap-3">{(["AM","PM"] as const).map(choice=><label key={choice} className="flex items-center gap-1.5 text-xs text-zinc-700"><ChoiceInput type="checkbox" aria-label={choice} checked={period===choice} onChange={()=>setPeriod(choice)}/>{choice}</label>)}</div></div></fieldset></div>
+     <label className={label}>Location<input name="location" maxLength={300} className={input}/></label>
+     <fieldset><legend className="mb-3 text-xs font-medium text-zinc-700">Type of incident (check all that apply) <RequiredMark/></legend><div className="grid gap-3 sm:grid-cols-3">{Object.entries(INCIDENT_KINDS).map(([key,text])=><label key={key} className="flex items-center gap-2 text-sm text-zinc-700"><ChoiceInput type="checkbox" aria-label={text} checked={kinds.includes(key as keyof typeof INCIDENT_KINDS)} onChange={e=>setKinds(current=>e.target.checked?[...current,key as keyof typeof INCIDENT_KINDS]:current.filter(k=>k!==key))}/>{text}</label>)}</div></fieldset>
+     {kinds.includes('other')&&<label className={label}><span>Other incident type <RequiredMark/></span><input name="otherType" required maxLength={200} className={input}/></label>}
+     <label className={label}><span>Describe the incident <RequiredMark/></span><textarea name="description" required maxLength={5000} rows={1} onInput={growText} className={`${input} min-h-10 resize-y overflow-hidden py-2 leading-5`}/></label>
+    </section>
+    <section className={section}><h3 className="text-base font-semibold text-zinc-900">Injuries and medical attention</h3><YesNo name="injured" value={injured} onChange={setInjured}>Was anyone injured?</YesNo>
+     <label className={label}><span>Describe the injury {injured && <RequiredMark/>}</span><textarea name="injuryDescription" required={injured===true} maxLength={2000} rows={1} onInput={growText} className={`${input} min-h-10 resize-y overflow-hidden py-2 leading-5`}/></label>
+     <div className="grid gap-4 sm:grid-cols-2"><YesNo name="firstAid" value={firstAid} onChange={setFirstAid}>Was first aid administered?</YesNo><YesNo name="hospitalTransport" value={hospital} onChange={setHospital}>Was EMS / hospital transport required?</YesNo></div>
+     <label className={label}>First responder / medical provider<input name="medicalProvider" maxLength={300} className={input}/></label>
+    </section>
+    <section className={`${section} bg-zinc-50/60`}><h3 className="text-base font-semibold text-zinc-900">Attachments</h3><input ref={fileInput} type="file" multiple accept="image/jpeg,image/png,application/pdf" aria-label="Incident attachments" className="sr-only" onChange={e=>{addFiles(Array.from(e.target.files??[]));e.target.value="";}}/><button type="button" onClick={()=>fileInput.current?.click()} className="flex w-full items-center justify-center gap-2 rounded border border-dashed border-zinc-300 bg-white px-4 py-5 text-sm text-zinc-700"><Paperclip className="size-4"/>Add attachments</button>
+     {!!files.length&&<ul className="space-y-2">{files.map((file,index)=><li key={`${file.name}-${index}`} className="flex items-center gap-2 text-xs"><AttachmentLink url="" name={file.name} file={file} className="min-w-0 flex-1 truncate underline underline-offset-2">{file.name}</AttachmentLink><button type="button" aria-label={`Remove ${file.name}`} onClick={()=>setFiles(current=>current.filter((_,i)=>i!==index))} className="p-1 text-zinc-400 hover:text-red-600"><X className="size-4"/></button></li>)}</ul>}
+    </section>
+   </fieldset>
+   {error&&<p role="alert" className="px-6 pb-5 text-sm text-red-600">{error}</p>}
+  </form>
+  <ModalFooter><button type="button" disabled={pending} onClick={onClose} className="rounded border border-zinc-200 px-4 py-2 text-sm">Cancel</button><button type="submit" form={formId} disabled={pending} className="rounded bg-zinc-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{pending?"Submitting…":"Submit incident"}</button></ModalFooter>
+ </>;
+ return embedded ? body : <Modal open={active} onClose={()=>{if(!pending)onClose();}} title="Report Incident" variant="centered" size="wide" icon={<Flag className="size-5" />} className="compact-text">{body}</Modal>;
 }

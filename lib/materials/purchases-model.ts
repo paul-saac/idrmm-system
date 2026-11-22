@@ -121,16 +121,35 @@ export function validatePurchaseLines(value: unknown): PurchaseLine[] {
 export type MaterialStockStatus = "available" | "low_stock" | "out_of_stock" | "over_issued";
 
 /**
- * Recommended threshold for low stock in construction management:
- * - 20% remaining threshold: warns when inventory reaches 20% or less of total received supply.
- * - 5 units absolute threshold: catches smaller count items when used > 0 and balance <= 5.
+ * Company stock-warning policy: 5% of the balance after the latest receipt.
+ * Consumption does not reset this reference; the next receipt does.
  */
-export const LOW_STOCK_THRESHOLD_PERCENT = 0.20;
-export const LOW_STOCK_ABSOLUTE_THRESHOLD = 5;
+export const LOW_STOCK_THRESHOLD_PERCENT = 0.05;
+
+// Counted items/containers use whole-unit warning levels. Measured and custom
+// units retain the exact percentage rather than guessing their divisibility.
+const WHOLE_MATERIAL_UNITS = new Set([
+  "pc", "pcs", "piece", "pieces", "no", "nos", "number", "numbers", "ea", "each",
+  "set", "sets", "lot", "lots", "bag", "bags", "box", "boxes", "roll", "rolls",
+  "sheet", "sheets", "length", "lengths", "pair", "pairs", "unit", "units",
+  "pack", "packs", "bundle", "bundles",
+]);
+
+export function getMaterialLowStockThreshold(referenceQuantity: number, unit = ""): number {
+  if (referenceQuantity <= 0) return 0;
+  const wholeUnit = WHOLE_MATERIAL_UNITS.has(unit.trim().toLowerCase().replace(/\.+$/, ""));
+  if (!wholeUnit) return referenceQuantity * LOW_STOCK_THRESHOLD_PERCENT;
+  if (referenceQuantity <= 1) return 0; // One available item is sufficient; zero is out of stock.
+  // Quantities have three decimal places. Integer scaling avoids rounding an
+  // exact whole-number threshold up again because of floating-point noise.
+  return Math.ceil(Math.round(referenceQuantity * 1000) / 20000);
+}
 
 export function getMaterialStockStatus(
   received: number,
-  used: number
+  used: number,
+  referenceQuantity = received,
+  unit = ""
 ): {
   status: MaterialStockStatus;
   balance: number;
@@ -153,13 +172,12 @@ export function getMaterialStockStatus(
       status: "out_of_stock",
       balance,
       label: "Out of stock",
-      badgeStyle: "bg-zinc-100 text-zinc-600",
+      badgeStyle: "bg-red-50 text-red-600",
     };
   }
 
-  const isLowStock =
-    (received > 0 && balance / received <= LOW_STOCK_THRESHOLD_PERCENT) ||
-    (used > 0 && balance <= LOW_STOCK_ABSOLUTE_THRESHOLD);
+  const threshold = getMaterialLowStockThreshold(referenceQuantity, unit);
+  const isLowStock = threshold > 0 && balance <= threshold;
 
   if (isLowStock) {
     return {
@@ -191,6 +209,9 @@ export type MaterialStockItem = {
   badgeStyle: string;
   lastReceived: string | null;
   lastUsed: string | null;
+  /** Stock after the latest dated receipt, before that day's usage. */
+  referenceQuantity?: number;
+  lowStockThreshold?: number;
 };
 
 export function computeMaterialStocks(
@@ -208,6 +229,7 @@ export function computeMaterialStocks(
       used: number;
       lastReceived: string | null;
       lastUsed: string | null;
+      usageByDate: Map<string, number>;
     }
   >();
 
@@ -227,6 +249,7 @@ export function computeMaterialStocks(
         used: 0,
         lastReceived: null,
         lastUsed: null,
+        usageByDate: new Map(),
       };
       byKey.set(key, item);
     }
@@ -255,10 +278,12 @@ export function computeMaterialStocks(
         used: 0,
         lastReceived: null,
         lastUsed: null,
+        usageByDate: new Map(),
       };
       byKey.set(key, item);
     }
     item.used += Number(entry.quantity) || 0;
+    item.usageByDate.set(entry.entryDate, (item.usageByDate.get(entry.entryDate) ?? 0) + (Number(entry.quantity) || 0));
     if (!item.lastUsed || entry.entryDate > item.lastUsed) {
       item.lastUsed = entry.entryDate;
     }
@@ -266,12 +291,24 @@ export function computeMaterialStocks(
 
   return [...byKey.values()]
     .map((item) => {
+      // All received quantities are part of the stock as of its latest receipt.
+      // Subtract only usage before that date to reconstruct the replenished
+      // balance (100%). Daily logs do not establish intraday receipt order:
+      // same-date receipts are grouped before that day's consumption.
+      const usedBeforeReceipt = [...item.usageByDate].reduce((total, [date, quantity]) =>
+        item.lastReceived && date < item.lastReceived ? total + quantity : total, 0);
+      const referenceQuantity = Math.max(0, stockBalance(0, item.received, usedBeforeReceipt));
       const { status, balance, label, badgeStyle } = getMaterialStockStatus(
         item.received,
-        item.used
+        item.used,
+        referenceQuantity,
+        item.unit
       );
+      const { usageByDate: _usageByDate, ...stock } = item;
       return {
-        ...item,
+        ...stock,
+        referenceQuantity,
+        lowStockThreshold: getMaterialLowStockThreshold(referenceQuantity, item.unit),
         balance,
         status,
         statusLabel: label,

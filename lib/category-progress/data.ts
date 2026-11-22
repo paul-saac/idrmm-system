@@ -1,3 +1,4 @@
+import type { ProgressPhoto } from "@/lib/progress-logs/evidence";
 import { createClient } from "@/lib/supabase/server";
 import {
   ZERO_COSTS,
@@ -305,6 +306,8 @@ export async function listCategoryProgressToday(
     latestByCategory.set(row.category_id, row);
     if (row.entry_date === today) {
       progress.today = {
+        remarks: row.remarks ?? "",
+        photos: (row.photos ?? []) as ProgressPhoto[],
         quantityCompleted: row.quantity_completed ?? 0,
         costs: entryCosts(row),
         materialUsage: row.materialUsage,

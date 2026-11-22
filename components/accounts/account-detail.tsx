@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { initials } from "@/lib/initials";
 import { avatarColor } from "@/components/ui/list-table";
 import {
+  Loader2,
   Building2,
   ChevronDown,
   Mail,
@@ -321,7 +322,7 @@ export function AccountDetail({
           <button type="button" disabled={detail.hasHistory || busy !== null}
             title={detail.hasHistory ? "This account has records. Deactivate it to preserve its history." : undefined}
             onClick={() => { setDeleteError(null); setDeleteOpen(true); }} className={DANGER}>
-            {busy === "delete" ? "Deleting..." : "Delete permanently"}
+            {busy === "delete" ? <span className="inline-flex items-center gap-2"><Loader2 aria-hidden className="size-4 animate-spin" />Deleting...</span> : "Delete permanently"}
           </button>
         )}
         </div>

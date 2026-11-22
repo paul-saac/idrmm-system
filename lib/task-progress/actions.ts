@@ -7,6 +7,7 @@ import type { PostgrestError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { requireProjectAccess } from "@/lib/auth/project-access";
 import { isAdminRole } from "@/lib/auth/roles";
+import { validateLogEvidence, type ProgressPhoto } from "@/lib/progress-logs/evidence";
 import { logOverride } from "@/lib/progress-logs/write";
 import { entryCosts } from "@/lib/task-progress/data";
 import { priceMaterialsUsed, readUnplannedMaterials } from "@/lib/task-progress/material-cost";
@@ -25,6 +26,7 @@ import {
 export type TaskProgressActionState = {
   error?: string;
   success?: boolean;
+  savedLog?: { id: number; createdAt: string };
 };
 
 function logSupabaseError(label: string, error: PostgrestError) {
@@ -76,6 +78,8 @@ export async function recordTaskProgress(
   taskId: number,
   projectId: number,
   input: {
+    remarks?: string;
+    photos?: ProgressPhoto[];
     quantityCompletedToday: number;
     /** Material is just typed only for a task without Material Breakdown
      * lines — what's used is priced here. */
@@ -162,6 +166,9 @@ export async function recordTaskProgress(
       return { error: "Costs must be 0 or more." };
     }
 
+    const evidence = validateLogEvidence(input.remarks, input.photos, projectId);
+    if ("error" in evidence) return { error: evidence.error };
+
     const supabase = await createClient();
     const entryDate = todayIso();
 
@@ -193,6 +200,8 @@ export async function recordTaskProgress(
         {
           task_id: taskId,
           entry_date: entryDate,
+          remarks: evidence.remarks,
+          photos: evidence.photos,
           quantity_completed: input.quantityCompletedToday,
           labor_cost: laborCost,
           material_cost: materialCost,
@@ -389,9 +398,11 @@ export async function recordTaskProgress(
 
     // Kept in the override history too — every save, not just the day's
     // latest (0071).
-    await logOverride(supabase, profile, projectId, { kind: "task", id: taskId }, {
+    const savedLog = await logOverride(supabase, profile, projectId, { kind: "task", id: taskId }, {
       action: "saved",
       entryDate,
+      remarks: evidence.remarks,
+      photos: evidence.photos,
       quantityCompleted: input.quantityCompletedToday,
       costs: {
         labor: laborCost,
@@ -429,7 +440,7 @@ export async function recordTaskProgress(
     await syncProjectStatusFromProgress(projectId);
     revalidateProjectLists();
     revalidateProjectPaths(projectId);
-    return { success: true };
+    return { success: true, savedLog };
   });
 }
 

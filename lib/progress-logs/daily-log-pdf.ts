@@ -1,9 +1,11 @@
+import { progressPhotoUrl } from "./evidence";
 import { laborEntryCost } from "@/lib/task-progress/labor";
 import type { Incident } from "@/lib/incidents/model";
-import { INCIDENT_SEVERITIES, INCIDENT_TYPES } from "@/lib/incidents/model";
+import { incidentStatus, incidentTitle } from "@/lib/incidents/model";
 import type { OverrideLog } from "./types";
 
 export type DailyLogPdfInput = {
+  projectId?: number;
   projectName: string;
   workItemName: string;
   unit: string | null;
@@ -127,12 +129,48 @@ export async function downloadDailyLogPdf(input: DailyLogPdfInput) {
     section("OTHER COSTS");
     for (const item of input.log.otherCosts) row(item.unplanned ? `${item.name} (unplanned)` : item.name, peso(item.amount));
   }
+  section("REMARKS / SITE OBSERVATIONS");
+  if (input.log.remarks) {
+    const lines = pdf.splitTextToSize(safe(input.log.remarks), width - 6) as string[];
+    for (const line of lines) { nextPage(5); pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.text(line,margin+3,y+4);y+=5; }
+    y+=3;
+  } else { row("Remarks", "No remarks recorded."); }
+  section("ATTACHMENTS");
+  if (input.log.photos?.length) {
+    for (const photo of input.log.photos) {
+      if (!input.projectId) { row("Attachment",photo.name);continue; }
+      try {
+        const response=await fetch(progressPhotoUrl(input.projectId,photo));
+        if (!response.ok) throw new Error("Photo unavailable");
+        const bitmap=await createImageBitmap(await response.blob());
+        const canvas=document.createElement("canvas");
+        const scale=Math.min(1,1400/Math.max(bitmap.width,bitmap.height));
+        canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+        const context=canvas.getContext("2d");if(!context) {bitmap.close();throw new Error("Image unavailable");}
+        context.fillStyle="#ffffff";context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
+        const height=Math.min(95,100*canvas.height/canvas.width),imageWidth=height*canvas.width/canvas.height;
+        nextPage(height+12);pdf.addImage(canvas.toDataURL("image/jpeg",0.85),"JPEG",margin,y,imageWidth,height);y+=height+2;
+        row("Attachment",photo.name);
+      } catch { row("Attachment unavailable",photo.name); }
+    }
+  }
+  if (!input.log.photos?.length) row("Attachments", "No attachments.");
   if (input.incidents.length) {
     section("INCIDENT REPORTS");
     for (const incident of input.incidents) {
-      row(INCIDENT_TYPES[incident.incident_type], INCIDENT_SEVERITIES[incident.severity]);
+      row(incidentTitle(incident), incidentStatus(incident));
       if (incident.location) row("Location", incident.location);
+      row("Occurred", `${incident.occurred_on} ${incident.occurred_time.slice(0,5)}`);
       row("What happened", incident.description);
+      if (incident.details?.kinds) {
+        const details=incident.details;
+        for(const person of details.people)row("Person involved",[person.name,person.role,person.contact].filter(Boolean).join(" / "));
+        row("Anyone injured",details.injured ? "Yes" : "No");
+        if(details.injured)row("Injury",details.injuryDescription);
+        row("First aid administered",details.firstAid ? "Yes" : "No");
+        row("EMS / hospital transport",details.hospitalTransport ? "Yes" : "No");
+        if(details.medicalProvider)row("Medical provider",details.medicalProvider);
+      }
       row("Reported by", incident.reporter_name || "Project member");
       if (incident.attachments.length) row("Evidence", incident.attachments.map(item => item.name).join(", "));
     }

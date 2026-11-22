@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { CloseoutReportData } from "@/lib/reports/closeout-data";
 import { ProjectPicker, type ProjectOption } from "./project-picker";
@@ -11,11 +12,14 @@ export function ReportsView({ projects, selectedProjectId, data }: {
   selectedProjectId: number | null;
   data: CloseoutReportData | null;
 }) {
+  // Keep the report choice outside the project-keyed form.
+  const [reportType, setReportType] = useState("full");
+
   if (projects.length === 0) return <EmptyState className="p-8 text-sm text-zinc-500">No projects yet — create one to generate reports.</EmptyState>;
   if (!data) return <div className="flex flex-col items-center gap-3 py-16">
     <EmptyState>Select a project to view its report.</EmptyState>
     <ProjectPicker projects={projects} selectedProjectId={selectedProjectId} />
   </div>;
 
-  return <ReportBuilder key={data.project.id} data={data} projects={projects} />;
+  return <ReportBuilder key={data.project.id} data={data} projects={projects} type={reportType} onTypeChange={setReportType} />;
 }
